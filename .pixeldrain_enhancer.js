@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.2
 // @description  Resize gallery links, rewrite file URLs, and bypass download limits on Pixeldrain galleries and file pages.
-// @author       Master
+// @author       edstagdh
 // @match        https://pixeldrain.com/*
 // @match        https://pixeldrain.net/*
 // @match        https://cdn.pd8.workers.dev/*
