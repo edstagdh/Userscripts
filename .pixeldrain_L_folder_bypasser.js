@@ -6,7 +6,6 @@
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
 // @match        https://pixeldrain.net/l/*
-// @match        https://cdn.pd8.workers.dev/*
 // @grant        GM_openInTab
 // ==/UserScript==
 

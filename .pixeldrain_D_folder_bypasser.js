@@ -5,6 +5,7 @@
 // @description  Show bypass download links for Pixeldrain /d/ folders and fix redirect URLs for filesystem links
 // @author       edstagdh
 // @match        https://pixeldrain.com/d/*
+// @match        https://pixeldrain.net/d/*
 // @include      /^https:\/\/.*\.pd\d+\.workers\.dev\/.*/
 // @grant        none
 // ==/UserScript==
@@ -12,7 +13,7 @@
 (function () {
     'use strict';
 
-    const isPixeldrainFolder = location.hostname === 'pixeldrain.com' && location.pathname.startsWith('/d/');
+    const isPixeldrainFolder = /^pixeldrain\.(com|net)$/.test(location.hostname) && location.pathname.startsWith('/d/');
     const isWorkerDomain = /\.pd\d+\.workers\.dev$/.test(location.hostname);
 
     // Redirect Fix Logic
@@ -168,7 +169,7 @@
                 const tdLink = document.createElement('td');
                 const a = document.createElement('a');
                 a.href = file.url;
-                a.textContent = file.url;
+                a.textContent = 'Download';
                 a.target = '_blank';
                 a.rel = 'noopener noreferrer';
                 a.style.color = '#8ec7ff';
