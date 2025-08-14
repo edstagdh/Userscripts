@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         PixelDrain L-Folder(Album) Bypass Links Simple
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  Resize gallery links, rewrite file URLs, and bypass download limits on Pixeldrain galleries and file pages.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
 // @match        https://pixeldrain.net/l/*
+// @match        https://pixeldrain.com/u/*
+// @match        https://pixeldrain.net/u/*
 // @grant        GM_openInTab
 // ==/UserScript==
 
