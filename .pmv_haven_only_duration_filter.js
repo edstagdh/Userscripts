@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PMV Haven Enhanced Controls + Watch History Slowdown Fix
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.3
 // @description  Replaces duration filter, fixes watch history slowdown bug
 // @author       edstagdh
 // @match        https://pmvhaven.com/
@@ -150,22 +150,27 @@
                         if (
                             isNaN(minVal) || isNaN(maxVal) ||
                             minVal < 0 || maxVal < 0 ||
-                            minVal > maxVal ||
-                            !Number.isInteger(minVal) || !Number.isInteger(maxVal)
+                            (!Number.isInteger(minVal) || !Number.isInteger(maxVal)) ||
+                            (maxVal !== 0 && minVal > maxVal)
                         ) {
-                            alert('Please enter valid integer min and max durations (Min ≤ Max, non-negative).');
+                            alert('Please enter valid integer min and max durations(non-decimal, Min ≤ Max, non-negative). Use 0 for unlimited max.');
                             return;
                         }
-                        if (minVal === maxVal) maxVal = minVal + 1;
+
+                        if (minVal === maxVal && maxVal !== 0) {
+                            maxVal = minVal + 1;  // ✅ adjust before using it
+                        }
 
                         minDuration = minVal;
-                        maxDuration = maxVal === 0 ? 999 : maxVal; // treat 0 as unlimited
+                        maxDuration = maxVal === 0 ? 999 : maxVal; // ✅ now reflects the change
+
                         setCookie('tm_minDuration', minDuration);
                         setCookie('tm_maxDuration', maxDuration);
                         console.log(`[TM] Duration updated: Min=${minDuration}, Max=${maxDuration}`);
                         alert(`Duration updated: ${minDuration}-${maxDuration} minutes\nPage will refresh to apply.`);
                         location.reload();
                     });
+
                 }
             }
         });
