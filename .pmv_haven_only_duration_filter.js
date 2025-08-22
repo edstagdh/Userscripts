@@ -125,13 +125,13 @@
                     container.innerHTML = `
                     <label style="display:block; margin-bottom:8px;">
                         Min Duration:
-                        <input type="number" id="tm-min-duration" value="${minDuration}" style="width:70px; margin-left:5px;">
-                        <span title="Minimum duration in minutes. Enter 0 to include all videos from 0 minutes." style="cursor:help; color:#ffcc00; margin-left:5px;">?</span>
+                        <input type="number" id="tm-min-duration" value="${minDuration}" step="1" style="width:70px; margin-left:5px;">
+                        <span title="Minimum duration in minutes(no decimal). Enter 0 to include all videos from 0 minutes." style="cursor:help; color:#ffcc00; margin-left:5px;">?</span>
                     </label>
                     <label style="display:block; margin-bottom:8px;">
                         Max Duration:
-                        <input type="number" id="tm-max-duration" value="${maxDuration === 999 ? 0 : maxDuration}" style="width:70px; margin-left:5px;">
-                        <span title="Maximum duration in minutes. Enter 0 to treat as unlimited (no upper limit)." style="cursor:help; color:#ffcc00; margin-left:5px;">?</span>
+                        <input type="number" id="tm-max-duration" value="${maxDuration === 999 ? 0 : maxDuration}" step="1" style="width:70px; margin-left:5px;">
+                        <span title="Maximum duration in minutes(no decimal). Enter 0 to treat as unlimited (no upper limit)." style="cursor:help; color:#ffcc00; margin-left:5px;">?</span>
                     </label>
                     <button id="tm-apply-duration" style="margin-top:10px; background-color:#ff6600; color:white; padding:6px 12px; border:none; border-radius:4px; cursor:pointer;">
                         Apply
@@ -144,11 +144,16 @@
                     const applyButton = container.querySelector('#tm-apply-duration');
 
                     applyButton.addEventListener('click', () => {
-                        let minVal = parseInt(minInput.value);
-                        let maxVal = parseInt(maxInput.value);
+                        let minVal = Number(minInput.value);
+                        let maxVal = Number(maxInput.value);
 
-                        if (isNaN(minVal) || isNaN(maxVal) || minVal < 0 || maxVal < 0 || minVal > maxVal) {
-                            alert('Please enter valid min and max durations (Min ≤ Max, non-negative).');
+                        if (
+                            isNaN(minVal) || isNaN(maxVal) ||
+                            minVal < 0 || maxVal < 0 ||
+                            minVal > maxVal ||
+                            !Number.isInteger(minVal) || !Number.isInteger(maxVal)
+                        ) {
+                            alert('Please enter valid integer min and max durations (Min ≤ Max, non-negative).');
                             return;
                         }
                         if (minVal === maxVal) maxVal = minVal + 1;
