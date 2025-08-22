@@ -5,8 +5,6 @@
 // @description  Replaces duration filter, disables infinite scroll, fixes watch history bug
 // @author       edstagdh
 // @match        https://pmvhaven.com/
-// @exclude        https://pmvhaven.com/search/*
-// @exclude      https://pmvhaven.com/video*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
