@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         PMV Haven Enhanced Controls + Watch History Fix
+// @name         PMV Haven Enhanced Controls + Watch History Slowdown Fix
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  Replaces duration filter, disables infinite scroll, fixes watch history bug
+// @version      3.1
+// @description  Replaces duration filter, fixes watch history slowdown bug
 // @author       edstagdh
 // @match        https://pmvhaven.com/
 // @grant        none
