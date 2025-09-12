@@ -13,10 +13,13 @@
 (function() {
     'use strict';
 
+    const LOG_PREFIX = '[TM]';
+    console.log(`${LOG_PREFIX} Script loaded.`);
+
     const targetAPIs = ['/api/videos', '/api/getmorevideos'];
     const searchAPI = '/api/v2/search';
 
-    console.log("[PMV Haven] Enhanced Filter Controls script loaded.");
+    console.log(`${LOG_PREFIX} Enhanced Filter Controls script loaded.`);
 
     // --- Cookie helpers ---
     function setCookie(name, value, days = 365) {
@@ -24,9 +27,9 @@
             const d = new Date();
             d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
             document.cookie = `${name}=${value};expires=${d.toUTCString()};path=/`;
-            console.log(`[PMV Haven] Cookie set: ${name}=${value}`);
+            console.log(`${LOG_PREFIX} Cookie set: ${name}=${value}`);
         } catch (err) {
-            console.error("[PMV Haven] Error setting cookie:", err);
+            console.error(`${LOG_PREFIX} Error setting cookie:`, err);
         }
     }
 
@@ -35,7 +38,7 @@
             const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
             return match ? match[2] : null;
         } catch (err) {
-            console.error("[PMV Haven] Error getting cookie:", err);
+            console.error(`${LOG_PREFIX} Error getting cookie:`, err);
             return null;
         }
     }
@@ -45,7 +48,7 @@
     let maxCookie = getCookie('tm_maxDuration');
     let minDuration = minCookie !== null ? parseInt(minCookie) : 0;
     let maxDuration = maxCookie !== null ? (parseInt(maxCookie) || 999) : 999;
-    console.log(`[PMV Haven] Loaded durations: Min=${minDuration}, Max=${maxDuration}`);
+    console.log(`${LOG_PREFIX} Loaded durations: Min=${minDuration}, Max=${maxDuration}`);
 
     // --- Unified fetch hook ---
     if (!window._fetchPatched) {
@@ -64,10 +67,10 @@
                         bodyObj.activeLength = `${minDuration}+`;
                         bodyObj.range = [minDuration, maxDuration];
                         opts.body = JSON.stringify(bodyObj);
-                        console.log(`[PMV Haven] Modified v1 API body with range: ${bodyObj.range}`);
+                        console.log(`${LOG_PREFIX} Modified v1 API body with range: ${bodyObj.range}`);
                     }
                 } catch (e) {
-                    console.error("[PMV Haven] Failed to modify fetch body:", e);
+                    console.error(`${LOG_PREFIX} Failed to modify fetch body:`, e);
                 }
                 return originalFetch.call(this, resource, opts);
             }
@@ -84,16 +87,16 @@
                             const durationMinutes = video.duration / 60;
                             return durationMinutes >= minDuration && durationMinutes <= maxDuration;
                         });
-                        console.log(`[PMV Haven] Filtered search results: ${originalCount} → ${data.data.length}`);
+                        console.log(`${LOG_PREFIX} Filtered search results: ${originalCount} → ${data.data.length}`);
                     } else {
-                        console.warn("[PMV Haven] Unexpected search API response format.");
+                        console.warn(`${LOG_PREFIX} Unexpected search API response format.`);
                     }
 
                     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
                     const init = { status: response.status, statusText: response.statusText, headers: response.headers };
                     return new Response(blob, init);
                 } catch (err) {
-                    console.error("[PMV Haven] Error handling search API response:", err);
+                    console.error(`${LOG_PREFIX} Error handling search API response:`, err);
                     return originalFetch.call(this, resource, opts);
                 }
             }
@@ -101,9 +104,9 @@
             return originalFetch.apply(this, arguments);
         };
 
-        console.log("[PMV Haven] Fetch successfully patched.");
+        console.log(`${LOG_PREFIX} Fetch successfully patched.`);
     } else {
-        console.warn("[PMV Haven] Fetch already patched, skipping.");
+        console.warn(`${LOG_PREFIX} Fetch already patched, skipping.`);
     }
 
     // --- Replace Duration Filter Card ---
@@ -119,14 +122,14 @@
                     const slider = parentCard.querySelector('.v-slider');
                     if (slider) {
                         slider.remove();
-                        console.log("[PMV Haven] Removed default slider.");
+                        console.log(`${LOG_PREFIX} Removed default slider.`);
                     }
 
                     // Remove the min/max labels row
                     const minMaxRow = parentCard.querySelector('.v-row.v-row--no-gutters');
                     if (minMaxRow) {
                         minMaxRow.remove();
-                        console.log("[PMV Haven] Removed default min/max labels row.");
+                        console.log(`${LOG_PREFIX} Removed default min/max labels row.`);
                     }
 
                     // Prevent inserting multiple times
@@ -166,13 +169,13 @@
                                 (maxVal !== 0 && minVal > maxVal)
                             ) {
                                 alert("Invalid duration values. Use non-negative integers. Min ≤ Max. Use 0 for unlimited max.");
-                                console.warn("[PMV Haven] Invalid duration input:", { minVal, maxVal });
+                                console.warn(`${LOG_PREFIX} Invalid duration input:`, { minVal, maxVal });
                                 return;
                             }
 
                             if (minVal === maxVal && maxVal !== 0) {
                                 maxVal = minVal + 1; // adjust before using it
-                                console.log(`[PMV Haven] Adjusted maxVal to avoid equal min/max: ${maxVal}`);
+                                console.log(`${LOG_PREFIX} Adjusted maxVal to avoid equal min/max: ${maxVal}`);
                             }
 
                             minDuration = minVal;
@@ -181,17 +184,17 @@
                             setCookie('tm_minDuration', minDuration);
                             setCookie('tm_maxDuration', maxDuration);
 
-                            console.log(`[PMV Haven] Duration updated: Min=${minDuration}, Max=${maxDuration}`);
+                            console.log(`${LOG_PREFIX} Duration updated: Min=${minDuration}, Max=${maxDuration}`);
                             alert(`Duration updated: ${minDuration}-${maxDuration} minutes\nPage will refresh to apply.`);
                             location.reload();
                         });
 
-                        console.log("[PMV Haven] Custom duration controls injected.");
+                        console.log(`${LOG_PREFIX} Custom duration controls injected.`);
                     }
                 }
             });
         } catch (err) {
-            console.error("[PMV Haven] Error in replaceDurationCard:", err);
+            console.error(`${LOG_PREFIX} Error in replaceDurationCard:`, err);
         }
     }
 
@@ -202,7 +205,7 @@
         replaceDurationCard();
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    console.log("[PMV Haven] MutationObserver started.");
+    console.log(`${LOG_PREFIX} MutationObserver started.`);
 
     setInterval(() => {
         replaceDurationCard();

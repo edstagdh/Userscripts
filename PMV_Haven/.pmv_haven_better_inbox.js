@@ -12,10 +12,13 @@
 (function() {
     'use strict';
 
+    const LOG_PREFIX = '[TM]';
+    console.log(`${LOG_PREFIX} Script loaded.`);
+
     const apiUrl = "https://pmvhaven.com/api/v2/profileInput";
     const videoBaseUrl = "https://pmvhaven.com/video/";
 
-    console.log("[PMV Haven] Inbox Enhancer script loaded.");
+    console.log(`${LOG_PREFIX} Inbox Enhancer script loaded.`);
 
     // Replace sender with link in "From:" field
     function replaceSenderLink(titleDiv) {
@@ -30,10 +33,10 @@
                 link.style.textDecoration = 'underline';
                 span.replaceWith(link);
 
-                console.log(`[PMV Haven] Replaced sender span with profile link: ${username}`);
+                console.log(`${LOG_PREFIX} Replaced sender span with profile link: ${username}`);
             }
         } catch (err) {
-            console.error("[PMV Haven] Error replacing sender link:", err);
+            console.error(`${LOG_PREFIX} Error replacing sender link:`, err);
         }
     }
 
@@ -48,20 +51,20 @@
             // Extract video title inside quotes
             const titleMatch = text.match(/'([^']+)'/);
             if (!titleMatch) {
-                console.warn("[PMV Haven] No video title found in body text.");
+                console.warn(`${LOG_PREFIX} No video title found in body text.`);
                 return;
             }
             const videoTitle = titleMatch[1];
-            console.log(`[PMV Haven] Found video title: '${videoTitle}'`);
+            console.log(`${LOG_PREFIX} Found video title: '${videoTitle}'`);
 
             // Extract username after "by "
             const userMatch = text.match(/by\s+(\w+)/i);
             if (!userMatch) {
-                console.warn("[PMV Haven] No username found in body text.");
+                console.warn(`${LOG_PREFIX} No username found in body text.`);
                 return;
             }
             const username = userMatch[1];
-            console.log(`[PMV Haven] Found username: ${username}`);
+            console.log(`${LOG_PREFIX} Found username: ${username}`);
 
             // Replace username with profile link
             bodySpan.innerHTML = text.replace(
@@ -69,11 +72,11 @@
                 `<a href="https://pmvhaven.com/profile/${encodeURIComponent(username)}" style="color: orange; text-decoration: underline;">$1</a>`
             );
 
-            console.log(`[PMV Haven] Username replaced with profile link: ${username}`);
+            console.log(`${LOG_PREFIX} Username replaced with profile link: ${username}`);
 
             // Fetch profile videos
             try {
-                console.log(`[PMV Haven] Fetching videos for user: ${username}`);
+                console.log(`${LOG_PREFIX} Fetching videos for user: ${username}`);
                 const res = await fetch(apiUrl, {
                     method: "POST",
                     headers: {
@@ -84,7 +87,7 @@
                 });
 
                 if (!res.ok) {
-                    console.warn(`[PMV Haven] API request failed with status ${res.status}`);
+                    console.warn(`${LOG_PREFIX} API request failed with status ${res.status}`);
                     return;
                 }
 
@@ -97,18 +100,18 @@
                             new RegExp(`'${videoTitle}'`),
                             `<a href="${videoUrl}" target="_blank" style="color: orange; font-weight: bold; text-decoration: underline;">${videoTitle}</a>`
                         );
-                        console.log(`[PMV Haven] Video linked: ${videoUrl}`);
+                        console.log(`${LOG_PREFIX} Video linked: ${videoUrl}`);
                     } else {
-                        console.warn(`[PMV Haven] No matching video found for title: '${videoTitle}'`);
+                        console.warn(`${LOG_PREFIX}No matching video found for title: '${videoTitle}'`);
                     }
                 } else {
-                    console.warn("[PMV Haven] API response did not contain videos array.");
+                    console.warn(`${LOG_PREFIX} API response did not contain videos array.`);
                 }
             } catch (err) {
-                console.error("[PMV Haven] Error fetching videos:", err);
+                console.error(`${LOG_PREFIX} Error fetching videos:`, err);
             }
         } catch (err) {
-            console.error("[PMV Haven] Error handling body text:", err);
+            console.error(`${LOG_PREFIX} Error handling body text:`, err);
         }
     }
 
@@ -121,10 +124,10 @@
             const bodySpan = document.querySelector('.v-overlay__content span.ma-4');
             if (bodySpan) handleBodyText(bodySpan);
         } catch (err) {
-            console.error("[PMV Haven] MutationObserver error:", err);
+            console.error(`${LOG_PREFIX} MutationObserver error:`, err);
         }
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
-    console.log("[PMV Haven] MutationObserver started.");
+    console.log(`${LOG_PREFIX} MutationObserver started.`);
 })();

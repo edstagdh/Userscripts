@@ -12,8 +12,12 @@
 (function() {
     'use strict';
 
+    const LOG_PREFIX = '[TM]';
+    console.log(`${LOG_PREFIX} Script loaded.`);
+
     if (window._fetchPatched) {
-        console.warn("[PMV Haven] Fetch already patched — skipping.");
+        console.warn(`${LOG_PREFIX} Fetch already patched — skipping.`);
+
         return;
     }
     window._fetchPatched = true;
@@ -22,7 +26,7 @@
     window.fetch = async (resource, options) => {
         let url = typeof resource === "string" ? resource : resource?.url;
         if (!url) {
-            console.debug("[PMV Haven] Unknown fetch resource type, skipping:", resource);
+            console.debug(`${LOG_PREFIX} Unknown fetch resource type, skipping:`, resource);
             return originalFetch(resource, options);
         }
 
@@ -31,13 +35,13 @@
             return originalFetch(resource, options);
         }
 
-        console.log("[PMV Haven] Intercepting request:", url);
+        console.log(`${LOG_PREFIX} Intercepting request:`, url);
 
         try {
             const response = await originalFetch(resource, options);
 
             if (!response.ok) {
-                console.warn("[PMV Haven] Response not OK, status:", response.status);
+                console.warn(`${LOG_PREFIX} Response not OK, status:`, response.status);
                 return response;
             }
 
@@ -45,15 +49,15 @@
             try {
                 data = await response.clone().json();
             } catch (err) {
-                console.error("[PMV Haven] Failed to parse JSON:", err);
+                console.error(`${LOG_PREFIX} Failed to parse JSON:`, err);
                 return response;
             }
 
             if (data?.data?.watched !== undefined) {
-                console.log("[PMV Haven] Clearing watch history, original length:", data.data.watched.length);
+                console.log(`${LOG_PREFIX} Clearing watch history, original length:`, data.data.watched.length);
                 data.data.watched = [];
             } else {
-                console.debug("[PMV Haven] No 'watched' field found in response.");
+                console.debug(`${LOG_PREFIX} No 'watched' field found in response.`);
             }
 
             const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
@@ -64,10 +68,10 @@
             });
 
         } catch (err) {
-            console.error("[PMV Haven] Error during fetch interception:", err);
+            console.error(`${LOG_PREFIX} Error during fetch interception:`, err);
             return originalFetch(resource, options);
         }
     };
 
-    console.log("[PMV Haven] Fetch successfully patched.");
+    console.log(`${LOG_PREFIX} Fetch successfully patched.`);
 })();
