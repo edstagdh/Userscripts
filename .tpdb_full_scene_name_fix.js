@@ -5,6 +5,7 @@
 // @description  Completely remove truncation and enforce full visibility for scenes
 // @author       edstagdh
 // @match        https://theporndb.net/*
+// @icon         https://theporndb.net/favicon-16x16.png
 // @grant        none
 // ==/UserScript==
 
