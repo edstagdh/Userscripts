@@ -98,7 +98,7 @@
                         const videoUrl = `${videoBaseUrl}${encodeURIComponent(videoTitle)}_${match._id}`;
                         bodySpan.innerHTML = bodySpan.innerHTML.replace(
                             new RegExp(`'${videoTitle}'`),
-                            `<a href="${videoUrl}" target="_blank" style="color: orange; font-weight: bold; text-decoration: underline;">${videoTitle}</a>`
+                            `<a href="${videoUrl}" target="_blank" style="color: orange; text-decoration: underline;">${videoTitle}</a>`
                         );
                         console.log(`${LOG_PREFIX} Video linked: ${videoUrl}`);
                     } else {
