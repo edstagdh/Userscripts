@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PMV Haven - Disable Infinite Scroll & Hide PMVArchive
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  Disable Infinite Scrolling and Hide PMVArchive switches once when they appear
 // @author       edstagdh
 // @match        https://pmvhaven.com/
