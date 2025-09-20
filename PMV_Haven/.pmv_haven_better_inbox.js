@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PMV Haven - Inbox Sender & Video Link Enhancer
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  Make sender names and video titles clickable in inbox popup (with logging & error handling)
 // @author       edstagdh
 // @match        https://pmvhaven.com/*
@@ -96,10 +96,12 @@
                     const match = data.videos.find(v => v.title === videoTitle);
                     if (match && match._id) {
                         const videoUrl = `${videoBaseUrl}${encodeURIComponent(videoTitle)}_${match._id}`;
+                        const titleRegex = new RegExp(videoTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
                         bodySpan.innerHTML = bodySpan.innerHTML.replace(
-                            new RegExp(`'${videoTitle}'`),
+                            titleRegex,
                             `<a href="${videoUrl}" target="_blank" style="color: orange; text-decoration: underline;">${videoTitle}</a>`
                         );
+
                         console.log(`${LOG_PREFIX} Video linked: ${videoUrl}`);
                     } else {
                         console.warn(`${LOG_PREFIX}No matching video found for title: '${videoTitle}'`);
