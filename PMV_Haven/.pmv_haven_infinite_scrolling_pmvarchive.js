@@ -14,7 +14,7 @@
     'use strict';
 
     const LOG_PREFIX = '[TM]';
-    const switchesToDisable = ["Infinite Scrolling", "Hide PMVArchive"];
+    const switchesToDisable = ["Infinite Scrolling"];
     let done = false;
 
     const observer = new MutationObserver((mutations, obs) => {
