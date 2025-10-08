@@ -36,7 +36,7 @@
         }
 
         function buildBypassUrl(folderId, fileName) {
-            const workerDomain = 'pd.cybar.xyz';
+            const workerDomain = 'pd.1drv.eu.org';
             return `https://${workerDomain}/api/filesystem/${folderId}/${encodeURIComponent(fileName)}`;
         }
 
