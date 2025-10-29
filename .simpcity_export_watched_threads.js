@@ -98,7 +98,6 @@
             } else {
                 // Extract forum name from the path
                 const pathParts = window.location.pathname.split('/').filter(Boolean);
-                // e.g., ['forums', 'xxx-porn.50']
                 const forumName = 'watched_threads';
 
                 const dateStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
