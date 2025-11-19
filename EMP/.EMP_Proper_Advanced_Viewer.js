@@ -19,7 +19,7 @@
 // @version     1.1
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @require     https://code.jquery.com/jquery-2.1.1.js
-// @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/heads/master/EMP/.EMP_Proper_Advanced_Viewer_V1.0.js
+// @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/heads/master/EMP/.EMP_Proper_Advanced_Viewer.js
 // @grant       GM_addStyle
 // ==/UserScript==
 
