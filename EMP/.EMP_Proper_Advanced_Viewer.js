@@ -16,7 +16,7 @@
 // @include     /https?://www\.happyfappy\.(org)/collage*/
 // @include     /https?://www\.happyfappy\.(org)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org)/requests\.php\?id.*/
-// @version     1.1
+// @version     1.2
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @require     https://code.jquery.com/jquery-2.1.1.js
 // @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/heads/master/EMP/.EMP_Proper_Advanced_Viewer.js
@@ -24,6 +24,8 @@
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.2:
+// -fixed requests image preview url
 // v1.1:
 // -added better lazy-load to images loading.
 
@@ -193,9 +195,15 @@ function TableThumbnailBackend(isCollage, replace_categories) {
                     if ($div.children().length === 0) $div.remove();
                 }
             }
-
+            let $titleLink = ''
             // wrap thumbnail in <a> if a link exists (torrents page link)
-            const $titleLink = $row.find('td').eq(1).find('a[href*="torrents.php?id="]').first();
+            if (location.pathname.includes("requests.php")) {
+                $titleLink = $row.find('td').eq(1).find('a[href*="requests.php?action=view&id="]').first();
+            }
+            else
+            {
+                $titleLink = $row.find('td').eq(1).find('a[href*="torrents.php?id="]').first();
+            }
             let $thumbnail = $img;
             if ($titleLink.length) {
                 const href = $titleLink.attr('href');
