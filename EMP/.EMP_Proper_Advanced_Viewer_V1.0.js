@@ -16,12 +16,18 @@
 // @include     /https?://www\.happyfappy\.(org)/collage*/
 // @include     /https?://www\.happyfappy\.(org)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org)/requests\.php\?id.*/
-// @version     1.0
+// @version     1.1
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @require     https://code.jquery.com/jquery-2.1.1.js
 // @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/heads/master/EMP/.EMP_Proper_Advanced_Viewer_V1.0.js
 // @grant       GM_addStyle
 // ==/UserScript==
+
+// CHANGELOG:
+// v1.1:
+// -added better lazy-load to images loading.
+
+
 "use strict";
 
 this.$ = this.jQuery = jQuery.noConflict(true);
@@ -36,6 +42,39 @@ const REPLACE_CATEGORIES = true;
 const REMOVE_CATEGORIES = false;
 const SMALL_THUMBNAILS = true;
 
+// --------------------
+// CSS
+// --------------------
+GM_addStyle(`
+.small-category { vertical-align: top !important; }
+.overlay-category td > div[title],
+.overlay-category .cats_col > div,
+.overlay-category .cats_cols > div { position: absolute; overflow: hidden; }
+.overlay-category-small td > div[title],
+.overlay-category-small .cats_col > div,
+.overlay-category-small .cats_cols > div { width: 11px; }
+.remove-category td > div[title],
+.remove-category .cats_col > div,
+.remove-category .cats_cols > div { display: none; }
+
+.category-overlay-wrapper {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 50px;
+    height: 100%;
+    overflow: hidden;
+    z-index: 2;
+}
+.category-overlay-wrapper img {
+    display: block;
+    max-width: none !important;
+    max-height: none !important;
+}
+.center, .cats_col {
+    position: relative;
+}
+`);
 
 // --------------------
 // HELPERS
@@ -283,19 +322,20 @@ function LazyThumbnails(progress, backend, small_thumbnails, replace_categories,
     };
 
     this.visible_area = function () { const w = jQuery(window); return [w.scrollTop(), w.height()]; };
-    this.on_scroll_event = function () { self.load_next_image(); };
 
-    this.load_next_image = function (force_check) {
-        if (self.image_index < self.images.length) {
-            const $img = self.images[self.image_index];
-            const [y, h] = self.visible_area();
-            if (y + h * (1 + self.preload_ratio) >= $img.position().top) {
-                self.show_img($img);
-                self.image_index++;
-                self.load_next_image(true);
-            } else if (force_check) setTimeout(self.load_next_image, 0);
-        }
-    };
+    this.lazyObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const $img = jQuery(entry.target);
+                self.show_img($img); // load the actual src
+                self.lazyObserver.unobserve(entry.target); // stop observing after load
+            }
+        });
+    }, {
+        root: null, // viewport
+        rootMargin: '0px',
+        threshold: 0.1 // triggers when 10% of the image is visible
+    });
 
     this.attach_thumbnails_init = function () {
         try {
@@ -325,9 +365,10 @@ function LazyThumbnails(progress, backend, small_thumbnails, replace_categories,
                         if (!src) return;
 
                         const $img = self.create_img(src, small_thumbnails);
-                        if ($img) self.attach_image($row, $img);
-
-                        self.images.push($img);
+                        if ($img) {
+                            self.attach_image($row, $img);
+                            self.lazyObserver.observe($img[0]); // observe the DOM element
+                        }
                         self.fix_title($row);
                         $row.data('thumbnail-attached', true);
                         newRowsProcessed = true;
@@ -337,8 +378,6 @@ function LazyThumbnails(progress, backend, small_thumbnails, replace_categories,
                     }
                 }, 200);
 
-                self.load_next_image();
-                jQuery(document).on('scroll resize', self.on_scroll_event);
             }
         } catch (e) { console.error(`${LOG_PREFIX} attach_thumbnails_init error:`, e); }
     };
@@ -355,39 +394,6 @@ function LazyThumbnails(progress, backend, small_thumbnails, replace_categories,
     window.lazyThumbsInstance = new LazyThumbnails(null, backend, SMALL_THUMBNAILS, REPLACE_CATEGORIES, REMOVE_CATEGORIES, TABLE_MAX_IMAGE_SIZE);
 })();
 
-// --------------------
-// CSS
-// --------------------
-GM_addStyle(`
-.small-category { vertical-align: top !important; }
-.overlay-category td > div[title],
-.overlay-category .cats_col > div,
-.overlay-category .cats_cols > div { position: absolute; overflow: hidden; }
-.overlay-category-small td > div[title],
-.overlay-category-small .cats_col > div,
-.overlay-category-small .cats_cols > div { width: 11px; }
-.remove-category td > div[title],
-.remove-category .cats_col > div,
-.remove-category .cats_cols > div { display: none; }
-
-.category-overlay-wrapper {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 50px;
-    height: 100%;
-    overflow: hidden;
-    z-index: 2;
-}
-.category-overlay-wrapper img {
-    display: block;
-    max-width: none !important;
-    max-height: none !important;
-}
-.center, .cats_col {
-    position: relative;
-}
-`);
 
 // --------------------
 // OVERLIB POPUP FIX WITH MAX HEIGHT
