@@ -17,7 +17,7 @@
 // @include     /https?://www\.happyfappy\.(org)/collage*/
 // @include     /https?://www\.happyfappy\.(org)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org)/requests\.php\?id.*/
-// @version     1.2
+// @version     1.3
 // @author      edstagdh + Other contributors
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @require     https://code.jquery.com/jquery-2.1.1.js
