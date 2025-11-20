@@ -9,6 +9,7 @@
 // @include     /https?://www\.empornium\.(is|sx)/collage*/
 // @include     /https?://www\.empornium\.(is|sx)/requests*/
 // @exclude     /https?://www\.empornium\.(is|sx)/requests\.php\?id.*/
+// @include     /https?://www\.empornium\.(is|sx)/userhistory\.php.*/
 // @include     /https?://www\.happyfappy\.(org)/torrents\.php.*/
 // @exclude     /https?://www\.happyfappy\.(org)/torrents\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(org)/user\.php.*/
@@ -25,6 +26,10 @@
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.3:
+// -added 'userhistory' page support.
+// -fixed remove_categories option.
+// -removed replace_categories option.
 // v1.2:
 // -fixed requests image preview url
 // v1.1:
@@ -41,7 +46,6 @@ const LOG_PREFIX = '[TM]';
 // CONFIG - DO NOT CHANGE
 // --------------------
 const TABLE_MAX_IMAGE_SIZE = 250;
-const REPLACE_CATEGORIES = true;
 const REMOVE_CATEGORIES = false;
 const SMALL_THUMBNAILS = true;
 
@@ -99,8 +103,9 @@ function get_torrent_title($row) { return $row.find('td').eq(1); }
 // --------------------
 // BACKEND (table thumbnails only)
 // --------------------
-function TableThumbnailBackend(isCollage, replace_categories) {
+function TableThumbnailBackend(isCollage, remove_categories) {
     this.isCollage = isCollage;
+    this.remove_categories = remove_categories
 
     this.get_image_src = function ($row) {
         try {
@@ -168,32 +173,43 @@ function TableThumbnailBackend(isCollage, replace_categories) {
             // EXTRACT CATEGORY NAME AND REMOVE OLD CATEGORY
             // --------------------
             let catName = '';
+            // If user wants categories removed → wipe all category elements and skip extraction
+            if (this.remove_categories) {
+                // remove <img> categories
+                $category.find('img[src*="cat_"]').remove();
 
-            // 1. Direct <img> inside td (collage)
-            let $catImg = $category.children('img').filter((i, el) => /cat_.*\.png$/.test(el.src));
-            if ($catImg.length) {
-                const match = $catImg.attr('src').match(/cat_(.+)\.png$/);
-                if (match) catName = match[1];
-                $catImg.remove();
+                // remove <div title> categories
+                $category.find('div[title]').remove();
+
+                // no overlay
+                catName = '';
             }
+            else {
+                // NORMAL MODE: extract categories and remove icons but NOT the text
+                // 1) Direct <img> inside td (collage)
+                let $catImg = $category.children('img').filter((i, el) => /cat_.*\.png$/.test(el.src));
+                if ($catImg.length) {
+                    const match = $catImg.attr('src').match(/cat_(.+)\.png$/);
+                    if (match) catName = match[1];
+                    $catImg.remove();
+                }
 
-            // 2. <div title> containing <img> (requests/top10/torrents)
-            if (!catName) {
-                let $div = $category.find('div[title]').first();
-                if ($div.length) {
-                    // fallback to div title
-                    catName = $div.attr('title') || '';
+                // 2) <div title> category icons
+                if (!catName) {
+                    let $div = $category.find('div[title]').first();
+                    if ($div.length) {
+                        catName = $div.attr('title') || '';
 
-                    // check for img inside div (nested or wrapped in <a>)
-                    const $imgInside = $div.find('img').first();
-                    if ($imgInside.length) {
-                        const match = $imgInside.attr('src').match(/cat_(.+)\.png$/);
-                        if (match) catName = match[1];
-                        $imgInside.remove();
+                        const $imgInside = $div.find('img').first();
+                        if ($imgInside.length) {
+                            const match = $imgInside.attr('src').match(/cat_(.+)\.png$/);
+                            if (match) catName = match[1];
+                            $imgInside.remove();
+                        }
+
+                        // remove wrapper div if empty
+                        if ($div.children().length === 0) $div.remove();
                     }
-
-                    // remove div if it's now empty
-                    if ($div.children().length === 0) $div.remove();
                 }
             }
             let $titleLink = ''
@@ -271,7 +287,7 @@ function TableThumbnailBackend(isCollage, replace_categories) {
 // --------------------
 // LAZY THUMBNAILS
 // --------------------
-function LazyThumbnails(progress, backend, small_thumbnails, replace_categories, remove_categories, max_image_size) {
+function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, max_image_size) {
     const self = this;
     this.$torrent_table = null;
     this.images = [];
@@ -280,6 +296,7 @@ function LazyThumbnails(progress, backend, small_thumbnails, replace_categories,
     this.image_index = 0;
     this.preload_ratio = 0.8;
     this.isCollage = backend.isCollage;
+    this.remove_categories = backend.remove_categories
 
     this.create_img = function (src, small) {
         if (!src) return null;
@@ -361,9 +378,6 @@ function LazyThumbnails(progress, backend, small_thumbnails, replace_categories,
             function initThumbnails() {
                 if (!self.$torrent_table.length) return;
 
-                if (replace_categories && !self.isCollage) self.$torrent_table.addClass('overlay-category-small overlay-category');
-                if (remove_categories && !self.isCollage) self.$torrent_table.addClass('remove-category');
-
                 const interval = setInterval(() => {
                     let newRowsProcessed = false;
                     self.$torrent_table.find(self.row_selector).each(function () {
@@ -399,8 +413,8 @@ function LazyThumbnails(progress, backend, small_thumbnails, replace_categories,
 // --------------------
 (function init() {
     const isCollage = location.pathname.includes("/collage");
-    const backend = new TableThumbnailBackend(isCollage, REPLACE_CATEGORIES);
-    window.lazyThumbsInstance = new LazyThumbnails(null, backend, SMALL_THUMBNAILS, REPLACE_CATEGORIES, REMOVE_CATEGORIES, TABLE_MAX_IMAGE_SIZE);
+    const backend = new TableThumbnailBackend(isCollage, REMOVE_CATEGORIES);
+    window.lazyThumbsInstance = new LazyThumbnails(null, backend, SMALL_THUMBNAILS, REMOVE_CATEGORIES, TABLE_MAX_IMAGE_SIZE);
 })();
 
 
