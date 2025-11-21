@@ -17,7 +17,7 @@
 // @include     /https?://www\.happyfappy\.(org)/collage*/
 // @include     /https?://www\.happyfappy\.(org)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org)/requests\.php\?id.*/
-// @version     1.3
+// @version     1.4
 // @author      edstagdh + Other contributors
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @require     https://code.jquery.com/jquery-2.1.1.js
@@ -26,6 +26,9 @@
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.4:
+// -added overlib popup for the thumbnail
+// -added category overlay hyperlink support.
 // v1.3:
 // -added 'userhistory' page support.
 // -fixed remove_categories option.
@@ -99,6 +102,77 @@ function get_collage_title($row) { return $row.find('td').eq(1); }
 // --------------------
 function get_torrent_category($row) { return $row.find('td').eq(0); }
 function get_torrent_title($row) { return $row.find('td').eq(1); }
+
+// --------------------
+// CATEGORY MAPPING
+// --------------------
+const categoryMap = {
+    1: ["amateur"],
+    2: ["anal"],
+    5: ["asian"],
+    6: ["bbw"],
+    30: ["bdsm"],
+    36: ["big.ass"],
+    8: ["big.tits"],
+    7: ["black"],
+    9: ["classic"],
+    37: ["creampie"],
+    10: ["cumshot"],
+    11: ["dvdr"],
+    12: ["fetish"],
+    14: ["orgy"],
+    39: ["gay"],
+    56: ["hairy"],
+    35: ["hardcore"],
+    44: ["hd"],
+    3: ["hentai"],
+    25: ["homemade"],
+    43: ["interracial"],
+    16: ["latina"],
+    23: ["lesbian"],
+    52: ["lingerie"],
+    27: ["magazines"],
+    53: ["comic"],
+    18: ["masturbation"],
+    26: ["mature"],
+    40: ["mega.pack"],
+    41: ["natural.tits"],
+    17: ["oral"],
+    29: ["other"],
+    47: ["oarody"],
+    24: ["oaysite"],
+    21: ["images"],
+    50: ["piss"],
+    55: ["porn.music.video"],
+    46: ["pregnant"],
+    51: ["scat"],
+    22: ["siterip"],
+    20: ["softcore"],
+    49: ["squirting"],
+    34: ["straight"],
+    19: ["teen"],
+    15: ["transgender"],
+    45: ["voyeur"],
+    13: ["games.apps"]
+    // you can expand this array with multiple alternative names per category
+};
+
+// --------------------
+// HELPER FUNCTION TO GET CATEGORY LINK
+// --------------------
+function getCategoryLink(catName) {
+    catName = catName.toLowerCase().trim(); // normalize
+
+    for (const catID in categoryMap) {
+        const names = categoryMap[catID];
+        if (names.some(name => name.toLowerCase() === catName)) {
+            return `/torrents.php?filter_cat[${catID}]=1`;
+        }
+    }
+
+    // fallback if no match
+    return '/torrents.php';
+}
 
 // --------------------
 // BACKEND (table thumbnails only)
@@ -185,30 +259,24 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 catName = '';
             }
             else {
-                // NORMAL MODE: extract categories and remove icons but NOT the text
-                // 1) Direct <img> inside td (collage)
-                let $catImg = $category.children('img').filter((i, el) => /cat_.*\.png$/.test(el.src));
-                if ($catImg.length) {
-                    const match = $catImg.attr('src').match(/cat_(.+)\.png$/);
-                    if (match) catName = match[1];
-                    $catImg.remove();
+                // Extract category name from div[title] only
+                let $div = $category.find('div[title]').first();
+                if ($div.length) {
+                    // Use the div's title as the category name
+                    catName = $div.attr('title') || '';
+
+                    // Remove any <img> inside the div (still removing the icon)
+                    $div.find('img').remove();
+
+                    // Remove wrapper div if empty
+                    if ($div.children().length === 0) $div.remove();
                 }
-
-                // 2) <div title> category icons
-                if (!catName) {
-                    let $div = $category.find('div[title]').first();
-                    if ($div.length) {
-                        catName = $div.attr('title') || '';
-
-                        const $imgInside = $div.find('img').first();
-                        if ($imgInside.length) {
-                            const match = $imgInside.attr('src').match(/cat_(.+)\.png$/);
-                            if (match) catName = match[1];
-                            $imgInside.remove();
-                        }
-
-                        // remove wrapper div if empty
-                        if ($div.children().length === 0) $div.remove();
+                if (isCollage) {
+                    let $catImg = $category.children('img').filter((i, el) => /cat_.*\.png$/.test(el.src));
+                    if ($catImg.length) {
+                        const match = $catImg.attr('src').match(/cat_(.+)\.png$/);
+                        if (match) catName = match[1];
+                        $catImg.remove();
                     }
                 }
             }
@@ -229,6 +297,16 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 $thumbnail = $a;
             }
 
+            // ADD OVERLIB EVENTS TO THUMBNAIL
+            const $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
+            if ($textLink.length) {
+                const mouseOverCode = $textLink.attr('onmouseover');
+                const mouseOutCode  = $textLink.attr('onmouseout');
+
+                if (mouseOverCode) $thumbnail.attr('onmouseover', mouseOverCode);
+                if (mouseOutCode)  $thumbnail.attr('onmouseout', mouseOutCode);
+            }
+
             // insert thumbnail first
             $category.prepend($thumbnail);
             $thumbnail.css({
@@ -242,11 +320,35 @@ function TableThumbnailBackend(isCollage, remove_categories) {
 
             // Add text overlay with category name
             if (catName) {
-                // uppercase for nicer presentation
-                const overlayText = String(catName).toUpperCase();
+                const overlayText = String(catName).replace(/\./g, ' ').toUpperCase().trim();
+
+                let catHref = '#'; // default fallback
+
+                // Find the category link on normal pages
+                const $catDiv = $category.find('div[title]').first();
+                if ($catDiv.length) {
+                    const $catLink = $catDiv.find('a[href]').first();
+                    if ($catLink.length) catHref = $catLink.attr('href');
+                }
+
+                // --- EXCEPTIONS FOR COLLAGE / TOP10 / USERHISTORY ---
+                const path = location.pathname;
+                if (path.includes('/collage') || path.includes('/top10') || path.includes('/userhistory')) {
+                    // extract category ID from original href if possible
+                    catHref = getCategoryLink(catName); // instead of relying on existing href
+                    // console.log(`${LOG_PREFIX} Generated category link for '${catName}': ${catHref}`);
+                }
+
+                // create the overlay link
+                const $link = jQuery('<a>')
+                .text(overlayText)
+                .attr('href', catHref)
+                .css({
+                    'color': 'white',
+                    'text-decoration': 'none'
+                });
 
                 const $overlay = jQuery('<div>')
-                .text(overlayText)
                 .css({
                     'position': 'absolute',
                     'top': '5px',
@@ -259,16 +361,19 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                     'line-height': '1.1',
                     'border-radius': '3px',
                     'z-index': 9999,
-                    'pointer-events': 'none',
+                    'pointer-events': 'auto',
                     'white-space': 'normal',
-                    'max-width': (TABLE_MAX_IMAGE_SIZE - 20) + 'px', // prevent overflow beyond thumb
+                    'max-width': (TABLE_MAX_IMAGE_SIZE - 20) + 'px',
                     'box-sizing': 'border-box'
-                });
+                })
+                .append($link);
 
+                $category.css('position',
+                              $category.css('position') === 'static'
+                              ? 'relative'
+                              : $category.css('position')
+                             );
 
-                // Append overlay to the category cell (safer for requests/top10)
-                // Ensure the category cell is positioned (your CSS already does this)
-                $category.css('position', $category.css('position') === 'static' ? 'relative' : $category.css('position'));
                 $category.append($overlay);
             }
 
