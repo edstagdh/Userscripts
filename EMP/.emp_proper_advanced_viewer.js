@@ -10,14 +10,7 @@
 // @include     /https?://www\.empornium\.(is|sx)/requests*/
 // @exclude     /https?://www\.empornium\.(is|sx)/requests\.php\?id.*/
 // @include     /https?://www\.empornium\.(is|sx)/userhistory\.php.*/
-// @include     /https?://www\.happyfappy\.(org)/torrents\.php.*/
-// @exclude     /https?://www\.happyfappy\.(org)/torrents\.php\?id.*/
-// @include     /https?://www\.happyfappy\.(org)/user\.php.*/
-// @include     /https?://www\.happyfappy\.(org)/top10\.php.*/
-// @include     /https?://www\.happyfappy\.(org)/collage*/
-// @include     /https?://www\.happyfappy\.(org)/requests*/
-// @exclude     /https?://www\.happyfappy\.(org)/requests\.php\?id.*/
-// @version     1.4
+// @version     1.5
 // @author      edstagdh + Other contributors
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @require     https://code.jquery.com/jquery-2.1.1.js
@@ -26,6 +19,8 @@
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.5:
+// -added lazy-load options, see below config - IMAGE_LOAD_MODE
 // v1.4:
 // -added overlib popup for the thumbnail
 // -added category overlay hyperlink support.
@@ -51,6 +46,14 @@ const LOG_PREFIX = '[TM]';
 const TABLE_MAX_IMAGE_SIZE = 250;
 const REMOVE_CATEGORIES = false;
 const SMALL_THUMBNAILS = true;
+
+// --------------------
+// LAZY LOAD MODE
+// --------------------
+// "lazy"      → load when visible
+// "near"      → load ~1–2 screens away
+// "disabled"  → load immediately
+const IMAGE_LOAD_MODE = "near";
 
 // --------------------
 // CSS
@@ -454,19 +457,36 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
 
     this.visible_area = function () { const w = jQuery(window); return [w.scrollTop(), w.height()]; };
 
-    this.lazyObserver = new IntersectionObserver((entries) => {
+    let observerOptions = null;
+
+    if (IMAGE_LOAD_MODE === "lazy") {
+        observerOptions = {
+            root: null,
+            rootMargin: '0px',
+            threshold: 0.1
+        };
+    }
+    else if (IMAGE_LOAD_MODE === "near") {
+        observerOptions = {
+            root: null,
+            rootMargin: '150% 0px', // ~1–2 screens away
+            threshold: 0.01
+        };
+    }
+
+    // create observer only if needed
+    this.lazyObserver = observerOptions
+        ? new IntersectionObserver((entries) => {
         entries.forEach(entry => {
             if (entry.isIntersecting) {
                 const $img = jQuery(entry.target);
-                self.show_img($img); // load the actual src
-                self.lazyObserver.unobserve(entry.target); // stop observing after load
+                self.show_img($img);
+                self.lazyObserver.unobserve(entry.target);
             }
         });
-    }, {
-        root: null, // viewport
-        rootMargin: '0px',
-        threshold: 0.1 // triggers when 10% of the image is visible
-    });
+    }, observerOptions)
+    : null;
+
 
     this.attach_thumbnails_init = function () {
         try {
@@ -495,7 +515,14 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
                         const $img = self.create_img(src, small_thumbnails);
                         if ($img) {
                             self.attach_image($row, $img);
-                            self.lazyObserver.observe($img[0]); // observe the DOM element
+
+                            if (IMAGE_LOAD_MODE === "disabled") {
+                                // load immediately
+                                self.show_img($img);
+                            } else {
+                                // lazy or near
+                                self.lazyObserver.observe($img[0]);
+                            }
                         }
                         self.fix_title($row);
                         $row.data('thumbnail-attached', true);
