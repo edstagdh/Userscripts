@@ -4,7 +4,7 @@
 // @version      1.1
 // @description  Add a button to copy the BBCode presentation of the torrent, even with mediainfo section.
 // @author       edstagdh + others
-// @match        https://www.happyfappy.org/torrents.php?id=*
+// @include      /^https?:\/\/www\.happyfappy\.(org|net)\/torrents\.php\?id=.*/
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=happyfappy.org
 // @download     https://raw.githubusercontent.com/edstagdh/Userscripts/master/.HF_add_copy_bbcode_link.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/.HF_add_copy_bbcode_link.js
@@ -12,6 +12,8 @@
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.2 - 2026-02-24:
+// -added .net domain
 // v1.1 - 2026-02-11:
 // -fixed usage of torrent with mediainfo element.
 // -added toast notification to alert successful copy.
