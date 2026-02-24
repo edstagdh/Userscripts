@@ -10,15 +10,27 @@
 // @include     /https?://www\.empornium\.(is|sx)/requests*/
 // @exclude     /https?://www\.empornium\.(is|sx)/requests\.php\?id.*/
 // @include     /https?://www\.empornium\.(is|sx)/userhistory\.php.*/
-// @version     1.5
+// @include     /https?://www\.happyfappy\.(org|net)/torrents\.php.*/
+// @exclude     /https?://www\.happyfappy\.(org|net)/torrents\.php\?id.*/
+// @include     /https?://www\.happyfappy\.(org|net)/user\.php.*/
+// @include     /https?://www\.happyfappy\.(org|net)/top10\.php.*/
+// @include     /https?://www\.happyfappy\.(org|net)/collage*/
+// @include     /https?://www\.happyfappy\.(org|net)/requests*/
+// @exclude     /https?://www\.happyfappy\.(org|net)/requests\.php\?id.*/
+// @include     /https?://www\.happyfappy\.(org|net)/userhistory\.php.*/
+// @version     1.6
 // @author      edstagdh + Other contributors
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
+// @icon        https://www.google.com/s2/favicons?sz=64&domain=happyfappy.org
 // @require     https://code.jquery.com/jquery-2.1.1.js
 // @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/heads/master/EMP/.emp_proper_advanced_viewer.js
 // @grant       GM_addStyle
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.6:
+// -removed head requests and changed handling of image requests, this should fix caching issues
+// -added HF domains
 // v1.5:
 // -added lazy-load options, see below config - IMAGE_LOAD_MODE
 // v1.4:
@@ -416,38 +428,19 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
         });
     };
 
-    this.show_img = async function ($img) {
-        try {
-            const src = $img.data('src');
-            if (!src) return;
+    this.show_img = function ($img) {
+        const src = $img.data('src');
+        if (!src) return;
 
-            let isImage = src.match(/\.(jpg|jpeg|png|gif|webp)$/i);
-
-            if (!isImage) {
-                try {
-                    const response = await fetch(src, { method: 'HEAD' });
-                    const contentType = response.headers.get('Content-Type') || '';
-                    isImage = contentType.startsWith('image/');
-                } catch {
-                    isImage = false;
-                }
-            }
-
-            // If NOT an image → replace src with fallback
-            if (!isImage) {
-                $img.prop('src', '/static/common/noartwork/noimage.png')
-                    .css({ 'min-width': '', 'min-height': '' });
-                return;
-            }
-
-            // Valid image → load normally
-            $img.prop('src', src).css({ 'min-width': '', 'min-height': '' });
-
-        } catch (e) {
-            // On error → fallback image instead of removing
-            $img.prop('src', '/static/common/noartwork/noimage.png')
-                .css({ 'min-width': '', 'min-height': '' });
-        }
+        $img
+            .one('error', function () {
+            this.src = '/static/common/noartwork/noimage.png';
+        })
+            .prop('src', src)
+            .css({
+            'min-width': '',
+            'min-height': ''
+        });
     };
 
     this.fix_title = function ($row) {
