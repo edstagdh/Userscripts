@@ -23,11 +23,13 @@
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=happyfappy.org
 // @require     https://code.jquery.com/jquery-2.1.1.js
-// @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/heads/master/EMP/.emp_proper_advanced_viewer.js
+// @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP/.emp_proper_advanced_viewer.js
 // @grant       GM_addStyle
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.7:
+// -added wider table view configurable.
 // v1.6:
 // -removed head requests and changed handling of image requests, this should fix caching issues
 // -added HF domains
@@ -58,6 +60,7 @@ const LOG_PREFIX = '[TM]';
 const TABLE_MAX_IMAGE_SIZE = 250;
 const REMOVE_CATEGORIES = false;
 const SMALL_THUMBNAILS = true;
+const ENABLE_WIDER_TABLE_VIEW = true;
 
 // --------------------
 // LAZY LOAD MODE
@@ -100,6 +103,19 @@ GM_addStyle(`
     position: relative;
 }
 `);
+
+// --------------------
+// ADDITIONAL CSS INJECTION
+// --------------------
+if (ENABLE_WIDER_TABLE_VIEW) {
+    GM_addStyle(`
+        #content {
+            width: 99%;
+            max-width: 1500px;
+        }
+    `);
+}
+
 
 // --------------------
 // HELPERS
