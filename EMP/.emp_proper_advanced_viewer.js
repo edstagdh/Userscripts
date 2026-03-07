@@ -18,7 +18,7 @@
 // @include     /https?://www\.happyfappy\.(org|net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org|net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(org|net)/userhistory\.php.*/
-// @version     1.6
+// @version     1.7
 // @author      edstagdh + Other contributors
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=happyfappy.org
