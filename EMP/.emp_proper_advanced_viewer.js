@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        EMP Proper Advanced Viewer
+// @name        EMP/HF Proper Advanced Viewer
 // @description this script provides better browsing experience using images from torrents/requests.
 // @namespace   tampermonkey
 // @include     /https?://www\.empornium\.(is|sx)/torrents\.php.*/
@@ -18,16 +18,21 @@
 // @include     /https?://www\.happyfappy\.(org|net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org|net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(org|net)/userhistory\.php.*/
-// @version     1.7
+// @version     1.8
 // @author      edstagdh + Other contributors
-// @icon        https://www.google.com/s2/favicons?sz=64&domain=empornium.is
-// @icon        https://www.google.com/s2/favicons?sz=64&domain=happyfappy.org
+// @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
+// @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @require     https://code.jquery.com/jquery-2.1.1.js
 // @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP/.emp_proper_advanced_viewer.js
 // @grant       GM_addStyle
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.8:
+// -Fixed some EMP categories links(spelled different in some pages ¯\_(ツ)_/¯)
+// -Fixed top10 page and collage page for hover image preview in torrent list
+// -Added better grid options in collage page, see config below - "COLLAGE PAGE CONFIG"
+// -split EMP/HF categories links maps.
 // v1.7:
 // -added wider table view configurable.
 // v1.6:
@@ -47,7 +52,6 @@
 // v1.1:
 // -added better lazy-load to images loading.
 
-
 "use strict";
 
 this.$ = this.jQuery = jQuery.noConflict(true);
@@ -61,6 +65,26 @@ const TABLE_MAX_IMAGE_SIZE = 250;
 const REMOVE_CATEGORIES = false;
 const SMALL_THUMBNAILS = true;
 const ENABLE_WIDER_TABLE_VIEW = true;
+
+// --------------------
+// COLLAGE PAGE CONFIG - by default shows full image contained not overflow regardless of images being removed or text being modified.
+// --------------------
+// TRIM TEXT MODE
+// --------------------
+// "small_text"         → just makes the text small
+// "smaller_text"       → just makes the text smaller
+// "small_text_wrap"    → makes the text small and wrap text
+// "smaller_text_wrap"  → makes the text smaller and wrap text
+// "nothing"            → keeps the original behavior
+const TRIM_TEXT_COLLAGE_PAGE_MODE = "nothing";
+const REMOVE_MAIN_IMAGES_COLLAGE_PAGE = false;
+// --------------------
+// FIT VERTICAL IMAGES MODE
+// --------------------
+// "half"     → attempt to fit the image at half width
+// "full"     → attempt to fit the image at full width
+// "nothing"  → keeps the original behavior
+const FIT_VERTICAL_IMAGES_GRID_BETTER = "nothing";
 
 // --------------------
 // LAZY LOAD MODE
@@ -137,21 +161,21 @@ function get_torrent_title($row) { return $row.find('td').eq(1); }
 // --------------------
 // CATEGORY MAPPING
 // --------------------
-const categoryMap = {
+const EMPcategoryMap = {
     1: ["amateur"],
     2: ["anal"],
     5: ["asian"],
     6: ["bbw"],
     30: ["bdsm"],
-    36: ["big.ass"],
-    8: ["big.tits"],
+    36: ["big.ass", "big-ass"],
+    8: ["big.tits", "big-tits"],
     7: ["black"],
     9: ["classic"],
     37: ["creampie"],
     10: ["cumshot"],
     11: ["dvdr"],
     12: ["fetish"],
-    14: ["orgy"],
+    14: ["orgy", "gangbang"],
     39: ["gay"],
     56: ["hairy"],
     35: ["hardcore"],
@@ -166,15 +190,15 @@ const categoryMap = {
     53: ["comic"],
     18: ["masturbation"],
     26: ["mature"],
-    40: ["mega.pack"],
-    41: ["natural.tits"],
+    40: ["mega.pack", "megapack"],
+    41: ["natural.tits", "natural-tits"],
     17: ["oral"],
     29: ["other"],
-    47: ["oarody"],
-    24: ["oaysite"],
-    21: ["images"],
+    47: ["parody"],
+    24: ["paysite"],
+    21: ["images", "pictures"],
     50: ["piss"],
-    55: ["porn.music.video"],
+    55: ["porn.music.video", "music-video"],
     46: ["pregnant"],
     51: ["scat"],
     22: ["siterip"],
@@ -182,16 +206,45 @@ const categoryMap = {
     49: ["squirting"],
     34: ["straight"],
     19: ["teen"],
-    15: ["transgender"],
+    15: ["transgender", "shemale"],
     45: ["voyeur"],
-    13: ["games.apps"]
+    13: ["games.apps", "xxx_games", "xxx-games"]
+    // you can expand this array with multiple alternative names per category
+};
+const HFcategoryMap = {
+    15: ["ai"],
+    11: ["asian"],
+    6: ["fansite"],
+    13: ["games"],
+    3: ["gay"],
+    4: ["interracial"],
+    5: ["lesbian"],
+    9: ["packs"],
+    10: ["pics"],
+    1: ["pron"],
+    8: ["retro"],
+    14: ["scat"],
+    12: ["transexual", "trans"],
+    7: ["vr"],
+
     // you can expand this array with multiple alternative names per category
 };
 
 // --------------------
+// SELECT CATEGORY MAP BASED ON URL
+// --------------------
+let currentCategoryMap = EMPcategoryMap; // default
+
+if (location.href.includes("empornium")) {
+    currentCategoryMap = EMPcategoryMap; // you need to define EMPcategoryMap1
+} else if (location.href.includes("happyfappy")) {
+    currentCategoryMap = HFcategoryMap; // define EMPcategoryMap2
+}
+
+// --------------------
 // HELPER FUNCTION TO GET CATEGORY LINK
 // --------------------
-function getCategoryLink(catName) {
+function getCategoryLink(catName, categoryMap = currentCategoryMap) {
     catName = catName.toLowerCase().trim(); // normalize
 
     for (const catID in categoryMap) {
@@ -201,8 +254,7 @@ function getCategoryLink(catName) {
         }
     }
 
-    // fallback if no match
-    return '/torrents.php';
+    return '/torrents.php'; // fallback
 }
 
 // --------------------
@@ -328,16 +380,6 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 $thumbnail = $a;
             }
 
-            // ADD OVERLIB EVENTS TO THUMBNAIL
-            const $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
-            if ($textLink.length) {
-                const mouseOverCode = $textLink.attr('onmouseover');
-                const mouseOutCode  = $textLink.attr('onmouseout');
-
-                if (mouseOverCode) $thumbnail.attr('onmouseover', mouseOverCode);
-                if (mouseOutCode)  $thumbnail.attr('onmouseout', mouseOutCode);
-            }
-
             // insert thumbnail first
             $category.prepend($thumbnail);
             $thumbnail.css({
@@ -348,6 +390,29 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 'position': 'relative',
                 'z-index': 1
             });
+
+            // Add OVERLIB events to thumbnail
+            let $textLink = null;
+
+            if (isCollage) {
+                // On collage or top10 pages, enforce hover from title link
+                $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
+            } else if (location.pathname.includes("/top10")) {
+                $textLink = $row.find('td').eq(2).find('a[onmouseover]').first();
+            } else if (location.pathname.includes("requests.php")) {
+                $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
+            } else {
+                $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
+            }
+            // console.log(`${LOG_PREFIX} test1: ${$textLink.attr(onmouseover)}`);
+
+            if ($textLink && $textLink.length) {
+                const mouseOverCode = $textLink.attr('onmouseover');
+                const mouseOutCode  = $textLink.attr('onmouseout');
+
+                if (mouseOverCode) $thumbnail.attr('onmouseover', mouseOverCode);
+                if (mouseOutCode)  $thumbnail.attr('onmouseout', mouseOutCode);
+            }
 
             // Add text overlay with category name
             if (catName) {
@@ -366,8 +431,8 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 const path = location.pathname;
                 if (path.includes('/collage') || path.includes('/top10') || path.includes('/userhistory')) {
                     // extract category ID from original href if possible
-                    catHref = getCategoryLink(catName); // instead of relying on existing href
-                    // console.log(`${LOG_PREFIX} Generated category link for '${catName}': ${catHref}`);
+                    catHref = getCategoryLink(catName, currentCategoryMap); // instead of relying on existing href
+                    console.log(`${LOG_PREFIX} Generated category link for '${catName}': ${catHref}`);
                 }
 
                 // create the overlay link
@@ -555,9 +620,101 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
 (function init() {
     const isCollage = location.pathname.includes("/collage");
     const backend = new TableThumbnailBackend(isCollage, REMOVE_CATEGORIES);
+
+    if (isCollage) {
+        jQuery('.torrent_grid__torrent').each(function() {
+            const $torrentDiv = jQuery(this);
+
+            // Remove the cover image div
+            if (REMOVE_MAIN_IMAGES_COLLAGE_PAGE) {
+                $torrentDiv.find('.torrent__cover').remove();
+
+                // Wait a tick, then update the svg
+                setTimeout(() => {
+                    $torrentDiv.find('svg').each(function () {
+                        this.setAttribute('viewBox', '0 0 1.5 1');
+                    });
+                }, 0);
+            }
+            else {
+                // Update the CSS for all torrent__cover divs on collage page
+                image_css = `
+                    .torrent__cover {
+                        background-size: contain !important;  /* show full image */
+                        background-repeat: no-repeat !important;
+                        background-position: center 30px !important;
+                `
+                image_css += `}`;
+                GM_addStyle(image_css);
+
+                // Wait a tick, then update the svg
+                if (FIT_VERTICAL_IMAGES_GRID_BETTER == "half") {
+                    setTimeout(() => {
+                        $torrentDiv.find('svg').each(function () {
+                            this.setAttribute('viewBox', '0 0 0.75 1');
+                        });
+                    }, 0);
+                }
+                else if (FIT_VERTICAL_IMAGES_GRID_BETTER === "full") {
+                    setTimeout(() => {
+                        $torrentDiv.find('svg').each(function () {
+                            this.setAttribute('viewBox', '0 0 0.5 1');
+                        });
+                    }, 0);
+                }
+            }
+
+            // Untrim the title and apply word-wrap & smaller font
+            if (TRIM_TEXT_COLLAGE_PAGE_MODE=== "small_text_wrap") {
+                $torrentDiv.find('h3.trim').each(function() {
+                    const $h3 = jQuery(this);
+                    $h3.removeClass('trim');
+                    $h3.css({
+                        'white-space': 'normal',   // allow wrapping
+                        'overflow': 'visible',     // no cutting
+                        'text-overflow': 'clip',   // remove ellipsis
+                        'font-size': '13px',       // smaller font
+                        'line-height': '1.2',      // tighter spacing
+                        'word-break': 'break-word' // wrap long words
+                    });
+                });
+            }
+            else if (TRIM_TEXT_COLLAGE_PAGE_MODE=== "smaller_text_wrap") {
+                $torrentDiv.find('h3.trim').each(function() {
+                    const $h3 = jQuery(this);
+                    $h3.removeClass('trim');
+                    $h3.css({
+                        'white-space': 'normal',   // allow wrapping
+                        'overflow': 'visible',     // no cutting
+                        'text-overflow': 'clip',   // remove ellipsis
+                        'font-size': '10px',       // smaller font
+                        'line-height': '1.0',      // tighter spacing
+                        'word-break': 'break-word' // wrap long words
+                    });
+                });
+            }
+            else if (TRIM_TEXT_COLLAGE_PAGE_MODE=== "small_text") {
+                $torrentDiv.find('h3.trim').each(function() {
+                    const $h3 = jQuery(this);
+                    $h3.css({
+                        'font-size': '13px',       // smaller font
+                        'line-height': '1.2',      // tighter spacing
+                    });
+                });
+            }
+            else if (TRIM_TEXT_COLLAGE_PAGE_MODE=== "smaller_text") {
+                $torrentDiv.find('h3.trim').each(function() {
+                    const $h3 = jQuery(this);
+                    $h3.css({
+                        'font-size': '10px',       // smaller font
+                        'line-height': '1.0',      // tighter spacing
+                    });
+                });
+            }
+        });
+    }
     window.lazyThumbsInstance = new LazyThumbnails(null, backend, SMALL_THUMBNAILS, REMOVE_CATEGORIES, TABLE_MAX_IMAGE_SIZE);
 })();
-
 
 // --------------------
 // OVERLIB POPUP FIX WITH MAX HEIGHT
