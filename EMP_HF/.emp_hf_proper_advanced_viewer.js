@@ -23,7 +23,7 @@
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @require     https://code.jquery.com/jquery-2.1.1.js
-// @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP/.emp_proper_advanced_viewer.js
+// @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/.emp_hf_proper_advanced_viewer.js
 // @grant       GM_addStyle
 // ==/UserScript==
 
