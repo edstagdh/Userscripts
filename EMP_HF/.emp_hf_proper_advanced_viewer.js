@@ -18,7 +18,7 @@
 // @include     /https?://www\.happyfappy\.(org|net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org|net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(org|net)/userhistory\.php.*/
-// @version     1.8
+// @version     1.9
 // @author      edstagdh + Other contributors
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
@@ -28,6 +28,9 @@
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.9:
+// -Fixed Notifications & Subscribed collages pages, thumbnails are now also hyper links to torrents.
+// -Removed categories from Subscribed collages page("userhistory.php?action=subscribed_collages"), since the categories are not exposed in this page.
 // v1.8:
 // -Fixed some EMP categories links(spelled different in some pages ¯\_(ツ)_/¯)
 // -Fixed top10 page and collage page for hover image preview in torrent list
@@ -342,33 +345,44 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 catName = '';
             }
             else {
-                // Extract category name from div[title] only
-                let $div = $category.find('div[title]').first();
-                if ($div.length) {
-                    // Use the div's title as the category name
-                    catName = $div.attr('title') || '';
+                if (!(location.pathname === "/userhistory.php" && new URLSearchParams(location.search).get("action") === "subscribed_collages")) {
+                    // Extract category name from div[title] only
+                    let $div = $category.find('div[title]').first();
+                    if ($div.length) {
+                        // Use the div's title as the category name
+                        catName = $div.attr('title') || '';
 
-                    // Remove any <img> inside the div (still removing the icon)
-                    $div.find('img').remove();
+                        // Remove any <img> inside the div (still removing the icon)
+                        $div.find('img').remove();
 
-                    // Remove wrapper div if empty
-                    if ($div.children().length === 0) $div.remove();
-                }
-                if (isCollage) {
-                    let $catImg = $category.children('img').filter((i, el) => /cat_.*\.png$/.test(el.src));
-                    if ($catImg.length) {
-                        const match = $catImg.attr('src').match(/cat_(.+)\.png$/);
-                        if (match) catName = match[1];
-                        $catImg.remove();
+                        // Remove wrapper div if empty
+                        if ($div.children().length === 0) $div.remove();
+                    }
+                    if (isCollage || (location.pathname === "/torrents.php" && new URLSearchParams(location.search).get("action") === "notify")){
+                        let $catImg = $category.children('img').filter((i, el) => /cat_.*\.png$/.test(el.src));
+                        if ($catImg.length) {
+                            const match = $catImg.attr('src').match(/cat_(.+)\.png$/);
+                            if (match) catName = match[1];
+                            $catImg.remove();
+                        }
                     }
                 }
             }
+            // console.log(`${LOG_PREFIX} Category Name: ${catName}`);
             let $titleLink = ''
             // wrap thumbnail in <a> if a link exists (torrents page link)
             if (location.pathname.includes("requests.php")) {
                 $titleLink = $row.find('td').eq(1).find('a[href*="requests.php?action=view&id="]').first();
             }
-            else
+            else if (isCollage) {
+                $titleLink = $row.find('td').eq(1).find('a[href*="torrents.php?id="]').first();
+            }
+            else if (location.pathname === "/userhistory.php" && new URLSearchParams(location.search).get("action") === "subscribed_collages") {
+                $titleLink = $row.find('td').eq(2).find('a[href*="torrents.php?id="]').first();
+            }
+            else if (location.pathname === "/torrents.php" && new URLSearchParams(location.search).get("action") === "notify") {
+                $titleLink = $row.find('td').eq(2).find('a[href*="torrents.php?id="]').first();
+            } else
             {
                 $titleLink = $row.find('td').eq(1).find('a[href*="torrents.php?id="]').first();
             }
@@ -395,16 +409,20 @@ function TableThumbnailBackend(isCollage, remove_categories) {
             let $textLink = null;
 
             if (isCollage) {
-                // On collage or top10 pages, enforce hover from title link
+                // On collage or top10 or userhistory pages, enforce hover from title link
                 $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
+            } else if (location.pathname === "/torrents.php" && new URLSearchParams(location.search).get("action") === "notify") {
+                $textLink = $row.find('td').eq(2).find('a[onmouseover]').first();
             } else if (location.pathname.includes("/top10")) {
                 $textLink = $row.find('td').eq(2).find('a[onmouseover]').first();
-            } else if (location.pathname.includes("requests.php")) {
+            } else if (location.pathname.includes("/requests.php")) {
                 $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
+            } else if (location.pathname.includes("/userhistory.php")) {
+                $textLink = $row.find('td').eq(2).find('a[onmouseover]').first();
             } else {
                 $textLink = $row.find('td').eq(1).find('a[onmouseover]').first();
             }
-            // console.log(`${LOG_PREFIX} test1: ${$textLink.attr(onmouseover)}`);
+
 
             if ($textLink && $textLink.length) {
                 const mouseOverCode = $textLink.attr('onmouseover');
@@ -429,7 +447,10 @@ function TableThumbnailBackend(isCollage, remove_categories) {
 
                 // --- EXCEPTIONS FOR COLLAGE / TOP10 / USERHISTORY ---
                 const path = location.pathname;
-                if (path.includes('/collage') || path.includes('/top10') || path.includes('/userhistory')) {
+                if (path.includes('/collage') || path.includes('/top10') || path.includes('/userhistory') ||
+                    (location.pathname === "/torrents.php" &&
+                     new URLSearchParams(location.search).get("action") === "notify")
+                   ) {
                     // extract category ID from original href if possible
                     catHref = getCategoryLink(catName, currentCategoryMap); // instead of relying on existing href
                     console.log(`${LOG_PREFIX} Generated category link for '${catName}': ${catHref}`);
