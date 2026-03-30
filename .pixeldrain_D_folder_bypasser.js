@@ -21,19 +21,7 @@
     const PIXELDRAIN_BYPASS_FS = 'https://cdn.pixeldrain.eu.cc/';
 
     const isPixeldrainFolder = /^pixeldrain\.(com|net)$/.test(location.hostname) && location.pathname.startsWith('/d/');
-    const isWorkerDomain = /\.pd\d+\.workers\.dev$/.test(location.hostname);
 
-    // Redirect Fix Logic
-    if (isWorkerDomain) {
-        const url = window.location.href;
-        const badPattern = '/api/file/api/filesystem/';
-        if (url.includes(badPattern)) {
-            const fixedUrl = url.replace('/api/file/api/filesystem/', '/api/filesystem/');
-            console.log('[RedirectFix] Redirecting to fixed URL:', fixedUrl);
-            window.location.replace(fixedUrl);
-            return;
-        }
-    }
 
     // Folder Bypass Logic
     if (isPixeldrainFolder) {
