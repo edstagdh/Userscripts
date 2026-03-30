@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PixelDrain L-Folder(Album) Bypass Links Simple
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      4
 // @description  Resize gallery links, rewrite file URLs, and bypass download limits on Pixeldrain galleries and file pages.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
@@ -11,16 +11,29 @@
 // @grant        GM_openInTab
 // ==/UserScript==
 
+// CHANGELOG:
+// v4:
+// -Fixed bypass for both gallery and single file
+// -Single file "Show Bypass Links" button now shows table view.
+
 (function () {
     'use strict';
 
     const PIXELDRAIN_VIEW = 'https://pixeldrain.com/u/';
-    const PIXELDRAIN_BYPASS = 'https://pd.1drv.eu.org/';
+    const PIXELDRAIN_BYPASS = 'https://cdn.pixeldrain.eu.cc/';
     const FILE_ID_REGEX = /\/api\/file\/(\w+)\//;
     const API_KEY = ''; // <--- SET YOUR API KEY HERE
 
     if (!API_KEY) {
         console.warn('[Pixeldrain Bypass] API key is missing — file sizes will show as N/A.');
+    }
+
+
+    function openBypassInNewTab(url) {
+        GM_openInTab(url, {
+            active: true,   // set to false if you want background tabs
+            insert: true
+        });
     }
 
     function enhanceGalleryLinks() {
@@ -96,12 +109,12 @@
         const currentUrl = window.location.href;
 
         if (currentUrl.includes(`${location.origin}/u/`)) {
-            startDownload(getBypassUrls("file"));
+            openBypassInNewTab(getBypassUrls("file"));
         }
 
         if (currentUrl.includes(`${location.origin}/l/`)) {
             getBypassUrls("gallery")
-                .forEach(({ url }) => startDownload(url));
+                .forEach(({ url }) => openBypassInNewTab(url));
         }
     }
 
@@ -130,42 +143,64 @@
         return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-function handleShowBypassLinks() {
-    const popupBox = document.getElementById('popupBox');
-    popupBox.innerHTML = '';
+    function handleShowBypassLinks() {
+        const popupBox = document.getElementById('popupBox');
+        popupBox.innerHTML = '';
 
-    const headerContainer = document.createElement('div');
-    headerContainer.style.position = 'sticky';
-    headerContainer.style.top = '0';
-    headerContainer.style.background = '#2f3541';
-    headerContainer.style.zIndex = '1001';
-    headerContainer.style.padding = '10px 10px 0 10px';
-    headerContainer.style.borderBottom = '1px solid #555';
-    headerContainer.style.display = 'flex';
-    headerContainer.style.justifyContent = 'flex-end';
+        const headerContainer = document.createElement('div');
+        headerContainer.style.position = 'sticky';
+        headerContainer.style.top = '0';
+        headerContainer.style.background = '#2f3541';
+        headerContainer.style.zIndex = '1001';
+        headerContainer.style.padding = '10px 10px 0 10px';
+        headerContainer.style.borderBottom = '1px solid #555';
+        headerContainer.style.display = 'flex';
+        headerContainer.style.justifyContent = 'flex-end';
 
-    const popupClose = document.createElement('span');
-    popupClose.innerHTML = '&times;';
-    popupClose.style.cursor = 'pointer';
-    popupClose.style.fontSize = '24px';
-    popupClose.style.flexShrink = '0';
-    popupClose.onclick = () => (popupBox.style.display = 'none');
+        const popupClose = document.createElement('span');
+        popupClose.innerHTML = '&times;';
+        popupClose.style.cursor = 'pointer';
+        popupClose.style.fontSize = '24px';
+        popupClose.style.flexShrink = '0';
+        popupClose.onclick = () => (popupBox.style.display = 'none');
 
-    headerContainer.appendChild(popupClose);
-    popupBox.appendChild(headerContainer);
+        headerContainer.appendChild(popupClose);
+        popupBox.appendChild(headerContainer);
 
-    const currentUrl = window.location.href;
+        const currentUrl = window.location.href;
 
-    if (currentUrl.includes(`${location.origin}/u/`)) {
-        const url = getBypassUrls("file");
-        const a = document.createElement("a");
-        a.href = url;
-        a.textContent = url;
-        a.style.display = 'block';
-        a.style.padding = '10px';
-        popupBox.appendChild(a);
-    } else if (currentUrl.includes(`${location.origin}/l/`)) {
-        let combined = getBypassUrls("gallery").sort((a, b) => a.name.trim().localeCompare(b.name.trim()));
+        let combined;
+
+        if (currentUrl.includes(`${location.origin}/u/`)) {
+            const fileID = currentUrl.replace(`${location.origin}/u/`, "");
+            const url = PIXELDRAIN_BYPASS + fileID;
+
+            // Try to extract filename from page
+            let name = 'Unknown';
+
+            // Primary (best source)
+            const headerTitle = document.querySelector('.file_viewer_headerbar_title');
+            if (headerTitle && headerTitle.textContent.trim().length > 0) {
+                name = headerTitle.textContent.trim();
+            }
+
+            // Fallbacks (just in case layout changes)
+            if (name === 'Unknown') {
+                const fallback = document.querySelector('.name, .file_name, .filename, h1');
+                if (fallback && fallback.textContent.trim().length > 0) {
+                    name = fallback.textContent.trim();
+                }
+            }
+
+            // Final fallback
+            if (name === 'Unknown' && document.title) {
+                name = document.title.replace(' - Pixeldrain', '').trim();
+            }
+
+            combined = [{ name, url, fileID }];
+        } else if (currentUrl.includes(`${location.origin}/l/`)) {
+            combined = getBypassUrls("gallery").sort((a, b) => a.name.trim().localeCompare(b.name.trim()));
+        }
 
         const table = document.createElement('table');
         table.style.width = '100%';
@@ -194,10 +229,10 @@ function handleShowBypassLinks() {
                         asc: sortDirection.column !== 'Filename' || !sortDirection.asc
                     };
                     rowRefs.sort((a, b) =>
-                        sortDirection.asc
-                            ? a.name.localeCompare(b.name)
-                            : b.name.localeCompare(a.name)
-                    );
+                                 sortDirection.asc
+                                 ? a.name.localeCompare(b.name)
+                                 : b.name.localeCompare(a.name)
+                                );
                     renderRows();
                 } else if (text === 'Size') {
                     if (!rowRefs.every(r => r.size !== null)) return;
@@ -206,8 +241,8 @@ function handleShowBypassLinks() {
                         asc: sortDirection.column !== 'Size' || !sortDirection.asc
                     };
                     rowRefs.sort((a, b) =>
-                        sortDirection.asc ? a.size - b.size : b.size - a.size
-                    );
+                                 sortDirection.asc ? a.size - b.size : b.size - a.size
+                                );
                     renderRows();
                 }
             };
@@ -249,9 +284,12 @@ function handleShowBypassLinks() {
 
                 const tdName = document.createElement('td');
                 const aName = document.createElement('a');
-                aName.href = PIXELDRAIN_VIEW + fileID;
+                aName.href = '#';
+                aName.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    openBypassInNewTab(PIXELDRAIN_VIEW + fileID);
+                });
                 aName.textContent = name;
-                aName.target = '_blank';
                 aName.style.color = '#8ec7ff';
                 tdName.appendChild(aName);
                 tdName.style.padding = '6px';
@@ -270,7 +308,11 @@ function handleShowBypassLinks() {
                 a.href = url;
                 a.textContent = url;
                 a.style.color = '#8ec7ff';
-                a.target = '_blank';
+                a.href = '#';
+                a.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    openBypassInNewTab(url);
+                });
                 tdLink.appendChild(a);
                 tdLink.style.padding = '6px';
                 tdLink.style.borderBottom = '1px solid #555';
@@ -359,11 +401,10 @@ function handleShowBypassLinks() {
                 }
             }
         })();
-
+        popupBox.style.display = 'block';
     }
 
-    popupBox.style.display = 'block';
-}
+
 
 
     function addBypassButtons() {
