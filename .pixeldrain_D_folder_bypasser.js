@@ -1,17 +1,24 @@
 // ==UserScript==
 // @name         PixelDrain D-Folder(Filesystem) Bypass Links Simple + Redirect Fix
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      4
 // @description  Show bypass download links for Pixeldrain /d/ folders and fix redirect URLs for filesystem links
 // @author       edstagdh
 // @match        https://pixeldrain.com/d/*
 // @match        https://pixeldrain.net/d/*
-// @include      /^https:\/\/.*\.pd\d+\.workers\.dev\/.*/
 // @grant        none
 // ==/UserScript==
 
+
+// CHANGELOG:
+// v4:
+// -Fixed bypass download link for FS type gallery
+
+
 (function () {
     'use strict';
+
+    const PIXELDRAIN_BYPASS_FS = 'https://cdn.pixeldrain.eu.cc/';
 
     const isPixeldrainFolder = /^pixeldrain\.(com|net)$/.test(location.hostname) && location.pathname.startsWith('/d/');
     const isWorkerDomain = /\.pd\d+\.workers\.dev$/.test(location.hostname);
@@ -36,8 +43,7 @@
         }
 
         function buildBypassUrl(folderId, fileName) {
-            const workerDomain = 'pd.1drv.eu.org';
-            return `https://${workerDomain}/api/filesystem/${folderId}/${encodeURIComponent(fileName)}`;
+            return `${PIXELDRAIN_BYPASS_FS}${folderId}/${encodeURIComponent(fileName)}`;
         }
 
         function getFileList() {
