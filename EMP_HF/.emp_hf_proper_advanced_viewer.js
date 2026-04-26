@@ -10,6 +10,14 @@
 // @include     /https?://www\.empornium\.(is|sx)/requests*/
 // @exclude     /https?://www\.empornium\.(is|sx)/requests\.php\?id.*/
 // @include     /https?://www\.empornium\.(is|sx)/userhistory\.php.*/
+// @include     /https?://emparadise\.(rs|sx)/torrents\.php.*/
+// @exclude     /https?://emparadise\.(rs|sx)/torrents\.php\?id.*/
+// @include     /https?://emparadise\.(rs|sx)/user\.php.*/
+// @include     /https?://emparadise\.(rs|sx)/top10\.php.*/
+// @include     /https?://emparadise\.(rs|sx)/collage*/
+// @include     /https?://emparadise\.(rs|sx)/requests*/
+// @exclude     /https?://emparadise\.(rs|sx)/requests\.php\?id.*/
+// @include     /https?://emparadise\.(rs|sx)/userhistory\.php.*/
 // @include     /https?://www\.happyfappy\.(org|net)/torrents\.php.*/
 // @exclude     /https?://www\.happyfappy\.(org|net)/torrents\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(org|net)/user\.php.*/
@@ -18,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(org|net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org|net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(org|net)/userhistory\.php.*/
-// @version     1.9
+// @version     2.0
 // @author      edstagdh + Other contributors
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
@@ -28,6 +36,8 @@
 // ==/UserScript==
 
 // CHANGELOG:
+// v2.0:
+// -added emparadise domain
 // v1.9:
 // -Fixed Notifications & Subscribed collages pages, thumbnails are now also hyper links to torrents.
 // -Removed categories from Subscribed collages page("userhistory.php?action=subscribed_collages"), since the categories are not exposed in this page.
@@ -79,7 +89,7 @@ const ENABLE_WIDER_TABLE_VIEW = true;
 // "small_text_wrap"    → makes the text small and wrap text
 // "smaller_text_wrap"  → makes the text smaller and wrap text
 // "nothing"            → keeps the original behavior
-const TRIM_TEXT_COLLAGE_PAGE_MODE = "nothing";
+const TRIM_TEXT_COLLAGE_PAGE_MODE = "smaller_text_wrap";
 const REMOVE_MAIN_IMAGES_COLLAGE_PAGE = false;
 // --------------------
 // FIT VERTICAL IMAGES MODE
@@ -87,7 +97,7 @@ const REMOVE_MAIN_IMAGES_COLLAGE_PAGE = false;
 // "half"     → attempt to fit the image at half width
 // "full"     → attempt to fit the image at full width
 // "nothing"  → keeps the original behavior
-const FIT_VERTICAL_IMAGES_GRID_BETTER = "nothing";
+const FIT_VERTICAL_IMAGES_GRID_BETTER = "half";
 
 // --------------------
 // LAZY LOAD MODE
