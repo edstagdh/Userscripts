@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ThePornDB - Enhanced Table/Grid Toggle with Lazy Load Fix & Proper Image Toggle + Hover Preview
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      2.0
 // @description  Table/grid toggle with lazy-loaded scenes, styled performers, resizable columns, hide images, and hover preview in table view.
 // @author       edstagdh
 // @match        https://theporndb.net/*
@@ -12,6 +12,8 @@
 // ==/UserScript==
 
 // CHANGELOG
+// v2.0:
+// -big overhaul
 // v1.8:
 // -added show site parents hierarchy button(requires API key configured - "API_AUTH").
 // -added collect scene button(requires API key configured - "API_AUTH").
@@ -159,6 +161,27 @@
             Object.assign(div.style, { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', display: 'inline-flex' });
         });
     }
+
+    function formatGridDates() {
+        document.querySelectorAll(
+            "div.absolute div.flex:not(.place-items-center)"
+        ).forEach(el => {
+            if (el.__dateFormatted) return; // prevent reprocessing
+            el.__dateFormatted = true;
+
+            const raw = el.textContent.trim();
+            if (!raw) return;
+
+            const d = new Date(raw);
+            if (isNaN(d)) return;
+
+            const yy = String(d.getFullYear());
+            const mm = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+
+            el.textContent = `${yy}.${mm}.${dd}`;
+        });
+    }
     const inlineInterval = setInterval(forceInlineUntruncate, 500);
     setTimeout(() => clearInterval(inlineInterval), 10000);
     new MutationObserver(forceInlineUntruncate).observe(document.body, { childList: true, subtree: true });
@@ -196,15 +219,26 @@
     function showToast(message, duration = 5000) {
         const toast = document.createElement("div");
 
+        toast.style.whiteSpace = "pre-line";
         toast.style.position = "fixed";
         toast.style.bottom = "20px";
         toast.style.right = "20px";
-        toast.style.background = "#222";
-        toast.style.color = "#fff";
-        toast.style.padding = "10px 14px";
-        toast.style.borderRadius = "6px";
-        toast.style.fontSize = "14px";
-        toast.style.boxShadow = "0 4px 10px rgba(0,0,0,0.3)";
+
+        // Bigger, more visible container
+        toast.style.background = "#1a1a1a";
+        toast.style.color = "#ffa500"; // orange text
+        toast.style.padding = "16px 20px";
+        toast.style.borderRadius = "10px";
+        toast.style.fontSize = "16px";
+        toast.style.fontWeight = "700"; // bold
+        toast.style.lineHeight = "1.4";
+        toast.style.minWidth = "280px";
+        toast.style.maxWidth = "1000px";
+
+        // Make it stand out more
+        toast.style.border = "2px solid #ffa500";
+        toast.style.boxShadow = "0 6px 18px rgba(255,165,0,0.35)";
+
         toast.style.zIndex = "10000";
         toast.style.opacity = "0";
         toast.style.transition = "opacity 0.25s ease, transform 0.25s ease";
@@ -212,9 +246,9 @@
 
         document.body.appendChild(toast);
 
-        // stack above existing toasts
+        // stack above existing toasts (adjust spacing for bigger size)
         const existing = document.querySelectorAll(".tpdb-toast");
-        toast.style.bottom = `${20 + existing.length * 60}px`;
+        toast.style.bottom = `${20 + existing.length * 80}px`;
         toast.className = "tpdb-toast";
 
         toast.textContent = message;
@@ -233,6 +267,9 @@
 
 
     async function showSceneSiteParents(sceneJson) {
+
+        const sites = [];
+
         try {
             let siteUuid = sceneJson?.data?.site?.uuid;
 
@@ -264,13 +301,7 @@
                     throw new Error("Site response missing data");
                 }
 
-                // show current site
-                showToast(
-                    level === 0
-                    ? `Site: ${site.name}`
-                    : `Parent ${level}: ${site.name}`,
-                    5000
-                );
+                sites.push(site.name);
 
                 // move up using embedded parent object
                 if (site.parent && site.parent.uuid) {
@@ -282,13 +313,20 @@
                 }
             }
 
-            showToast("Top parent site reached", 5000);
+            // reverse so top parent is first
+            const ordered = sites.reverse();
+
+            // add numbering (0 = top parent)
+            const formatted = ordered.map((name, index) => `${index}: ${name}`);
+
+            showToast(`🌳 Site hierarchy:\n${formatted.join("\n")}`, 8000);
 
         } catch (err) {
             console.error("Site parent traversal failed:", err);
             alert("Failed to resolve site parents — check console");
         }
     }
+
     function copySlugFromUrl(url) {
         try {
             const u = new URL(url);
@@ -337,7 +375,319 @@
         }
     }
 
+    function copy_scene_url(url) {
+        try {
+            const u = new URL(url);
+            const parts = u.pathname.split("/").filter(Boolean);
+            const slug = parts[parts.length - 1];
 
+            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
+
+            fetch(requestUrl, {
+                method: "GET",
+                headers: {
+                    "accept": "application/json",
+                    "Authorization": `Bearer ${API_AUTH}`
+            }
+            })
+                .then(response => {
+                console.log("API status:", response.status);
+                console.log("API headers:", [...response.headers.entries()]);
+                return response.text().then(text => {
+                    console.log("API raw response:", text);
+                    if (!response.ok) {
+                        throw new Error(`API request failed: ${response.status}`);
+                    }
+                    return JSON.parse(text);
+                });
+            })
+                .then(json => {
+                const scene_url = json?.data?.url;
+                if (!scene_url) {
+                    throw new Error("Response missing data.url");
+                }
+                return navigator.clipboard.writeText(scene_url).then(() => scene_url);
+            })
+                .then(scene_url => {
+                console.log("Copied scene URL:", scene_url);
+                showToast(`Copied scene URL: ${scene_url}`, 5000);
+            })
+
+                .catch(err => {
+                console.error("Copy scene URL failed:", err);
+                alert("Failed to copy scene URL — check console");
+            });
+
+        } catch (err) {
+            console.error("Copy setup failed:", err);
+        }
+    }
+
+    function open_scene_url(url) {
+        try {
+            const u = new URL(url);
+            const parts = u.pathname.split("/").filter(Boolean);
+            const slug = parts[parts.length - 1];
+
+            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
+
+            fetch(requestUrl, {
+                method: "GET",
+                headers: {
+                    "accept": "application/json",
+                    "Authorization": `Bearer ${API_AUTH}`
+            }
+            })
+                .then(response => {
+                console.log("API status:", response.status);
+                console.log("API headers:", [...response.headers.entries()]);
+                return response.text().then(text => {
+                    console.log("API raw response:", text);
+                    if (!response.ok) {
+                        throw new Error(`API request failed: ${response.status}`);
+                    }
+                    return JSON.parse(text);
+                });
+            })
+                .then(json => {
+                const sceneUrl = json?.data?.url;
+                if (!sceneUrl) {
+                    throw new Error("Response missing data.url");
+                }
+
+                // Open in true background tab (userscript only)
+                if (typeof GM_openInTab === "function") {
+                    GM_openInTab(sceneUrl, { active: false, insert: true });
+                } else {
+                    // fallback
+                    window.open(sceneUrl, "_blank", "noopener,noreferrer");
+                }
+
+                console.log("Opened scene URL:", sceneUrl);
+                showToast(`Opened scene URL`, 5000);
+            })
+                .catch(err => {
+                console.error("Open scene URL failed:", err);
+                alert("Failed to open scene URL — check console");
+            });
+
+        } catch (err) {
+            console.error("Setup failed:", err);
+        }
+    }
+    function showPerformers(url) {
+        try {
+            const u = new URL(url);
+            const parts = u.pathname.split("/").filter(Boolean);
+            const slug = parts[parts.length - 1];
+
+            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
+
+            fetch(requestUrl, {
+                method: "GET",
+                headers: {
+                    "accept": "application/json",
+                    "Authorization": `Bearer ${API_AUTH}`
+				}
+            })
+                .then(response => {
+                console.log("API status:", response.status);
+                console.log("API headers:", [...response.headers.entries()]);
+                return response.text().then(text => {
+                    console.log("API raw response:", text);
+                    if (!response.ok) {
+                        throw new Error(`API request failed: ${response.status}`);
+                    }
+                    return JSON.parse(text);
+                });
+            })
+                .then(json => {
+                const performers = json?.data?.performers;
+                if (!Array.isArray(performers) || performers.length === 0) {
+                    throw new Error("No performers found in response");
+                }
+
+                const formatted = performers.map((p, index) => {
+                    const parentName = p?.parent?.name || "Unknown";
+                    const sceneName = p?.name || "Unknown";
+
+                    const rawGender = p?.parent?.extras?.gender;
+
+                    let gender;
+                    if (rawGender === "Female") {
+                        gender = "F";
+                    } else if (rawGender === "Male") {
+                        gender = "M";
+                    } else {
+                        gender = "N/A";
+                    }
+
+                    // check if names match (strict or normalized)
+                    const namesMatch = parentName === sceneName;
+
+                    const displayName = namesMatch
+                    ? sceneName
+                    : `${sceneName} (${parentName})`;
+
+                    return `${index + 1}. [${gender}] ${displayName}`;
+                });
+
+                return formatted;
+            })
+                .then(list => {
+                console.log("Performers:");
+                list.forEach(p => console.log(p));
+                showToast(`Performers:\n${list.join("\n")}`, 5000);
+            })
+                .catch(err => {
+                console.error("Fetch performers failed:", err);
+                alert("Failed to get performers — check console");
+            });
+
+        } catch (err) {
+            console.error("Setup failed:", err);
+        }
+    }
+    function generate_filename(url) {
+        try {
+            const u = new URL(url);
+            const parts = u.pathname.split("/").filter(Boolean);
+            const slug = parts[parts.length - 1];
+
+            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
+
+            fetch(requestUrl, {
+                method: "GET",
+                headers: {
+                    "accept": "application/json",
+                    "Authorization": `Bearer ${API_AUTH}`
+            }
+            })
+                .then(response => {
+                return response.json();
+            })
+                .then(json => {
+                const data = json?.data;
+                if (!data) throw new Error("Invalid API response");
+
+                // --------------------------
+                // STUDIO NAME
+                // --------------------------
+                let studio = data?.site?.name || "Unknown";
+
+                // remove apostrophes and non-alphanumeric except spaces
+                studio = studio.replace(/['’._!()]/g, "");
+                studio = studio.replace(/\s+/g, ""); // remove spaces entirely
+
+                // --------------------------
+                // DATE → YY.MM.DD
+                // --------------------------
+                let date = data?.date;
+                if (!date) throw new Error("Missing date");
+
+                const [year, month, day] = date.split("-");
+                const shortYear = year.slice(2);
+                const formattedDate = `${shortYear}.${month}.${day}`;
+
+                // --------------------------
+                // FEMALE PERFORMERS ONLY
+                // --------------------------
+                const performers = Array.isArray(data?.performers) ? data.performers : [];
+
+                const femalePerformers = performers.filter(p => {
+                    const gender = p?.parent?.extras?.gender;
+                    return gender === "Female";
+                });
+
+                if (femalePerformers.length === 0) {
+                    throw new Error("No female performers found");
+                }
+
+                const formattedPerformers = femalePerformers.map(p => {
+                    let name = p?.parent?.name || "Unknown";
+
+                    // normalize: remove special chars except spaces/numbers
+                    name = name.replace(/[^a-zA-Z0-9\s]/g, "");
+                    name = name.trim().replace(/\s+/g, ".");
+
+                    return name;
+                });
+
+                // join with ".and."
+                const performersString = formattedPerformers.join(".and.");
+
+                // --------------------------
+                // FINAL FILENAME
+                // --------------------------
+                const filename = [
+                    studio,
+                    formattedDate,
+                    performersString
+                ].join(".");
+
+                return navigator.clipboard.writeText(filename).then(() => filename);
+
+            })
+                .then(filename => {
+                console.log("Copied filename:", filename);
+                showToast(`Copied filename: ${filename}`, 5000);
+            })
+                .catch(err => {
+                console.error("Failed to generate filename:", err);
+                alert("Failed to generate filename — check console");
+            });
+
+        } catch (err) {
+            console.error("Setup failed:", err);
+        }
+    }
+    function showExternalStudioID(url) {
+        try {
+            const u = new URL(url);
+            const parts = u.pathname.split("/").filter(Boolean);
+            const slug = parts[parts.length - 1];
+
+            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
+
+            fetch(requestUrl, {
+                method: "GET",
+                headers: {
+                    "accept": "application/json",
+                    "Authorization": `Bearer ${API_AUTH}`
+            }
+            })
+                .then(response => {
+                console.log("API status:", response.status);
+                console.log("API headers:", [...response.headers.entries()]);
+                return response.text().then(text => {
+                    console.log("API raw response:", text);
+                    if (!response.ok) {
+                        throw new Error(`API request failed: ${response.status}`);
+                    }
+                    return JSON.parse(text);
+                });
+            })
+                .then(json => {
+                const e_id = json?.data?.external_id;
+                if (!e_id) {
+                    throw new Error("Response missing data.external_id");
+                }
+                return e_id;
+            })
+                .then(e_id => {
+                console.log("Scene External ID:", e_id);
+                showToast(`Scene External ID: ${e_id}`, 5000);
+            })
+
+                .catch(err => {
+                console.error("Fetch scene External ID failed:", err);
+                alert("Failed to get scene External ID — check console");
+            });
+
+        } catch (err) {
+            console.error("Setup failed:", err);
+        }
+    }
     /* ---------- Toolbar ---------- */
     async function initToolbar() {
         if (document.getElementById("tpdb-toolbar")) return;
@@ -738,30 +1088,30 @@
                     "accept": "application/json",
                     "Authorization": `Bearer ${API_AUTH}`
             },
-            onload: function (response) {
-                if (response.status >= 200 && response.status < 300) {
-                    showToast(
-                        isCollected
-                        ? "Removed from Collection"
-                        : "Collected Successfully",
-                        5000
-                    );
-                } else {
-                    console.error("Collection POST failed:", response);
-                    showToast("Collection failed — check console", 5000);
+                onload: function (response) {
+                    if (response.status >= 200 && response.status < 300) {
+                        showToast(
+                            isCollected
+                            ? `${encodeURIComponent(slug)} Removed from Collection`
+                        : `${encodeURIComponent(slug)} Collected Successfully`,
+                            10000
+                        );
+                    } else {
+                        console.error(`${encodeURIComponent(slug)} Collection POST failed:`, response);
+                        showToast(`${encodeURIComponent(slug)} Collection failed — check console`, 5000);
+                    }
+                },
+                onerror: function (err) {
+                    console.error(`${encodeURIComponent(slug)} Collection request error:`, err);
+                    showToast(`${encodeURIComponent(slug)} Collection request failed`, 5000);
                 }
-            },
-            onerror: function (err) {
-                console.error("Collection request error:", err);
-                showToast("Collection request failed", 5000);
-            }
-        });
+            });
 
-    } catch (err) {
-        console.error("Collect scene failed:", err);
-        showToast("Failed to collect scene — check console", 5000);
+        } catch (err) {
+            console.error(`Collect scene failed:`, err);
+            showToast(`Failed to collect scene — check console`, 5000);
+        }
     }
-}
 
 
 
@@ -780,7 +1130,19 @@
             btnContainer.style.marginLeft = "6px";
             btnContainer.style.gap = "5px"; // adds 4px space between each button
 
-            // ---- Button 1: Copy slug / scene ID ----
+            // ---- Button 1: Copy Scene URL ----
+            const copy_scene_url_button = document.createElement("div");
+            copy_scene_url_button.className = "tpdb-copy-btn";
+            copy_scene_url_button.title = "Copy Scene URL";
+            copy_scene_url_button.textContent = "🌐";
+
+            copy_scene_url_button.addEventListener("click", e => {
+                e.stopPropagation();
+                e.preventDefault();
+                copy_scene_url(titleLink.href);
+            });
+
+            // ---- Button 2: Copy slug / scene ID ----
             const copyBtn = document.createElement("div");
             copyBtn.className = "tpdb-copy-btn";
             copyBtn.title = "Copy UUID";
@@ -791,12 +1153,48 @@
                 e.preventDefault();
                 copySlugFromUrl(titleLink.href);
             });
+            // ---- Button 3: Open Scene URL ----
+            const open_url_btn = document.createElement("div");
+            open_url_btn.className = "tpdb-copy-btn";
+            open_url_btn.title = "Open Scene URL";
+            open_url_btn.textContent = "🔗";
 
-            // ---- Button 2: API JSON action ----
+            open_url_btn.addEventListener("click", e => {
+                e.stopPropagation();
+                e.preventDefault();
+                open_scene_url(titleLink.href);
+            });
+
+            // ---- Button 4: show External ID ----
+            const e_id_Btn = document.createElement("div");
+            e_id_Btn.className = "tpdb-copy-btn";
+            e_id_Btn.title = "E_ID";
+            e_id_Btn.textContent = "🆔";
+
+            e_id_Btn.addEventListener("click", e => {
+                e.stopPropagation();
+                e.preventDefault();
+                showExternalStudioID(titleLink.href);
+            });
+
+            // ---- Button 5: show Performers ----
+            const performers = document.createElement("div");
+            performers.className = "tpdb-copy-btn";
+            performers.title = "E_ID";
+            performers.textContent = "👥";
+
+            performers.addEventListener("click", e => {
+                e.stopPropagation();
+                e.preventDefault();
+                showPerformers(titleLink.href);
+            });
+
+
+            // ---- Button 6: API JSON action ----
             const jsonBtn = document.createElement("div");
             jsonBtn.className = "tpdb-copy-btn";
             jsonBtn.title = "Check Site Parents";
-            jsonBtn.textContent = "☰";
+            jsonBtn.textContent = "🌳";
 
             jsonBtn.addEventListener("click", e => {
                 e.stopPropagation();
@@ -804,7 +1202,7 @@
                 fetchSceneAndShowSiteParents(titleLink.href);
             });
 
-            // ---- Button 3: Collect ----
+            // ---- Button 7: Collect ----
             const collectBtn = document.createElement("div");
             collectBtn.className = "tpdb-copy-btn";
             collectBtn.title = "Collect Scene";
@@ -816,9 +1214,26 @@
                 collectSceneFromUrl(titleLink.href);
             });
 
+            // ---- Button 8: show Performers ----
+            const copy_filename = document.createElement("div");
+            copy_filename.className = "tpdb-copy-btn";
+            copy_filename.title = "Filename";
+            copy_filename.textContent = "🗎";
+
+            copy_filename.addEventListener("click", e => {
+                e.stopPropagation();
+                e.preventDefault();
+                generate_filename(titleLink.href);
+            });
+
             btnContainer.appendChild(copyBtn);
+            btnContainer.appendChild(copy_scene_url_button);
+            btnContainer.appendChild(e_id_Btn);
+            btnContainer.appendChild(performers);
             btnContainer.appendChild(jsonBtn);
+            btnContainer.appendChild(open_url_btn);
             btnContainer.appendChild(collectBtn);
+            btnContainer.appendChild(copy_filename);
 
             // ensure inline layout
             titleLink.parentElement.style.display = "inline-flex";
@@ -925,11 +1340,15 @@
     }
 
     // 4. Observe DOM for new grid items (lazy-loaded scenes)
-    const gridObserver = new MutationObserver(enhanceGridImages);
+    const gridObserver = new MutationObserver(() => {
+        enhanceGridImages();
+        formatGridDates();
+    });
     gridObserver.observe(document.body, { childList: true, subtree: true });
 
     // Initial run
     enhanceGridImages();
     addCopyButtonsToGrid();
+    formatGridDates(); // <-- add this
 
 })();
