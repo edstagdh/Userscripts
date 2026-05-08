@@ -26,16 +26,19 @@
 // @include     /https?://www\.happyfappy\.(org|net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(org|net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(org|net)/userhistory\.php.*/
-// @version     2.0
+// @version     2.1
 // @author      edstagdh + Other contributors
-// @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
+// @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.rs
+// @icon        https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @require     https://code.jquery.com/jquery-2.1.1.js
 // @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/.emp_hf_proper_advanced_viewer.js
 // @grant       GM_addStyle
 // ==/UserScript==
 
-// CHANGELOG:
+// CHANGELOG
+// v2.1:
+// -updated categories map to include emp new domain emparadise.
 // v2.0:
 // -added emparadise domain
 // v1.9:
@@ -248,10 +251,13 @@ const HFcategoryMap = {
 // --------------------
 let currentCategoryMap = EMPcategoryMap; // default
 
-if (location.href.includes("empornium")) {
-    currentCategoryMap = EMPcategoryMap; // you need to define EMPcategoryMap1
+if (
+    location.href.includes("empornium") ||
+    location.href.includes("emparadise")
+) {
+    currentCategoryMap = EMPcategoryMap;
 } else if (location.href.includes("happyfappy")) {
-    currentCategoryMap = HFcategoryMap; // define EMPcategoryMap2
+    currentCategoryMap = HFcategoryMap;
 }
 
 // --------------------
