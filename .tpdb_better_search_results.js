@@ -7,6 +7,7 @@
 // @match        https://theporndb.net/*
 // @icon         https://theporndb.net/favicon-16x16.png
 // @grant        GM_addStyle
+// @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
 // @connect      api.theporndb.net
 // ==/UserScript==
