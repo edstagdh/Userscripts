@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [EMP][HF] Auto Thank Uploader
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Automatically clicks "Thank the uploader!" when a torrent download link is triggered
 // @author       edstagdh
 // @include     /https?://www\.empornium\.(is|sx)/torrents\.php.*/
@@ -37,6 +37,8 @@
 // ==/UserScript==
 
 // CHANGELOG
+// v1.1:
+// -added toast notifications
 // v1.0:
 // -added Auto Thank Uploader
 
@@ -147,7 +149,53 @@
 
     }, true);
 
+    // =========================================================================
+    // TOAST NOTIFICATION
+    // =========================================================================
 
+    function showToast(message, duration = 5000) {
+        const toast = document.createElement('div');
+        toast.className = 'autothank-toast';
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1a1a1a;
+            color: #ffa500;
+            padding: 16px 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1.4;
+            min-width: 280px;
+            max-width: 500px;
+            border: 2px solid #ffa500;
+            box-shadow: 0 6px 18px rgba(255,165,0,0.35);
+            z-index: 10000;
+            opacity: 0;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            transform: translateY(10px);
+            white-space: pre-line;
+        `;
+
+        // Stack above any existing toasts
+        const existing = document.querySelectorAll('.autothank-toast');
+        toast.style.bottom = `${20 + existing.length * 80}px`;
+
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        requestAnimationFrame(() => {
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateY(0)';
+        });
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(10px)';
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
     // =========================================================================
     // CORE LOGIC
     // =========================================================================
@@ -201,8 +249,10 @@
 
             if (postResponse.status >= 200 && postResponse.status < 300) {
                 console.log(`[AutoThank] ✅ Successfully thanked uploader on ${domain}`);
+                showToast(`✅ AutoThank\nThanked uploader!\nTorrent ID: ${fields.groupId}\n${domain}`);
             } else {
                 console.warn(`[AutoThank] POST failed (HTTP ${postResponse.status})`);
+                showToast(`❌ AutoThank\nPOST failed (HTTP ${postResponse.status})\n${domain}`);
             }
 
         } catch (err) {
