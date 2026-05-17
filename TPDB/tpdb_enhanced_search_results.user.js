@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ThePornDB - Enhanced Table/Grid Toggle with Lazy Load Fix & Proper Image Toggle + Hover Preview
+// @name         ThePornDB - Enhanced Search Results
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  Table/grid toggle with lazy-loaded scenes, styled performers, resizable columns, hide images, and hover preview in table view.
+// @version      2.1
+// @description  Table/grid toggle with lazy-loaded scene images, resizable columns, hide images panic button, hover preview in table view, several custom action buttons - REQUIRES API KEY.
 // @author       edstagdh
 // @match        https://theporndb.net/*
 // @icon         https://theporndb.net/favicon-16x16.png
@@ -10,9 +10,15 @@
 // @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
 // @connect      api.theporndb.net
+// @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.user.js
+// @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.user.js
 // ==/UserScript==
 
 // CHANGELOG
+// v2.1:
+// -updated script with install/update url
+// -updated description.
+// -added configuration for filename copy button mode.
 // v2.0:
 // -big overhaul
 // v1.8:
@@ -28,11 +34,25 @@
 (function () {
     "use strict";
 
-    // === CONFIG ===
+    // --------------------
+    // CONFIG
+    // --------------------
     const API_URL= "https://api.theporndb.net/";
     const API_AUTH= "";
     const API_SITES_URL= "https://api.theporndb.net/sites/";
     const API_Collections_URL= "https://api.theporndb.net/user/collection";
+    // --------------------
+    // FILENAME MODE
+    // --------------------
+    // "names"    → performers names after the date
+    // "title"     → scene title after the date
+    // "both"     → starts with the names and then title, both after the date
+    const FILENAME_Mode = "names"
+    // --------------------
+    // FILENAME PERFORMERS MODE
+    // --------------------
+    // "Female", "Male", or both → ["Female", "Male"] means all performers
+    const FILENAME_Genders = ["Female"];
 
     /* ---------- CSS ---------- */
     GM_addStyle(`
@@ -244,6 +264,11 @@
         toast.style.opacity = "0";
         toast.style.transition = "opacity 0.25s ease, transform 0.25s ease";
         toast.style.transform = "translateY(10px)";
+
+        // Make sure we word wrap
+        toast.style.whiteSpace = "pre-line";
+        toast.style.wordBreak = "break-word";      // ← add this
+        toast.style.overflowWrap = "break-word";   // ← add this
 
         document.body.appendChild(toast);
 
@@ -562,81 +587,134 @@
                 headers: {
                     "accept": "application/json",
                     "Authorization": `Bearer ${API_AUTH}`
-            }
-            })
-                .then(response => {
-                return response.json();
-            })
-                .then(json => {
-                const data = json?.data;
-                if (!data) throw new Error("Invalid API response");
-
-                // --------------------------
-                // STUDIO NAME
-                // --------------------------
-                let studio = data?.site?.name || "Unknown";
-
-                // remove apostrophes and non-alphanumeric except spaces
-                studio = studio.replace(/['’._!()]/g, "");
-                studio = studio.replace(/\s+/g, ""); // remove spaces entirely
-
-                // --------------------------
-                // DATE → YY.MM.DD
-                // --------------------------
-                let date = data?.date;
-                if (!date) throw new Error("Missing date");
-
-                const [year, month, day] = date.split("-");
-                const shortYear = year.slice(2);
-                const formattedDate = `${shortYear}.${month}.${day}`;
-
-                // --------------------------
-                // FEMALE PERFORMERS ONLY
-                // --------------------------
-                const performers = Array.isArray(data?.performers) ? data.performers : [];
-
-                const femalePerformers = performers.filter(p => {
-                    const gender = p?.parent?.extras?.gender;
-                    return gender === "Female";
-                });
-
-                if (femalePerformers.length === 0) {
-                    throw new Error("No female performers found");
                 }
-
-                const formattedPerformers = femalePerformers.map(p => {
-                    let name = p?.parent?.name || "Unknown";
-
-                    // normalize: remove special chars except spaces/numbers
-                    name = name.replace(/[^a-zA-Z0-9\s]/g, "");
-                    name = name.trim().replace(/\s+/g, ".");
-
-                    return name;
-                });
-
-                // join with ".and."
-                const performersString = formattedPerformers.join(".and.");
-
-                // --------------------------
-                // FINAL FILENAME
-                // --------------------------
-                const filename = [
-                    studio,
-                    formattedDate,
-                    performersString
-                ].join(".");
-
-                return navigator.clipboard.writeText(filename).then(() => filename);
-
             })
-                .then(filename => {
-                console.log("Copied filename:", filename);
-                showToast(`Copied filename: ${filename}`, 5000);
-            })
+                .then(response => response.json())
+                .then(json => {
+                    const data = json?.data;
+                    if (!data) throw new Error("Invalid API response");
+
+                    // --------------------------
+                    // NORMALIZE HELPERS
+                    // --------------------------
+
+                    // Mirrors Python sanitize_site_filename_part():
+                    //   replace : → -   . → (space)   / → -
+                    //   then strip  ! @ # $ % ^ & * ( ) _ + = ' ' and spaces
+                    function normalizeStudio(str) {
+                        return str
+                            .replace(/:/g, "-")
+                            .replace(/\./g, " ")
+                            .replace(/\//g, "-")
+                            .replace(/[!@#$%^&*()_+='''\s]/g, "");
+                    }
+
+                    // For performer names and title: strip non-alphanumeric, collapse spaces to dots
+                    function normalizeSegment(str) {
+                        return str
+                            .replace(/[^a-zA-Z0-9\s]/g, "")
+                            .trim()
+                            .replace(/\s+/g, ".");
+                    }
+
+                    // --------------------------
+                    // STUDIO NAME
+                    // --------------------------
+                    let studio = normalizeStudio(data?.site?.name || "Unknown");
+
+                    // --------------------------
+                    // DATE → YY.MM.DD
+                    // --------------------------
+                    let date = data?.date;
+                    if (!date) throw new Error("Missing date");
+
+                    const [year, month, day] = date.split("-");
+                    const shortYear = year.slice(2);
+                    const formattedDate = `${shortYear}.${month}.${day}`;
+
+                    // --------------------------
+                    // PERFORMERS (filtered by FILENAME_Genders)
+                    // --------------------------
+                    const performers = Array.isArray(data?.performers) ? data.performers : [];
+
+                    const filteredPerformers = FILENAME_Genders.length > 0
+                        ? performers.filter(p => FILENAME_Genders.includes(p?.parent?.extras?.gender))
+                        : performers;
+
+                    let performersString = null;
+                    if (filteredPerformers.length > 0) {
+                        performersString = filteredPerformers
+                            .map(p => normalizeSegment(p?.parent?.name || "Unknown"))
+                            .join(".and.");
+                    }
+
+                    // --------------------------
+                    // TITLE
+                    // --------------------------
+                    let title = data?.title;
+                    let titleString = null;
+                    if (title) {
+                        titleString = normalizeSegment(title);
+                    }
+
+                    // --------------------------
+                    // BUILD FILENAME BY MODE
+                    // --------------------------
+                    let suffix;
+
+                    if (FILENAME_Mode === "title") {
+                        if (!titleString) throw new Error("Missing title");
+                        suffix = titleString;
+
+                    } else if (FILENAME_Mode === "both") {
+                        if (!performersString) throw new Error("No matching performers found");
+                        if (!titleString) throw new Error("Missing title");
+                        suffix = `${performersString}.${titleString}`;
+
+                    } else {
+                        // default: "names"
+                        if (!performersString) throw new Error("No matching performers found");
+                        suffix = performersString;
+                    }
+
+                    const filename = [studio, formattedDate, suffix].join(".");
+
+                    // --------------------------
+                    // FILENAME LENGTH GUARD
+                    // --------------------------
+                    let finalFilename = filename;
+                    let warned = false;
+
+                    if (filename.length > 250) {
+                        if (FILENAME_Mode !== "names") {
+                            if (!performersString) throw new Error("No matching performers found (fallback)");
+                            finalFilename = [studio, formattedDate, performersString].join(".");
+                            showToast(
+                                `⚠️ Filename too long (${filename.length} chars).\nFalling back to "names" mode.\n\nCopied:\n${finalFilename}`,
+                                8000
+                            );
+                            warned = true;
+                        } else {
+                            showToast(
+                                `⚠️ Filename is ${filename.length} chars (exceeds 250).\nCopied as-is — consider shortening manually.\n\nCopied:\n${finalFilename}`,
+                                8000
+                            );
+                            warned = true;
+                        }
+                    }
+
+                    return navigator.clipboard.writeText(finalFilename).then(() => ({ finalFilename, warned }));
+                })
+                .then(({ finalFilename, warned }) => {
+                    console.log("Copied filename:", finalFilename);
+                    if (!warned) {
+                        showToast(`Copied filename:\n${finalFilename}`, 5000);
+                    }
+                })
                 .catch(err => {
-                console.error("Failed to generate filename:", err);
-                alert("Failed to generate filename — check console");
-            });
+                    console.error("Failed to generate filename:", err);
+                    alert("Failed to generate filename — check console");
+                });
 
         } catch (err) {
             console.error("Setup failed:", err);
@@ -1215,7 +1293,7 @@
                 collectSceneFromUrl(titleLink.href);
             });
 
-            // ---- Button 8: show Performers ----
+            // ---- Button 8: Copy Filename ----
             const copy_filename = document.createElement("div");
             copy_filename.className = "tpdb-copy-btn";
             copy_filename.title = "Filename";
