@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ThePornDB - Enhanced Search Results
-// @namespace    http://tampermonkey.net/
-// @version      2.1
+// @namespace    https://github.com/edstagdh/Userscripts
+// @version      2.2
 // @description  Table/grid toggle with lazy-loaded scene images, resizable columns, hide images panic button, hover preview in table view, several custom action buttons - REQUIRES API KEY.
 // @author       edstagdh
 // @match        https://theporndb.net/*
@@ -15,6 +15,8 @@
 // ==/UserScript==
 
 // CHANGELOG
+// v2.2:
+// -updated script namespace(no functionality change)
 // v2.1:
 // -updated script with install/update url
 // -updated description.
