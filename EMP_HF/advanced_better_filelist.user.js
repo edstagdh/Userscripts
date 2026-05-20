@@ -15,6 +15,10 @@
 // @grant        none
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_better_filelist.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_better_filelist.user.js
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
+
 // ==/UserScript==
 
 // CHANGELOG
