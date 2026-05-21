@@ -1,17 +1,25 @@
 // ==UserScript==
-// @name         add Copy BBCode link improved
-// @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  Add a button to copy the BBCode presentation of the torrent, even with mediainfo section.
+// @name         [HF][EMP] Copy BBCode Button
+// @namespace    https://github.com/edstagdh/Userscripts
+// @version      1.3
+// @description  This script adds a button to copy the BBCode presentation of the torrent, including mediainfo section.
 // @author       edstagdh + others
-// @include      /^https?:\/\/www\.happyfappy\.(org|net)\/torrents\.php\?id=.*/
-// @icon         https://www.google.com/s2/favicons?sz=64&domain=happyfappy.org
-// @download     https://raw.githubusercontent.com/edstagdh/Userscripts/master/.HF_add_copy_bbcode_link.js
-// @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/.HF_add_copy_bbcode_link.js
+// @match        https://www.happyfappy.net/torrents.php?id=*
+// @match        https://www.empornium.sx/torrents.php?id=*
+// @match        https://emparadise.rs/torrents.php?id=*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx/
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
+// @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/copy_bbcode_button.user.js
+// @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/copy_bbcode_button.user.js
 // @grant        GM_setClipboard
 // ==/UserScript==
 
 // CHANGELOG:
+// v1.3:
+// -updated script namespace.
+// -updated toast notification style.
+// -updated "Copy BBCode" button style
 // v1.2 - 2026-02-24:
 // -added .net domain
 // v1.1 - 2026-02-11:
@@ -568,34 +576,48 @@
         return bbcode;
     }
 
-    function showToast(message) {
+    function showToast(message, duration = 5000) {
         const toast = document.createElement('div');
+        toast.className = 'autothank-toast';
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1a1a1a;
+            color: #ffa500;
+            padding: 16px 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1.4;
+            min-width: 280px;
+            max-width: 500px;
+            border: 2px solid #ffa500;
+            box-shadow: 0 6px 18px rgba(255,165,0,0.35);
+            z-index: 10000;
+            opacity: 0;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            transform: translateY(10px);
+            white-space: pre-line;
+        `;
+
+        // Stack above any existing toasts
+        const existing = document.querySelectorAll('.autothank-toast');
+        toast.style.bottom = `${20 + existing.length * 80}px`;
+
         toast.textContent = message;
-
-        toast.style.position = 'fixed';
-        toast.style.bottom = '20px';
-        toast.style.right = '20px';
-        toast.style.padding = '10px 16px';
-        toast.style.background = 'rgba(0, 0, 0, 0.85)';
-        toast.style.color = '#fff';
-        toast.style.fontSize = '14px';
-        toast.style.borderRadius = '6px';
-        toast.style.zIndex = '99999';
-        toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s ease';
-
         document.body.appendChild(toast);
 
-        // fade in
         requestAnimationFrame(() => {
             toast.style.opacity = '1';
+            toast.style.transform = 'translateY(0)';
         });
 
-        // fade out + remove
         setTimeout(() => {
             toast.style.opacity = '0';
+            toast.style.transform = 'translateY(10px)';
             setTimeout(() => toast.remove(), 300);
-        }, 3000); // 3 seconds
+        }, duration);
     }
 
     function copyBBCode() {
@@ -618,13 +640,74 @@
 
     // inject button safely
     const bookmarkAnchor = document.querySelector('a[id*="bookmarklink"]');
+
     if (bookmarkAnchor && bookmarkAnchor.parentElement) {
         const container = bookmarkAnchor.parentElement;
+
+        // add glow animation once
+        if (!document.getElementById('copy-bbcode-style')) {
+            const style = document.createElement('style');
+            style.id = 'copy-bbcode-style';
+
+            style.textContent = `
+                .copy-bbcode-btn {
+                    display: inline-block;
+                    margin-left: 8px;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    background: linear-gradient(135deg, #ff9800, #ff5722);
+                    color: white !important;
+                    font-weight: bold;
+                    text-decoration: none !important;
+                    cursor: pointer;
+                    box-shadow:
+                        0 0 8px rgba(255, 87, 34, 0.7),
+                        0 0 16px rgba(255, 87, 34, 0.4);
+                    transition:
+                        transform 0.15s ease,
+                        box-shadow 0.15s ease,
+                        filter 0.15s ease;
+                    animation: bbcodePulse 1.8s infinite;
+                }
+
+                .copy-bbcode-btn:hover {
+                    transform: scale(1.08);
+                    filter: brightness(1.1);
+                    box-shadow:
+                        0 0 12px rgba(255, 87, 34, 0.9),
+                        0 0 24px rgba(255, 87, 34, 0.7);
+                }
+
+                @keyframes bbcodePulse {
+                    0% {
+                        box-shadow:
+                            0 0 6px rgba(255, 87, 34, 0.5),
+                            0 0 12px rgba(255, 87, 34, 0.3);
+                    }
+                    50% {
+                        box-shadow:
+                            0 0 12px rgba(255, 87, 34, 0.9),
+                            0 0 24px rgba(255, 87, 34, 0.7);
+                    }
+                    100% {
+                        box-shadow:
+                            0 0 6px rgba(255, 87, 34, 0.5),
+                            0 0 12px rgba(255, 87, 34, 0.3);
+                    }
+                }
+            `;
+
+            document.head.appendChild(style);
+        }
+
         let button = document.createElement('a');
-        button.textContent = '[Copy BBCode]';
+
+        button.textContent = 'Copy BBCode';
         button.href = 'javascript:void(0)';
-        button.style.cursor = 'pointer';
+        button.className = 'copy-bbcode-btn';
+
         button.addEventListener('click', copyBBCode);
+
         container.appendChild(button);
     }
 
