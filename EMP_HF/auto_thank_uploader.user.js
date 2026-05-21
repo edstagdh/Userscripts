@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [EMP][HF] Auto Thank Uploader
-// @namespace    http://tampermonkey.net/
-// @version      1.1
+// @namespace    https://github.com/edstagdh/Userscripts
+// @version      1.2
 // @description  Automatically clicks "Thank the uploader!" when a torrent download link is triggered
 // @author       edstagdh
 // @include     /https?://www\.empornium\.(is|sx)/torrents\.php.*/
@@ -37,6 +37,8 @@
 // ==/UserScript==
 
 // CHANGELOG
+// v1.2:
+// -updated script namespace(no functionality change)
 // v1.1:
 // -added toast notifications
 // v1.0:
