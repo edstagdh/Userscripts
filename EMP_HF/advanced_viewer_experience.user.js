@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     2.3
+// @version     2.4
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -40,6 +40,10 @@
 // ==/UserScript==
 
 // CHANGELOG
+// v2.4:
+// -Fixed missing/invalid categories on items in userhistory.php page(subscribed collages), for both list/grid mode.
+// -Added blue download button in addition to existing download icon which may be obstructed by preview image sometimes.
+// -Fixed top10.php page grid view which showed incorrect data in the cards.
 // v2.3:
 // -Fixed gallery column mapping for torrents.php?action=notify:
 //  The notify table has a leading checkbox column, so cat is at td[1] not td[0],
@@ -117,6 +121,9 @@ let globalBackend = null;
 
 // Gallery lazy-load observer (separate from table observer)
 let galleryLazyObserver = null;
+
+// Cache for categories fetched from individual torrent pages (subscribed collages page)
+const subCollagesCatCache = {};
 
 // --------------------
 // CSS — base
@@ -418,6 +425,30 @@ GM_addStyle(`
     transition: opacity 0.3s; margin-right: 8px;
 }
 #viewer-settings-modal .vsm-saved-msg.visible { opacity: 1; }
+.vg-dl-row {
+    display: flex;
+    margin-top: 1px;
+}
+.vg-download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #7dc4ff !important;
+    text-decoration: none;
+    white-space: nowrap;
+    background: #0d1e2e;
+    border: 1px solid #1e3a55;
+    border-radius: 3px;
+    padding: 2px 7px;
+    transition: background 0.15s, border-color 0.15s;
+}
+.vg-download-btn:hover {
+    background: #152840;
+    border-color: #3a6a9a;
+    text-decoration: none !important;
+}
 `);
 
 
@@ -699,8 +730,42 @@ function getGalleryColOffsets() {
         };
     }
 
-    // ── Top10 / userhistory / subscribed_collages: leading rank/date col ──
-    if (isTop10 || isSubCollages || isUserHistory) {
+    // ── Subscribed collages ──
+    if (isSubCollages) {
+        return {
+            pageType: 'torrents',
+            cat: 1,
+            title: 2,
+
+            files: -1,
+            comments: -1,
+            time: -1,
+
+            size: 3,
+            snatches: 4,
+            seeders: 5,
+            leechers: 6,
+
+            uploader: -1,
+            extra: -1,
+        };
+    }
+
+    // ── Top10: rank | cat | title | data | size | snatches | seeders | leechers | peers | uploader ──
+    if (isTop10) {
+        return {
+            pageType: 'torrents',
+            cat: 1, title: 2,
+            files: -1, comments: -1,
+            time: -1, size: 4,
+            snatches: 5, seeders: 6, leechers: 7,
+            uploader: 9,
+            extra: 8,   // Peers — shown as a meta chip
+        };
+    }
+
+    // ── Userhistory: date | cat | title | files | comments | time | size | snatches | seeders | leechers | uploader ──
+    if (isUserHistory) {
         return {
             pageType: 'torrents',
             cat: 1, title: 2,
@@ -786,6 +851,15 @@ function buildGalleryCard($row) {
             if (catName && (catHref === '#' || !catHref)) {
                 catHref = getCategoryLink(catName, currentCategoryMap);
             }
+			// Subscribed collages: override with the real category from the pre-fetched cache
+			if (location.pathname.includes('/userhistory') &&
+				new URLSearchParams(location.search).get('action') === 'subscribed_collages') {
+				const tid = getTorrentIdFromRow($row);
+				if (tid && subCollagesCatCache[tid]) {
+					catName = subCollagesCatCache[tid];
+					catHref = getCategoryLink(catName, currentCategoryMap);
+				}
+			}
         }
 
         // ── Title + torrent/request link ──
@@ -803,6 +877,12 @@ function buildGalleryCard($row) {
         const onmouseover = $titleLink.length ? ($titleLink.attr('onmouseover') || '') : '';
         const onmouseout  = $titleLink.length ? ($titleLink.attr('onmouseout')  || '') : '';
 
+        // ── Download link ──
+        const $downloadLink = $row.find('a[href*="action=download"]').first();
+
+        const downloadHref = $downloadLink.length
+        ? ($downloadLink.attr('href') || '')
+        : '';
         // ── Torrent icons (freeleech, staff-ok, etc.) — not present on requests ──
         const $iconsClone = $titleTd.find('.torrent_icon_container').clone();
 
@@ -885,11 +965,28 @@ function buildGalleryCard($row) {
         const $info = jQuery('<div class="vg-info">');
 
         const $titleDiv = jQuery('<div class="vg-title">');
-        const $titleA   = jQuery('<a>').attr('href', titleHref).text(title);
+
+        const $titleA = jQuery('<a>')
+        .attr('href', titleHref)
+        .text(title);
+
         if (onmouseover) $titleA.attr('onmouseover', onmouseover);
         if (onmouseout)  $titleA.attr('onmouseout',  onmouseout);
+
         $titleDiv.append($titleA);
         $info.append($titleDiv);
+
+        // Add download button (separate row below title, outside the line-clamped div)
+        if (downloadHref) {
+            const $dlRow = jQuery('<div class="vg-dl-row">');
+            jQuery('<a>')
+                .attr('href', downloadHref)
+                .attr('title', 'Download torrent')
+                .addClass('vg-download-btn')
+                .html('&#11015; Download')
+                .appendTo($dlRow);
+            $info.append($dlRow);
+        }
 
         // Stats chips — layout differs between requests and torrents
         const $stats = jQuery('<div class="vg-stats">');
@@ -981,6 +1078,30 @@ function buildGalleryCard($row) {
 // We iterate every table and insert an independent grid after each one.
 // --------------------
 function buildGalleryView() {
+	// Subscribed collages: pre-fetch all categories into cache before building cards.
+	// If any are missing we fire the requests and return; the last callback re-calls
+	// this function, at which point the cache is full and we fall through normally.
+	if (location.pathname.includes('/userhistory') &&
+		new URLSearchParams(location.search).get('action') === 'subscribed_collages') {
+		const $scRows = jQuery('.torrent_table').find('tr.torrent');
+		let pending = 0;
+		$scRows.each(function () {
+			const tid = getTorrentIdFromRow(jQuery(this));
+			if (tid && !subCollagesCatCache.hasOwnProperty(tid)) pending++;
+		});
+		if (pending > 0) {
+			$scRows.each(function () {
+				const tid = getTorrentIdFromRow(jQuery(this));
+				if (tid && !subCollagesCatCache.hasOwnProperty(tid)) {
+					fetchCategoryForTorrent(tid, function () {
+						if (--pending === 0) buildGalleryView(); // recurse once cache is full
+					});
+				}
+			});
+			return; // wait for all fetches to complete
+		}
+		// pending === 0 means everything is already cached — fall through and build
+	}
     let $tables, rowSelector;
     if (location.pathname.includes('requests.php')) {
         $tables      = jQuery('#request_table, .request_table');
@@ -1122,6 +1243,41 @@ function getCategoryLink(catName, categoryMap = currentCategoryMap) {
 }
 
 // --------------------
+// SUBSCRIBED COLLAGES — CATEGORY FETCH HELPERS
+// --------------------
+function getTorrentIdFromRow($row) {
+    const dlHref = $row.find('a[href*="action=download"]').attr('href') || '';
+    const m = dlHref.match(/[?&]id=(\d+)/);
+    return m ? m[1] : null;
+}
+
+function fetchCategoryForTorrent(torrentId, callback) {
+    if (subCollagesCatCache.hasOwnProperty(torrentId)) {
+        callback(subCollagesCatCache[torrentId]);
+        return;
+    }
+    jQuery.ajax({
+        url: '/torrents.php?id=' + torrentId,
+        method: 'GET',
+        success: function (html) {
+            const $page = jQuery(html);
+            let catName = '';
+            const $catDiv = $page.find('td.cats_col div[title]').first();
+            if ($catDiv.length) catName = $catDiv.attr('title') || '';
+            if (!catName) {
+                const $ci = $page.find('div.cats_icon[title]').first();
+                if ($ci.length) catName = $ci.attr('title') || '';
+            }
+            subCollagesCatCache[torrentId] = catName;
+            callback(catName);
+        },
+        error: function () {
+            subCollagesCatCache[torrentId] = '';
+            callback('');
+        }
+    });
+}
+// --------------------
 // BACKEND (table thumbnails only)
 // --------------------
 function TableThumbnailBackend(isCollage, remove_categories) {
@@ -1259,6 +1415,34 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 const $title = get_collage_title($row);
                 if ($title.length) $title.css({ 'vertical-align': 'top' });
             }
+			// Async overlay for subscribed collages (category must be fetched from torrent page)
+			if (location.pathname === "/userhistory.php" &&
+				new URLSearchParams(location.search).get("action") === "subscribed_collages" &&
+				!this.remove_categories) {
+				const $catCell   = $category;
+				const torrentId  = getTorrentIdFromRow($row);
+				if (torrentId) {
+					fetchCategoryForTorrent(torrentId, function (fetchedCatName) {
+						if (!fetchedCatName) return;
+						const overlayText = fetchedCatName.replace(/\./g, ' ').toUpperCase().trim();
+						const catHref = getCategoryLink(fetchedCatName, currentCategoryMap);
+						const $link = jQuery('<a>').text(overlayText).attr('href', catHref)
+							.css({ 'color': 'white', 'text-decoration': 'none' });
+						const $ov = jQuery('<div>').css({
+							'position': 'absolute', 'top': '5px', 'left': '5px',
+							'padding': '2px 6px', 'background': 'rgba(0,0,0,0.65)',
+							'color': 'white', 'font-size': '12px', 'font-weight': '700',
+							'line-height': '1.1', 'border-radius': '3px',
+							'z-index': 9999, 'pointer-events': 'auto', 'white-space': 'normal',
+							'max-width': (TABLE_MAX_IMAGE_SIZE - 20) + 'px', 'box-sizing': 'border-box'
+						}).append($link);
+						$catCell.css('position',
+							$catCell.css('position') === 'static' ? 'relative' : $catCell.css('position')
+						);
+						$catCell.append($ov);
+					});
+				}
+			}
         } catch (e) {
             console.error(`${LOG_PREFIX} attach_image error:`, e, $row, $img);
         }
