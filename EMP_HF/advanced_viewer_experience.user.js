@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     2.4
+// @version     2.5
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -39,52 +39,54 @@
 // @grant       GM_getValue
 // ==/UserScript==
 
-// CHANGELOG
-// v2.4:
-// -Fixed missing/invalid categories on items in userhistory.php page(subscribed collages), for both list/grid mode.
-// -Added blue download button in addition to existing download icon which may be obstructed by preview image sometimes.
-// -Fixed top10.php page grid view which showed incorrect data in the cards.
-// v2.3:
-// -Fixed gallery column mapping for torrents.php?action=notify:
-//  The notify table has a leading checkbox column, so cat is at td[1] not td[0],
-//  which was causing categories to be blank in gallery mode on that page.
-//  Also removed the incorrect comments column offset (notify has no comments col).
-// -Fixed gallery showing only the first filter group on torrents.php?action=notify:
-//  The page renders one .torrent_table per notification filter; buildGalleryView
-//  now iterates all matching tables and inserts a separate grid after each one.
-// -Fixed gallery column mapping for requests.php:
-//  Correct indices: votes(2), bounty(3), filled(4), requester(6), created(7).
-//  Gallery cards on requests pages now show Votes / Bounty / Filled status
-//  instead of Seeders / Leechers / Snatched, and the requester name is shown
-//  in the footer with the creation date.
-// -Changed gallery grid container selector from #viewer-gallery-grid (ID) to
-//  .viewer-gallery-grid (class) so multiple grids can coexist on one page.
-// v2.2:
-// -added configuration quick edit button, next to username.
-// -renamed script, changed namespace, added installURL, updated domain urls.
-// v2.1:
-// -updated categories map to include emp new domain emparadise.
-// v2.0:
-// -added emparadise domain
-// v1.9:
-// -Fixed Notifications & Subscribed collages pages, thumbnails are also hyper links to torrents.
-// v1.8:
-// -Fixed some EMP categories links. Fixed top10 and collage page hover preview.
-// -Added better grid options in collage page. Split EMP/HF categories maps.
-// v1.7: added wider table view configurable.
-// v1.6: removed head requests, fixed caching issues, added HF domains.
-// v1.5: added lazy-load options (IMAGE_LOAD_MODE).
-// v1.4: added overlib popup, category overlay hyperlink support.
-// v1.3: added userhistory support, fixed remove_categories.
-// v1.2: fixed requests image preview url.
-// v1.1: added better lazy-load.
-
 
 "use strict";
 
 this.$ = this.jQuery = jQuery.noConflict(true);
 
 const LOG_PREFIX = '[TM]';
+
+// --------------------
+// VERSION HISTORY
+// Entries are newest-first. Add a new entry here with every release.
+// --------------------
+const SCRIPT_VERSION = '2.5';
+const VERSION_HISTORY = [
+    {
+        version: '2.5',
+        changes: [
+            'Added Tag Blacklist feature: rows whose tags match any blacklisted tag are hidden in both list and grid view. Blacklist data is stored persistently via GM_setValue and is saved across configured domains.',
+            'Added Tags hover button in gallery cards: hovering shows a popup of all tags for that torrent. Clicking a tag name chip in the popup toggles its blacklist state and refreshes the results for that page.',
+            'Added Tag Blacklist section in Viewer Settings: add/remove tags, clear all, live chip editor. Controls are disabled with a note on pages with no tags, meaning this feature requires tags to be enabled in settings.',
+            'Download and Tags buttons now share the same button row in gallery cards.',
+			'Added change log notice on updates.',
+        ],
+    },
+    {
+        version: '2.4',
+        changes: [
+            'Fixed missing/invalid categories on items in userhistory.php (subscribed collages) for both list and grid mode.',
+            'Added blue Download button in gallery cards (separate from the icon that can be obscured by the thumbnail).',
+            'Fixed top10.php grid view which showed incorrect data values in cards.',
+        ],
+    },
+    {
+        version: '2.3',
+        changes: [
+            'Fixed gallery column mapping for torrents.php?action=notify (leading checkbox column was shifting cat/title offsets).',
+            'Fixed gallery showing only the first filter group on the notify page (now renders one grid per filter group).',
+            'Fixed gallery column mapping for requests.php (votes, bounty, filled status now display correctly).',
+            'Gallery grid container changed from ID to class so multiple grids can coexist on one page.',
+        ],
+    },
+    {
+        version: '2.2',
+        changes: [
+            'Added quick-edit Viewer Settings button next to username in the nav bar.',
+            'Renamed script, updated namespace, added installURL, updated domain URLs.',
+        ],
+    },
+];
 
 // --------------------
 // CONFIG DEFAULTS
@@ -115,6 +117,20 @@ let FIT_VERTICAL_IMAGES_GRID_BETTER = GM_getValue('FIT_VERTICAL_IMAGES_GRID_BETT
 let IMAGE_LOAD_MODE                 = GM_getValue('IMAGE_LOAD_MODE',                 DEFAULTS.IMAGE_LOAD_MODE);
 let GALLERY_VIEW_MODE               = GM_getValue('GALLERY_VIEW_MODE',               DEFAULTS.GALLERY_VIEW_MODE);
 let GALLERY_CARD_MIN_WIDTH          = GM_getValue('GALLERY_CARD_MIN_WIDTH',          DEFAULTS.GALLERY_CARD_MIN_WIDTH);
+
+// --------------------
+// TAG BLACKLIST — persisted as a JSON array via GM_setValue
+// --------------------
+let TAG_BLACKLIST = [];
+(function () {
+    try {
+        const stored = GM_getValue('TAG_BLACKLIST', '[]');
+        const parsed = JSON.parse(stored);
+        TAG_BLACKLIST = Array.isArray(parsed)
+            ? parsed.map(t => String(t).toLowerCase().trim()).filter(Boolean)
+            : [];
+    } catch (e) { TAG_BLACKLIST = []; }
+})();
 
 // Global backend reference (assigned in init, used by gallery card builder)
 let globalBackend = null;
@@ -449,8 +465,152 @@ GM_addStyle(`
     border-color: #3a6a9a;
     text-decoration: none !important;
 }
+.vg-tags-btn {
+    background: #1a1a2e;
+    border-color: #2e2e55;
+    color: #9a9aff !important;
+    cursor: pointer;
+    font-family: inherit;
+}
+.vg-tags-btn:hover {
+    background: #222244;
+    border-color: #5555aa;
+    text-decoration: none !important;
+}
+/* ── TAGS POPUP (body-appended singleton) ── */
+#vg-tags-popup {
+    display: none;
+    position: absolute;
+    z-index: 999999;
+    background: #191919;
+    border: 1px solid #383838;
+    border-radius: 5px;
+    padding: 8px 10px;
+    max-width: 340px;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.65);
+}
+.vg-tag-chip {
+    display: inline-block;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 7px; margin: 2px 3px 2px 0;
+    border-radius: 3px; cursor: pointer;
+    background: #242424; color: #aaa;
+    border: 1px solid #333;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    user-select: none;
+}
+.vg-tag-chip:hover { background: #2e2e2e; color: #ddd; border-color: #555; }
+.vg-tag-chip.vg-tag-bl {
+    background: #2e1010; color: #e06060;
+    border-color: #602020;
+}
+.vg-tag-chip.vg-tag-bl:hover { background: #3a1414; color: #f07070; border-color: #883030; }
+/* ── TAGS SECTION IN SETTINGS MODAL ── */
+#vsm-tag-chips-container {
+    padding: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 3px; min-height: 24px;
+}
+#vsm-tag-chips-container .vsm-bl-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 4px 2px 7px; border-radius: 3px;
+    background: #2e1010; color: #e06060; border: 1px solid #602020;
+}
+#vsm-tag-chips-container .vsm-bl-chip button {
+    background: none; border: none; color: #c05050;
+    font-size: 13px; line-height: 1; cursor: pointer;
+    padding: 0 1px; margin-left: 1px; transition: color 0.12s;
+}
+#vsm-tag-chips-container .vsm-bl-chip button:hover { color: #ff8888; }
+#vsm-tag-add-row {
+    display: flex; gap: 6px; align-items: center; padding: 6px 0;
+}
+#vsm-tag-add-input {
+    flex: 1; background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0;
+    padding: 3px 7px; border-radius: 3px; font-size: 11px; outline: none;
+    transition: border-color 0.15s;
+}
+#vsm-tag-add-input:focus { border-color: #888; }
+#vsm-tag-add-input:disabled { opacity: 0.4; cursor: not-allowed; }
+#vsm-tag-add-btn { padding: 4px 10px; }
+#vsm-tag-clear-btn { padding: 4px 10px; font-size: 10px; }
+.vsm-tags-disabled-note {
+    font-size: 10px; color: #555; font-style: italic; padding: 2px 0;
+}
 `);
 
+
+
+// --------------------
+// CSS — changelog popup
+// --------------------
+GM_addStyle(`
+#vcl-backdrop {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.78); z-index: 999997; backdrop-filter: blur(2px);
+}
+#vcl-backdrop.active { display: flex; align-items: center; justify-content: center; }
+#vcl-modal {
+    position: relative; background: #1a1a1a;
+    border: 1px solid #3a3a3a; border-radius: 8px;
+    width: 560px; max-width: 96vw; max-height: 86vh;
+    overflow-y: auto; color: #d0d0d0;
+    font-family: inherit; font-size: 12px;
+    box-shadow: 0 10px 50px rgba(0,0,0,0.8); z-index: 999998;
+}
+#vcl-modal .vcl-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px 12px; border-bottom: 1px solid #2e2e2e;
+    position: sticky; top: 0; background: #1a1a1a; z-index: 1;
+    gap: 10px;
+}
+#vcl-modal .vcl-header-left { display: flex; flex-direction: column; gap: 2px; }
+#vcl-modal .vcl-header h2 {
+    margin: 0; font-size: 14px; font-weight: 800;
+    color: #f0f0f0; letter-spacing: 0.04em; text-transform: uppercase;
+}
+#vcl-modal .vcl-header .vcl-subtitle {
+    font-size: 10px; color: #666; letter-spacing: 0.02em;
+}
+#vcl-modal .vcl-body { padding: 14px 18px 6px; }
+#vcl-modal .vcl-version-block { margin-bottom: 18px; }
+#vcl-modal .vcl-version-block:last-child { margin-bottom: 0; }
+#vcl-modal .vcl-version-label {
+    display: inline-block;
+    font-size: 10px; font-weight: 800; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #7ec87e;
+    background: #1a2e1a; border: 1px solid #2e5e2e;
+    padding: 2px 8px; border-radius: 3px; margin-bottom: 8px;
+}
+#vcl-modal .vcl-changes {
+    list-style: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; gap: 5px;
+}
+#vcl-modal .vcl-changes li {
+    display: flex; gap: 8px; align-items: flex-start;
+    font-size: 11px; color: #c0c0c0; line-height: 1.5;
+}
+#vcl-modal .vcl-changes li::before {
+    content: '→'; color: #5a8a5a; font-weight: 700;
+    flex-shrink: 0; margin-top: 0px;
+}
+#vcl-modal .vcl-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px 16px; border-top: 1px solid #2e2e2e; margin-top: 10px;
+    position: sticky; bottom: 0; background: #1a1a1a; gap: 10px;
+    flex-wrap: wrap;
+}
+#vcl-modal .vcl-github-link {
+    font-size: 11px; color: #5a7a9a; text-decoration: none; font-weight: 600;
+}
+#vcl-modal .vcl-github-link:hover { color: #7aa0c8; text-decoration: underline; }
+#vcl-modal .vcl-ok-btn {
+    padding: 6px 22px; font-size: 12px; font-weight: 700;
+    border-radius: 4px; cursor: pointer;
+    background: #2d4a2d; border: 1px solid #4a7a4a; color: #8fc88f;
+    transition: background 0.15s, color 0.15s; letter-spacing: 0.03em;
+}
+#vcl-modal .vcl-ok-btn:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
+`);
 
 // --------------------
 // SETTINGS OVERLAY — BUILD & INJECT
@@ -548,6 +708,23 @@ function buildSettingsOverlay() {
                             IMAGE_LOAD_MODE))}
                 </div>
 
+                <div class="vsm-section" id="vsm-tags-section">
+                    <p class="vsm-section-title">Tag Blacklist</p>
+                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
+                        <span class="vsm-label">Blacklisted Tags</span>
+                        <span class="vsm-hint">Rows/cards containing ANY blacklisted tag are hidden immediately. Click a blacklisted tag chip in the popup (Tags button) to toggle. Changes apply instantly without saving.</span>
+                    </div>
+                    <div id="vsm-tag-chips-container"></div>
+                    <div id="vsm-tag-add-row">
+                        <input type="text" id="vsm-tag-add-input" placeholder="e.g. scat  or  natural.tits" autocomplete="off">
+                        <button class="vsm-btn vsm-btn-save" id="vsm-tag-add-btn" type="button">Add</button>
+                        <button class="vsm-btn vsm-btn-reset" id="vsm-tag-clear-btn" type="button">Clear all</button>
+                    </div>
+                    <div id="vsm-tags-disabled-msg" class="vsm-tags-disabled-note" style="display:none;">
+                        No tags found on this page — add/remove is disabled until you visit a page with tags.
+                    </div>
+                </div>
+
             </div>
             <div class="vsm-footer">
                 <div style="display:flex;align-items:center">
@@ -566,6 +743,30 @@ function buildSettingsOverlay() {
 
     jQuery('#viewer-settings-backdrop').on('click', function(e) { if (e.target === this) closeOverlay(); });
     jQuery('#vsm-close-btn').on('click', closeOverlay);
+
+    jQuery(document).on('click', '#vsm-tag-add-btn', function() {
+        const val = jQuery('#vsm-tag-add-input').val().trim().toLowerCase();
+        if (!val) return;
+        val.split(/[\s,]+/).forEach(function(t) {
+            t = t.trim();
+            if (t && TAG_BLACKLIST.indexOf(t) === -1) TAG_BLACKLIST.push(t);
+        });
+        saveTagBlacklist();
+        applyTagBlacklistToPage();
+        jQuery('#vsm-tag-add-input').val('');
+        refreshTagSettingsPanel();
+    });
+    jQuery(document).on('keydown', '#vsm-tag-add-input', function(e) {
+        if (e.key === 'Enter') jQuery('#vsm-tag-add-btn').trigger('click');
+    });
+    jQuery(document).on('click', '#vsm-tag-clear-btn', function() {
+        if (!TAG_BLACKLIST.length) return;
+        if (!confirm('Remove all ' + TAG_BLACKLIST.length + ' blacklisted tag(s)?')) return;
+        TAG_BLACKLIST = [];
+        saveTagBlacklist();
+        applyTagBlacklistToPage();
+        refreshTagSettingsPanel();
+    });
 
     jQuery('#vsm-save-btn').on('click', function() {
         const prevGallery = GALLERY_VIEW_MODE;
@@ -591,7 +792,10 @@ function buildSettingsOverlay() {
     jQuery(document).on('keydown.vsm', function(e) { if (e.key === 'Escape') closeOverlay(); });
 }
 
-function openOverlay()  { jQuery('#viewer-settings-backdrop').addClass('active'); }
+function openOverlay()  {
+    jQuery('#viewer-settings-backdrop').addClass('active');
+    refreshTagSettingsPanel();
+}
 function closeOverlay() { jQuery('#viewer-settings-backdrop').removeClass('active'); }
 
 function showSavedMsg() {
@@ -976,16 +1180,25 @@ function buildGalleryCard($row) {
         $titleDiv.append($titleA);
         $info.append($titleDiv);
 
-        // Add download button (separate row below title, outside the line-clamped div)
-        if (downloadHref) {
-            const $dlRow = jQuery('<div class="vg-dl-row">');
-            jQuery('<a>')
-                .attr('href', downloadHref)
-                .attr('title', 'Download torrent')
-                .addClass('vg-download-btn')
-                .html('&#11015; Download')
-                .appendTo($dlRow);
-            $info.append($dlRow);
+        // ── Button row: Download + Tags ──
+        const rowTags = getTagsFromRow($row);
+        if (downloadHref || rowTags.length) {
+            const $btnRow = jQuery('<div class="vg-dl-row">');
+            if (downloadHref) {
+                jQuery('<a>')
+                    .attr('href', downloadHref)
+                    .attr('title', 'Download torrent')
+                    .addClass('vg-download-btn')
+                    .html('&#11015; Download')
+                    .appendTo($btnRow);
+            }
+            if (rowTags.length) {
+                const $tagsBtn = jQuery('<button class="vg-download-btn vg-tags-btn" type="button">').html('🏷 Tags');
+                $tagsBtn.on('mouseenter', function () { showTagsPopup(jQuery(this), rowTags); });
+                $tagsBtn.on('mouseleave', scheduleHideTagsPopup);
+                $btnRow.append($tagsBtn);
+            }
+            $info.append($btnRow);
         }
 
         // Stats chips — layout differs between requests and torrents
@@ -1147,7 +1360,9 @@ function buildGalleryView() {
         const $grid = jQuery('<div class="viewer-gallery-grid">');
 
         $rows.each(function () {
-            const $card = buildGalleryCard(jQuery(this));
+            const $r = jQuery(this);
+            if (rowMatchesBlacklist($r)) return; // hidden by tag blacklist — skip
+            const $card = buildGalleryCard($r);
             if ($card) $grid.append($card);
         });
 
@@ -1240,6 +1455,213 @@ function getCategoryLink(catName, categoryMap = currentCategoryMap) {
         }
     }
     return '/torrents.php';
+}
+
+// --------------------
+// TAG BLACKLIST — HELPERS
+// --------------------
+function saveTagBlacklist() {
+    GM_setValue('TAG_BLACKLIST', JSON.stringify(TAG_BLACKLIST));
+}
+
+function getTagsFromRow($row) {
+    const tags = [];
+    $row.find('div.tags a').each(function () {
+        const t = jQuery(this).text().trim().toLowerCase();
+        if (t) tags.push(t);
+    });
+    return tags;
+}
+
+function rowMatchesBlacklist($row) {
+    if (!TAG_BLACKLIST.length) return false;
+    const tags = getTagsFromRow($row);
+    return tags.some(t => TAG_BLACKLIST.indexOf(t) !== -1);
+}
+
+function toggleTagInBlacklist(tag) {
+    tag = tag.toLowerCase().trim();
+    const idx = TAG_BLACKLIST.indexOf(tag);
+    if (idx === -1) TAG_BLACKLIST.push(tag);
+    else TAG_BLACKLIST.splice(idx, 1);
+    saveTagBlacklist();
+    applyTagBlacklistToPage();
+    refreshTagSettingsPanel();
+}
+
+function applyTagBlacklistToPage() {
+    // Table view: show/hide rows
+    const rowSel = location.pathname.includes('requests.php')
+        ? 'tr.rowa, tr.rowb'
+        : 'tr.torrent';
+    jQuery(rowSel).each(function () {
+        const $r = jQuery(this);
+        if (rowMatchesBlacklist($r)) $r.addClass('vg-bl-hidden').hide();
+        else if ($r.hasClass('vg-bl-hidden')) $r.removeClass('vg-bl-hidden').show();
+    });
+    // Gallery view: rebuild if active
+    if (GALLERY_VIEW_MODE && jQuery('.viewer-gallery-grid').length) {
+        buildGalleryView();
+    }
+}
+
+function pageHasTags() {
+    return jQuery('div.tags').length > 0;
+}
+
+// Refresh the blacklist chip list inside the settings panel
+function refreshTagSettingsPanel() {
+    const $container = jQuery('#vsm-tag-chips-container');
+    if (!$container.length) return;
+    $container.empty();
+    if (TAG_BLACKLIST.length) {
+        TAG_BLACKLIST.forEach(function (tag) {
+            const $chip = jQuery('<span class="vsm-bl-chip">').text(tag);
+            const $rm   = jQuery('<button type="button" title="Remove">').html('&times;');
+            $rm.on('click', function () {
+                toggleTagInBlacklist(tag);
+            });
+            $chip.append($rm);
+            $container.append($chip);
+        });
+    } else {
+        $container.append(
+            jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No tags blacklisted.')
+        );
+    }
+    // Enable/disable add input based on whether the current page has tags
+    const hasTags = pageHasTags();
+    jQuery('#vsm-tag-add-input, #vsm-tag-add-btn').prop('disabled', !hasTags);
+    jQuery('#vsm-tags-disabled-msg').toggle(!hasTags);
+}
+
+// --------------------
+// TAGS HOVER POPUP (singleton, body-appended)
+// --------------------
+let $tagsPopupEl   = null;
+let tagsHideTimer  = null;
+
+function ensureTagsPopup() {
+    if ($tagsPopupEl) return;
+    $tagsPopupEl = jQuery('<div id="vg-tags-popup">').appendTo('body');
+    $tagsPopupEl.on('mouseenter', function () {
+        if (tagsHideTimer) { clearTimeout(tagsHideTimer); tagsHideTimer = null; }
+    });
+    $tagsPopupEl.on('mouseleave', scheduleHideTagsPopup);
+}
+
+function scheduleHideTagsPopup() {
+    tagsHideTimer = setTimeout(function () {
+        if ($tagsPopupEl) $tagsPopupEl.hide();
+    }, 200);
+}
+
+function showTagsPopup($btn, tags) {
+    ensureTagsPopup();
+    if (tagsHideTimer) { clearTimeout(tagsHideTimer); tagsHideTimer = null; }
+
+    $tagsPopupEl.empty();
+    tags.forEach(function (tag) {
+        const isBl  = TAG_BLACKLIST.indexOf(tag) !== -1;
+        const $chip = jQuery('<span class="vg-tag-chip">')
+            .text(tag)
+            .toggleClass('vg-tag-bl', isBl)
+            .attr('title', isBl ? 'Blacklisted — click to remove' : 'Click to blacklist')
+            .on('click', function (e) {
+                e.stopPropagation();
+                toggleTagInBlacklist(tag);
+                const nowBl = TAG_BLACKLIST.indexOf(tag) !== -1;
+                jQuery(this).toggleClass('vg-tag-bl', nowBl)
+                            .attr('title', nowBl ? 'Blacklisted — click to remove' : 'Click to blacklist');
+            });
+        $tagsPopupEl.append($chip);
+    });
+
+    // Position below the button
+    const rect      = $btn[0].getBoundingClientRect();
+    const scrollTop = window.pageYOffset  || document.documentElement.scrollTop;
+    const scrollLeft= window.pageXOffset  || document.documentElement.scrollLeft;
+    $tagsPopupEl.css({ display: 'block', top: (rect.bottom + scrollTop + 4) + 'px', left: (rect.left + scrollLeft) + 'px' });
+
+    // Clamp right edge
+    const pr = $tagsPopupEl[0].getBoundingClientRect();
+    if (pr.right > window.innerWidth - 10) {
+        $tagsPopupEl.css('left', (Math.max(10, window.innerWidth - pr.width - 10) + scrollLeft) + 'px');
+    }
+}
+
+// --------------------
+// CHANGELOG POPUP
+// --------------------
+function buildChangelogPopup(versionsToShow) {
+    // Build version blocks HTML
+    const blocksHtml = versionsToShow.map(function (entry) {
+        const items = entry.changes.map(c => `<li>${c}</li>`).join('');
+        return `
+        <div class="vcl-version-block">
+            <span class="vcl-version-label">v${entry.version}</span>
+            <ul class="vcl-changes">${items}</ul>
+        </div>`;
+    }).join('');
+
+    const html = `
+    <div id="vcl-backdrop">
+        <div id="vcl-modal">
+            <div class="vcl-header">
+                <div class="vcl-header-left">
+                    <h2>&#127381; What's New</h2>
+                    <span class="vcl-subtitle">[HF][EMP] Advanced Viewer Experience &mdash; updated to v${SCRIPT_VERSION}</span>
+                </div>
+            </div>
+            <div class="vcl-body">${blocksHtml}</div>
+            <div class="vcl-footer">
+                <a class="vcl-github-link" href="https://github.com/edstagdh/Userscripts" target="_blank">
+                    &#128279; View on GitHub
+                </a>
+                <button class="vcl-ok-btn" id="vcl-ok-btn">OK, got it</button>
+            </div>
+        </div>
+    </div>`;
+
+    jQuery('body').append(html);
+
+    jQuery('#vcl-backdrop').on('click', function (e) { if (e.target === this) dismissChangelog(); });
+    jQuery('#vcl-ok-btn').on('click', dismissChangelog);
+    jQuery(document).on('keydown.vcl', function (e) { if (e.key === 'Escape') dismissChangelog(); });
+
+    // Show
+    jQuery('#vcl-backdrop').addClass('active');
+}
+
+function dismissChangelog() {
+    jQuery('#vcl-backdrop').removeClass('active');
+    GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION);
+    jQuery(document).off('keydown.vcl');
+}
+
+function checkVersionAndShowChangelog() {
+    const lastSeen = GM_getValue('LAST_SEEN_VERSION', '');
+    if (lastSeen === SCRIPT_VERSION) return; // already seen this version
+
+    // Collect all versions newer than lastSeen (VERSION_HISTORY is newest-first)
+    const toShow = [];
+    for (let i = 0; i < VERSION_HISTORY.length; i++) {
+        if (VERSION_HISTORY[i].version === lastSeen) break; // stop at last seen
+        toShow.push(VERSION_HISTORY[i]);
+    }
+
+    // First-ever install (lastSeen === '') — only show the current version
+    if (!lastSeen) {
+        toShow.length = 0;
+        toShow.push(VERSION_HISTORY[0]);
+    }
+
+    if (!toShow.length) {
+        GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION);
+        return;
+    }
+
+    buildChangelogPopup(toShow);
 }
 
 // --------------------
@@ -1524,6 +1946,8 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
                         else self.lazyObserver.observe($img[0]);
                     }
                     self.fix_title($row);
+                    // Hide row if any of its tags are blacklisted
+                    if (rowMatchesBlacklist($row)) $row.addClass('vg-bl-hidden').hide();
                     $row.data('thumbnail-attached', true);
                 });
                 if (!self.$torrent_table.find(self.row_selector + ':not([data-thumbnail-attached])').length) {
@@ -1544,6 +1968,7 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
 
     jQuery(document).ready(function () {
         injectNavButton();
+        checkVersionAndShowChangelog();
 
         if (GALLERY_VIEW_MODE && !location.pathname.includes('/collage')) {
             setTimeout(buildGalleryView, 150);
