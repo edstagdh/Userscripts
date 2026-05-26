@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     2.5
+// @version     2.6
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -50,8 +50,18 @@ const LOG_PREFIX = '[TM]';
 // VERSION HISTORY
 // Entries are newest-first. Add a new entry here with every release.
 // --------------------
-const SCRIPT_VERSION = '2.5';
+const SCRIPT_VERSION = '2.6';
 const VERSION_HISTORY = [
+    {
+        version: '2.6',
+        changes: [
+            'Added Uploader Blacklist: uploads from blacklisted uploaders will be hidden in both list and grid view.',
+            'Gallery grid card footer: uploader name shows a ⛔ block button on hover. Click it to instantly blacklist that uploader.',
+            'Table list view (pages with an uploader column): a ⛔ block button appears next to each uploader name.',
+            'Uploader names extracted from the overlay script on pages without a dedicated uploader column (collage, notifications) so blocking works everywhere.',
+            'New Uploader Blacklist section in Viewer Settings: manually add usernames, remove via chips, or clear all.',
+        ],
+    },
     {
         version: '2.5',
         changes: [
@@ -130,6 +140,20 @@ let TAG_BLACKLIST = [];
             ? parsed.map(t => String(t).toLowerCase().trim()).filter(Boolean)
             : [];
     } catch (e) { TAG_BLACKLIST = []; }
+})();
+
+// --------------------
+// UPLOADER BLACKLIST — persisted as a JSON array via GM_setValue
+// --------------------
+let UPLOADER_BLACKLIST = [];
+(function () {
+    try {
+        const stored = GM_getValue('UPLOADER_BLACKLIST', '[]');
+        const parsed = JSON.parse(stored);
+        UPLOADER_BLACKLIST = Array.isArray(parsed)
+            ? parsed.map(u => String(u).toLowerCase().trim()).filter(Boolean)
+            : [];
+    } catch (e) { UPLOADER_BLACKLIST = []; }
 })();
 
 // Global backend reference (assigned in init, used by gallery card builder)
@@ -505,7 +529,55 @@ GM_addStyle(`
     border-color: #602020;
 }
 .vg-tag-chip.vg-tag-bl:hover { background: #3a1414; color: #f07070; border-color: #883030; }
-/* ── TAGS SECTION IN SETTINGS MODAL ── */
+/* ── UPLOADER BLOCK BUTTON (table view, next to uploader name) ── */
+.vg-uploader-block-btn {
+    background: none; border: none; cursor: pointer;
+    font-size: 10px; padding: 0 1px; margin-left: 5px;
+    opacity: 0.25; transition: opacity 0.15s;
+    vertical-align: middle; line-height: 1; color: inherit;
+}
+.vg-uploader-block-btn:hover { opacity: 1; }
+/* In gallery card footer — uploader name when blacklisted */
+.vg-uploader-bl {
+    color: #c05050 !important;
+    text-decoration: line-through !important;
+    opacity: 0.7;
+}
+/* Uploader block button inside gallery card footer */
+.vg-footer-block-btn {
+    background: none; border: none; cursor: pointer;
+    font-size: 10px; padding: 0 1px; margin-left: 3px;
+    opacity: 0.2; transition: opacity 0.15s; line-height: 1;
+    color: inherit; vertical-align: middle;
+}
+.vg-footer:hover .vg-footer-block-btn { opacity: 0.6; }
+.vg-footer-block-btn:hover { opacity: 1 !important; }
+/* Uploader blacklist section in settings — reuses vsm-bl-chip from tags */
+#vsm-uploader-chips-container {
+    padding: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 3px; min-height: 24px;
+}
+#vsm-uploader-chips-container .vsm-bl-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 4px 2px 7px; border-radius: 3px;
+    background: #1a1020; color: #b070e0; border: 1px solid #5a2090;
+}
+#vsm-uploader-chips-container .vsm-bl-chip button {
+    background: none; border: none; color: #9050c0;
+    font-size: 13px; line-height: 1; cursor: pointer;
+    padding: 0 1px; margin-left: 1px; transition: color 0.12s;
+}
+#vsm-uploader-chips-container .vsm-bl-chip button:hover { color: #cc88ff; }
+#vsm-uploader-add-row {
+    display: flex; gap: 6px; align-items: center; padding: 6px 0;
+}
+#vsm-uploader-add-input {
+    flex: 1; background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0;
+    padding: 3px 7px; border-radius: 3px; font-size: 11px; outline: none;
+    transition: border-color 0.15s;
+}
+#vsm-uploader-add-input:focus { border-color: #888; }
+#vsm-uploader-add-btn, #vsm-uploader-clear-btn { padding: 4px 10px; font-size: 10px; }
 #vsm-tag-chips-container {
     padding: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 3px; min-height: 24px;
 }
@@ -725,6 +797,20 @@ function buildSettingsOverlay() {
                     </div>
                 </div>
 
+                <div class="vsm-section" id="vsm-uploaders-section">
+                    <p class="vsm-section-title">Uploader Blacklist</p>
+                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
+                        <span class="vsm-label">Blacklisted Uploaders</span>
+                        <span class="vsm-hint">Rows/cards from blacklisted uploaders are hidden. In gallery view, click ⛔ next to an uploader name to block them instantly. Changes apply without saving.</span>
+                    </div>
+                    <div id="vsm-uploader-chips-container"></div>
+                    <div id="vsm-uploader-add-row">
+                        <input type="text" id="vsm-uploader-add-input" placeholder="e.g. username123" autocomplete="off">
+                        <button class="vsm-btn vsm-btn-save" id="vsm-uploader-add-btn" type="button">Add</button>
+                        <button class="vsm-btn vsm-btn-reset" id="vsm-uploader-clear-btn" type="button">Clear all</button>
+                    </div>
+                </div>
+
             </div>
             <div class="vsm-footer">
                 <div style="display:flex;align-items:center">
@@ -752,7 +838,7 @@ function buildSettingsOverlay() {
             if (t && TAG_BLACKLIST.indexOf(t) === -1) TAG_BLACKLIST.push(t);
         });
         saveTagBlacklist();
-        applyTagBlacklistToPage();
+        applyBlacklistsToPage();
         jQuery('#vsm-tag-add-input').val('');
         refreshTagSettingsPanel();
     });
@@ -764,8 +850,33 @@ function buildSettingsOverlay() {
         if (!confirm('Remove all ' + TAG_BLACKLIST.length + ' blacklisted tag(s)?')) return;
         TAG_BLACKLIST = [];
         saveTagBlacklist();
-        applyTagBlacklistToPage();
+        applyBlacklistsToPage();
         refreshTagSettingsPanel();
+    });
+
+    // Uploader blacklist handlers
+    jQuery(document).on('click', '#vsm-uploader-add-btn', function() {
+        const val = jQuery('#vsm-uploader-add-input').val().trim().toLowerCase();
+        if (!val) return;
+        val.split(/[\s,]+/).forEach(function(u) {
+            u = u.trim();
+            if (u && UPLOADER_BLACKLIST.indexOf(u) === -1) UPLOADER_BLACKLIST.push(u);
+        });
+        saveUploaderBlacklist();
+        applyBlacklistsToPage();
+        jQuery('#vsm-uploader-add-input').val('');
+        refreshUploaderSettingsPanel();
+    });
+    jQuery(document).on('keydown', '#vsm-uploader-add-input', function(e) {
+        if (e.key === 'Enter') jQuery('#vsm-uploader-add-btn').trigger('click');
+    });
+    jQuery(document).on('click', '#vsm-uploader-clear-btn', function() {
+        if (!UPLOADER_BLACKLIST.length) return;
+        if (!confirm('Remove all ' + UPLOADER_BLACKLIST.length + ' blacklisted uploader(s)?')) return;
+        UPLOADER_BLACKLIST = [];
+        saveUploaderBlacklist();
+        applyBlacklistsToPage();
+        refreshUploaderSettingsPanel();
     });
 
     jQuery('#vsm-save-btn').on('click', function() {
@@ -795,6 +906,7 @@ function buildSettingsOverlay() {
 function openOverlay()  {
     jQuery('#viewer-settings-backdrop').addClass('active');
     refreshTagSettingsPanel();
+    refreshUploaderSettingsPanel();
 }
 function closeOverlay() { jQuery('#viewer-settings-backdrop').removeClass('active'); }
 
@@ -1262,8 +1374,27 @@ function buildGalleryCard($row) {
         if (uploaderText || timeDisplay) {
             const $footer = jQuery('<div class="vg-footer">');
             if (uploaderText) {
-                const uploaderLabel = cols.pageType === 'requests' ? '👤 ' : '👤 ';
-                jQuery('<a>').attr('href', uploaderHref).text(uploaderLabel + uploaderText).appendTo($footer);
+                const uploaderKey = uploaderText.toLowerCase();
+                const isUlBl = UPLOADER_BLACKLIST.indexOf(uploaderKey) !== -1;
+                const $ulWrap = jQuery('<span style="display:inline-flex;align-items:center;gap:1px;">');
+                jQuery('<a>')
+                    .attr('href', uploaderHref)
+                    .text('👤 ' + uploaderText)
+                    .toggleClass('vg-uploader-bl', isUlBl)
+                    .appendTo($ulWrap);
+                const $blockBtn = jQuery('<button class="vg-footer-block-btn" type="button">')
+                    .attr('title', isUlBl ? 'Blocked — click to unblock ' + uploaderText : 'Block uploader: ' + uploaderText)
+                    .text('⛔');
+                $blockBtn.on('click', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleUploaderInBlacklist(uploaderKey);
+                    const nowBl = UPLOADER_BLACKLIST.indexOf(uploaderKey) !== -1;
+                    $ulWrap.find('a').toggleClass('vg-uploader-bl', nowBl);
+                    jQuery(this).attr('title', nowBl ? 'Blocked — click to unblock ' + uploaderText : 'Block uploader: ' + uploaderText);
+                });
+                $ulWrap.append($blockBtn);
+                $footer.append($ulWrap);
             }
             if (timeDisplay) {
                 jQuery('<span class="vg-time">')
@@ -1361,7 +1492,7 @@ function buildGalleryView() {
 
         $rows.each(function () {
             const $r = jQuery(this);
-            if (rowMatchesBlacklist($r)) return; // hidden by tag blacklist — skip
+            if (rowMatchesBlacklist($r) || rowMatchesUploaderBlacklist($r)) return; // hidden by blacklist
             const $card = buildGalleryCard($r);
             if ($card) $grid.append($card);
         });
@@ -1485,18 +1616,21 @@ function toggleTagInBlacklist(tag) {
     if (idx === -1) TAG_BLACKLIST.push(tag);
     else TAG_BLACKLIST.splice(idx, 1);
     saveTagBlacklist();
-    applyTagBlacklistToPage();
+    applyBlacklistsToPage();
     refreshTagSettingsPanel();
 }
 
-function applyTagBlacklistToPage() {
-    // Table view: show/hide rows
+function applyTagBlacklistToPage() { applyBlacklistsToPage(); } // kept for internal callers
+
+function applyBlacklistsToPage() {
+    // Table view: show/hide rows based on BOTH blacklists
     const rowSel = location.pathname.includes('requests.php')
         ? 'tr.rowa, tr.rowb'
         : 'tr.torrent';
     jQuery(rowSel).each(function () {
         const $r = jQuery(this);
-        if (rowMatchesBlacklist($r)) $r.addClass('vg-bl-hidden').hide();
+        const hide = rowMatchesBlacklist($r) || rowMatchesUploaderBlacklist($r);
+        if (hide) $r.addClass('vg-bl-hidden').hide();
         else if ($r.hasClass('vg-bl-hidden')) $r.removeClass('vg-bl-hidden').show();
     });
     // Gallery view: rebuild if active
@@ -1536,8 +1670,100 @@ function refreshTagSettingsPanel() {
 }
 
 // --------------------
-// TAGS HOVER POPUP (singleton, body-appended)
+// UPLOADER BLACKLIST — HELPERS
 // --------------------
+function saveUploaderBlacklist() {
+    GM_setValue('UPLOADER_BLACKLIST', JSON.stringify(UPLOADER_BLACKLIST));
+}
+
+// Extract uploader name from a row — column first, overlay script as fallback.
+// Returns a lowercase trimmed string, or null if not found / anonymous.
+function getUploaderFromRow($row) {
+    const ANON = ['anon', 'anonymous', ''];
+
+    // Strategy 1: dedicated uploader column (most pages)
+    const cols = getGalleryColOffsets();
+    if (cols.uploader >= 0) {
+        const $td   = $row.find('> td').eq(cols.uploader);
+        // Skip anonymous-upload spans
+        if ($td.find('.anon_name').length) return null;
+        const $link = $td.find('a').first();
+        const name  = ($link.length ? $link.text() : $td.text()).trim().toLowerCase();
+        if (name && ANON.indexOf(name) === -1) return name;
+    }
+
+    // Strategy 2: parse the overlay var script (collage, notify, subscribed collages)
+    // Overlay string contains literal:  Uploader:<\/strong> Username<br \/>
+    // The raw script text has the backslash literally, so we match <\/strong>
+    const scriptText = $row.find('script').text();
+    if (scriptText) {
+        const m = scriptText.match(/(?:Uploader|Requester):<\\\/strong>\s*([^<\\]+)/);
+        if (m) {
+            const name = m[1].trim().toLowerCase();
+            if (name && ANON.indexOf(name) === -1) return name;
+        }
+    }
+    return null;
+}
+
+function rowMatchesUploaderBlacklist($row) {
+    if (!UPLOADER_BLACKLIST.length) return false;
+    const uploader = getUploaderFromRow($row);
+    return uploader !== null && UPLOADER_BLACKLIST.indexOf(uploader) !== -1;
+}
+
+function toggleUploaderInBlacklist(name) {
+    name = String(name).toLowerCase().trim();
+    if (!name) return;
+    const idx = UPLOADER_BLACKLIST.indexOf(name);
+    if (idx === -1) UPLOADER_BLACKLIST.push(name);
+    else UPLOADER_BLACKLIST.splice(idx, 1);
+    saveUploaderBlacklist();
+    applyBlacklistsToPage();
+    refreshUploaderSettingsPanel();
+}
+
+function refreshUploaderSettingsPanel() {
+    const $container = jQuery('#vsm-uploader-chips-container');
+    if (!$container.length) return;
+    $container.empty();
+    if (UPLOADER_BLACKLIST.length) {
+        UPLOADER_BLACKLIST.forEach(function (name) {
+            const $chip = jQuery('<span class="vsm-bl-chip">').text(name);
+            const $rm   = jQuery('<button type="button" title="Remove">').html('&times;');
+            $rm.on('click', function () { toggleUploaderInBlacklist(name); });
+            $chip.append($rm);
+            $container.append($chip);
+        });
+    } else {
+        $container.append(
+            jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No uploaders blacklisted.')
+        );
+    }
+}
+
+// Adds a ⛔ block button next to the uploader name in the uploader column (table view).
+function addUploaderBlockBtnToRow($row) {
+    const cols = getGalleryColOffsets();
+    if (cols.uploader < 0) return; // page has no uploader column
+    const $td = $row.find('> td').eq(cols.uploader);
+    if ($td.data('vg-uploader-btn-added')) return;
+    $td.data('vg-uploader-btn-added', true);
+
+    const uploader = getUploaderFromRow($row);
+    if (!uploader) return;
+
+    const $btn = jQuery('<button class="vg-uploader-block-btn" type="button" title="Block uploader: ' + uploader + '">⛔</button>');
+    $btn.on('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleUploaderInBlacklist(uploader);
+    });
+    // Append after the link (or at end of cell)
+    const $link = $td.find('a').first();
+    if ($link.length) $link.after($btn);
+    else $td.append($btn);
+}
 let $tagsPopupEl   = null;
 let tagsHideTimer  = null;
 
@@ -1946,8 +2172,12 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
                         else self.lazyObserver.observe($img[0]);
                     }
                     self.fix_title($row);
-                    // Hide row if any of its tags are blacklisted
-                    if (rowMatchesBlacklist($row)) $row.addClass('vg-bl-hidden').hide();
+                    // Hide row if tags or uploader are blacklisted
+                    if (rowMatchesBlacklist($row) || rowMatchesUploaderBlacklist($row)) {
+                        $row.addClass('vg-bl-hidden').hide();
+                    }
+                    // Add ⛔ block button next to uploader name (where column exists)
+                    addUploaderBlockBtnToRow($row);
                     $row.data('thumbnail-attached', true);
                 });
                 if (!self.$torrent_table.find(self.row_selector + ':not([data-thumbnail-attached])').length) {
