@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     2.6
+// @version     2.7
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -45,13 +45,26 @@
 this.$ = this.jQuery = jQuery.noConflict(true);
 
 const LOG_PREFIX = '[TM]';
-
+const USER_SEARCH_COOLDOWN_MS = 30 * 1000;
+let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
 // Entries are newest-first. Add a new entry here with every release.
 // --------------------
-const SCRIPT_VERSION = '2.6';
+const SCRIPT_VERSION = '2.7';
 const VERSION_HISTORY = [
+    {
+        version: '2.7',
+        changes: [
+            'Added Favorite Tags list: rows/cards whose tags include any favorite tag glow in a custom color.',
+            'Glow color is configurable from a palette of 9 glow-friendly colors (gold, cyan, green, pink, purple, orange, red, teal, white) in Viewer Settings.',
+            'New setting: Tag Click Action — choose whether clicking a tag chip in the Tags popup blacklists it(default behavior) or adds it to favorites. The popup shows a hint and three chip states: red=blacklisted, gold=favorite, grey=neutral.',
+            'Tags are mutually exclusive between blacklist and favorites — adding to one removes from the other.',
+            'Gallery cards now always show the uploader name, even on pages with no dedicated uploader column (collage, notifications), extracted from the torrent overlay data.',
+            'Added guard: "anon" can never be blacklisted or blocked as an uploader.',
+            'Username Link: in pages where no uploader name is displayed, the hyperlink to the uploader profile page will have cooldown.',
+        ],
+    },
     {
         version: '2.6',
         changes: [
@@ -69,7 +82,7 @@ const VERSION_HISTORY = [
             'Added Tags hover button in gallery cards: hovering shows a popup of all tags for that torrent. Clicking a tag name chip in the popup toggles its blacklist state and refreshes the results for that page.',
             'Added Tag Blacklist section in Viewer Settings: add/remove tags, clear all, live chip editor. Controls are disabled with a note on pages with no tags, meaning this feature requires tags to be enabled in settings.',
             'Download and Tags buttons now share the same button row in gallery cards.',
-			'Added change log notice on updates.',
+            'Added change log notice on updates.',
         ],
     },
     {
@@ -138,7 +151,7 @@ let TAG_BLACKLIST = [];
         const parsed = JSON.parse(stored);
         TAG_BLACKLIST = Array.isArray(parsed)
             ? parsed.map(t => String(t).toLowerCase().trim()).filter(Boolean)
-            : [];
+        : [];
     } catch (e) { TAG_BLACKLIST = []; }
 })();
 
@@ -152,9 +165,29 @@ let UPLOADER_BLACKLIST = [];
         const parsed = JSON.parse(stored);
         UPLOADER_BLACKLIST = Array.isArray(parsed)
             ? parsed.map(u => String(u).toLowerCase().trim()).filter(Boolean)
-            : [];
+        : [];
     } catch (e) { UPLOADER_BLACKLIST = []; }
 })();
+
+// --------------------
+// TAG FAVORITES — persisted as a JSON array via GM_setValue
+// --------------------
+let TAG_FAVORITES = [];
+(function () {
+    try {
+        const stored = GM_getValue('TAG_FAVORITES', '[]');
+        const parsed = JSON.parse(stored);
+        TAG_FAVORITES = Array.isArray(parsed)
+            ? parsed.map(t => String(t).toLowerCase().trim()).filter(Boolean)
+        : [];
+    } catch (e) { TAG_FAVORITES = []; }
+})();
+
+// Glow color for favorite-tag matches (one of the GLOW_COLORS palette)
+let FAVORITE_GLOW_COLOR = GM_getValue('FAVORITE_GLOW_COLOR', '#f5c518');
+
+// What clicking a tag chip in the Tags popup does: 'blacklist' or 'favorite'
+let TAG_CLICK_ACTION = GM_getValue('TAG_CLICK_ACTION', 'blacklist');
 
 // Global backend reference (assigned in init, used by gallery card builder)
 let globalBackend = null;
@@ -210,14 +243,26 @@ GM_addStyle(`
     background: #161616;
     border: 1px solid #2a2a2a;
     border-radius: 7px;
-    overflow: hidden;
+
+    overflow: visible;
+
     display: flex;
     flex-direction: column;
-    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.15s ease;
+
+    position: relative;
+    z-index: 1;
+
+    transition:
+        border-color 0.18s ease,
+        box-shadow 0.18s ease,
+        transform 0.15s ease;
 }
 .vg-card:hover {
     border-color: #505050;
     transform: translateY(-3px);
+}
+
+.vg-card:hover:not(.vg-fav-match) {
     box-shadow: 0 8px 24px rgba(0,0,0,0.55);
 }
 
@@ -529,6 +574,73 @@ GM_addStyle(`
     border-color: #602020;
 }
 .vg-tag-chip.vg-tag-bl:hover { background: #3a1414; color: #f07070; border-color: #883030; }
+/* ── FAVORITE TAG CHIP ── */
+.vg-tag-chip.vg-tag-fav {
+    background: #2e2500; color: #f5c518;
+    border-color: #7a6000;
+}
+.vg-tag-chip.vg-tag-fav:hover { background: #3a3000; color: #ffd740; border-color: #aa8800; }
+/* ── GLOW ANIMATION for favorite-matched rows/cards ── */
+@keyframes vg-glow-pulse {
+    0%, 100% { box-shadow: 0 0 7px 2px var(--vg-glow-c), 0 2px 8px rgba(0,0,0,0.5); }
+    50%       { box-shadow: 0 0 20px 6px var(--vg-glow-c), 0 2px 8px rgba(0,0,0,0.5); }
+}
+.vg-fav-match {
+    position: relative;
+    background: #161616 !important;
+}
+/* ── FAVORITE TAGS SETTINGS PANEL ── */
+#vsm-fav-chips-container {
+    padding: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 3px; min-height: 24px;
+}
+#vsm-fav-chips-container .vsm-fav-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 4px 2px 7px; border-radius: 3px;
+    background: #2e2500; color: #f5c518; border: 1px solid #7a6000;
+}
+#vsm-fav-chips-container .vsm-fav-chip button {
+    background: none; border: none; color: #b09000;
+    font-size: 13px; line-height: 1; cursor: pointer;
+    padding: 0 1px; margin-left: 1px; transition: color 0.12s;
+}
+#vsm-fav-chips-container .vsm-fav-chip button:hover { color: #ffd740; }
+#vsm-fav-add-row {
+    display: flex; gap: 6px; align-items: center; padding: 6px 0;
+}
+#vsm-fav-add-input {
+    flex: 1; background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0;
+    padding: 3px 7px; border-radius: 3px; font-size: 11px; outline: none;
+    transition: border-color 0.15s;
+}
+#vsm-fav-add-input:focus { border-color: #888; }
+#vsm-fav-add-input:disabled { opacity: 0.4; cursor: not-allowed; }
+#vsm-fav-add-btn, #vsm-fav-clear-btn { padding: 4px 10px; font-size: 10px; }
+/* ── GLOW COLOR SWATCHES ── */
+.vsm-glow-swatches {
+    display: flex; flex-wrap: wrap; gap: 7px; padding: 6px 0 4px;
+}
+.vsm-glow-swatch {
+    width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent; transition: transform 0.12s, border-color 0.12s;
+    position: relative; flex-shrink: 0;
+}
+.vsm-glow-swatch:hover { transform: scale(1.18); }
+.vsm-glow-swatch.selected {
+    border-color: #ffffff;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.3);
+}
+.vsm-glow-swatch.selected::after {
+    content: '✓'; position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 900; color: #000; text-shadow: 0 0 3px #fff;
+}
+/* ── TAGS POPUP MODE HINT ── */
+#vg-tags-popup .vg-popup-hint {
+    font-size: 9px; color: #666; text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 6px; padding-bottom: 5px;
+    border-bottom: 1px solid #2a2a2a; display: block;
+}
 /* ── UPLOADER BLOCK BUTTON (table view, next to uploader name) ── */
 .vg-uploader-block-btn {
     background: none; border: none; cursor: pointer;
@@ -699,7 +811,7 @@ function buildSettingsOverlay() {
 
     function select(id, options, value) {
         const opts = options.map(([v, label]) =>
-            `<option value="${v}" ${v === value ? 'selected' : ''}>${label}</option>`
+                                 `<option value="${v}" ${v === value ? 'selected' : ''}>${label}</option>`
         ).join('');
         return `<select id="${id}">${opts}</select>`;
     }
@@ -727,64 +839,64 @@ function buildSettingsOverlay() {
                 <div class="vsm-section">
                     <p class="vsm-section-title">Table / Torrent List</p>
                     ${row('Max Thumbnail Size',
-                        'Maximum width &amp; height of thumbnails in the torrent table (px)',
-                        `<input type="number" id="vsm-TABLE_MAX_IMAGE_SIZE" min="50" max="600" step="10" value="${TABLE_MAX_IMAGE_SIZE}">`)}
+                          'Maximum width &amp; height of thumbnails in the torrent table (px)',
+                          `<input type="number" id="vsm-TABLE_MAX_IMAGE_SIZE" min="50" max="600" step="10" value="${TABLE_MAX_IMAGE_SIZE}">`)}
                     ${row('Small Thumbnails',
-                        'Use compact thumbnail size (50×50 placeholder before load)',
-                        toggle('vsm-SMALL_THUMBNAILS', SMALL_THUMBNAILS))}
+                          'Use compact thumbnail size (50×50 placeholder before load)',
+                          toggle('vsm-SMALL_THUMBNAILS', SMALL_THUMBNAILS))}
                     ${row('Wider Table View',
-                        'Expands #content to 99% width, up to 1500px',
-                        toggle('vsm-ENABLE_WIDER_TABLE_VIEW', ENABLE_WIDER_TABLE_VIEW))}
+                          'Expands #content to 99% width, up to 1500px',
+                          toggle('vsm-ENABLE_WIDER_TABLE_VIEW', ENABLE_WIDER_TABLE_VIEW))}
                     ${row('Remove Category Labels',
-                        'Hides the category div/icon overlay on each row',
-                        toggle('vsm-REMOVE_CATEGORIES', REMOVE_CATEGORIES))}
+                          'Hides the category div/icon overlay on each row',
+                          toggle('vsm-REMOVE_CATEGORIES', REMOVE_CATEGORIES))}
                 </div>
 
                 <div class="vsm-section">
                     <p class="vsm-section-title">Gallery View</p>
                     ${row('Gallery Mode',
-                        'Display results as an image card grid instead of the table. Toggle instantly with the Grid/List button in the nav bar.',
-                        toggle('vsm-GALLERY_VIEW_MODE', GALLERY_VIEW_MODE))}
+                          'Display results as an image card grid instead of the table. Toggle instantly with the Grid/List button in the nav bar.',
+                          toggle('vsm-GALLERY_VIEW_MODE', GALLERY_VIEW_MODE))}
                     ${row('Min Card Width',
-                        'Minimum card width in the gallery grid (px). Affects how many columns fit.',
-                        `<input type="number" id="vsm-GALLERY_CARD_MIN_WIDTH" min="140" max="480" step="10" value="${GALLERY_CARD_MIN_WIDTH}">`)}
+                          'Minimum card width in the gallery grid (px). Affects how many columns fit.',
+                          `<input type="number" id="vsm-GALLERY_CARD_MIN_WIDTH" min="140" max="480" step="10" value="${GALLERY_CARD_MIN_WIDTH}">`)}
                 </div>
 
                 <div class="vsm-section">
                     <p class="vsm-section-title">Collage Page</p>
                     ${row('Text Trim Mode',
-                        'Controls how torrent titles are displayed in the collage grid',
-                        select('vsm-TRIM_TEXT_COLLAGE_PAGE_MODE',
-                            [['nothing','Nothing (default)'],['small_text','Small text'],
-                             ['smaller_text','Smaller text'],['small_text_wrap','Small text + wrap'],
-                             ['smaller_text_wrap','Smaller text + wrap']],
-                            TRIM_TEXT_COLLAGE_PAGE_MODE))}
+                          'Controls how torrent titles are displayed in the collage grid',
+                          select('vsm-TRIM_TEXT_COLLAGE_PAGE_MODE',
+                                 [['nothing','Nothing (default)'],['small_text','Small text'],
+                                  ['smaller_text','Smaller text'],['small_text_wrap','Small text + wrap'],
+                                  ['smaller_text_wrap','Smaller text + wrap']],
+                                 TRIM_TEXT_COLLAGE_PAGE_MODE))}
                     ${row('Fit Vertical Images',
-                        'Adjusts the SVG viewBox to better fill tall/portrait cover images',
-                        select('vsm-FIT_VERTICAL_IMAGES_GRID_BETTER',
-                            [['nothing','Nothing (default)'],['half','Half width'],['full','Full width']],
-                            FIT_VERTICAL_IMAGES_GRID_BETTER))}
+                          'Adjusts the SVG viewBox to better fill tall/portrait cover images',
+                          select('vsm-FIT_VERTICAL_IMAGES_GRID_BETTER',
+                                 [['nothing','Nothing (default)'],['half','Half width'],['full','Full width']],
+                                 FIT_VERTICAL_IMAGES_GRID_BETTER))}
                     ${row('Remove Cover Images',
-                        'Hides the .torrent__cover background image on collage pages',
-                        toggle('vsm-REMOVE_MAIN_IMAGES_COLLAGE_PAGE', REMOVE_MAIN_IMAGES_COLLAGE_PAGE))}
+                          'Hides the .torrent__cover background image on collage pages',
+                          toggle('vsm-REMOVE_MAIN_IMAGES_COLLAGE_PAGE', REMOVE_MAIN_IMAGES_COLLAGE_PAGE))}
                 </div>
 
                 <div class="vsm-section">
                     <p class="vsm-section-title">Performance</p>
                     ${row('Image Load Mode',
-                        'When thumbnail images are fetched relative to the viewport',
-                        select('vsm-IMAGE_LOAD_MODE',
-                            [['disabled','Immediate (no lazy load)'],
-                             ['near','Near (~1–2 screens away)'],
-                             ['lazy','Lazy (only when visible)']],
-                            IMAGE_LOAD_MODE))}
+                          'When thumbnail images are fetched relative to the viewport',
+                          select('vsm-IMAGE_LOAD_MODE',
+                                 [['disabled','Immediate (no lazy load)'],
+                                  ['near','Near (~1–2 screens away)'],
+                                  ['lazy','Lazy (only when visible)']],
+                                 IMAGE_LOAD_MODE))}
                 </div>
 
                 <div class="vsm-section" id="vsm-tags-section">
                     <p class="vsm-section-title">Tag Blacklist</p>
                     <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
                         <span class="vsm-label">Blacklisted Tags</span>
-                        <span class="vsm-hint">Rows/cards containing ANY blacklisted tag are hidden immediately. Click a blacklisted tag chip in the popup (Tags button) to toggle. Changes apply instantly without saving.</span>
+                        <span class="vsm-hint">Rows/cards containing ANY blacklisted tag are hidden immediately. Changes apply instantly without saving.</span>
                     </div>
                     <div id="vsm-tag-chips-container"></div>
                     <div id="vsm-tag-add-row">
@@ -794,6 +906,33 @@ function buildSettingsOverlay() {
                     </div>
                     <div id="vsm-tags-disabled-msg" class="vsm-tags-disabled-note" style="display:none;">
                         No tags found on this page — add/remove is disabled until you visit a page with tags.
+                    </div>
+                </div>
+
+                <div class="vsm-section" id="vsm-fav-tags-section">
+                    <p class="vsm-section-title">Favorite Tags</p>
+                    ${row('Tag Popup Click Action',
+                          'What clicking a tag chip in the Tags popup does. Popup shows current mode. Tags are mutually exclusive between lists.',
+                          select('vsm-TAG_CLICK_ACTION',
+                                 [['blacklist','Blacklist tag'],['favorite','Add to favorites']],
+                                 TAG_CLICK_ACTION))}
+                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
+                        <span class="vsm-label">Glow Color</span>
+                        <span class="vsm-hint">Color of the glow effect on rows/cards that match a favorite tag.</span>
+                    </div>
+                    <div class="vsm-glow-swatches" id="vsm-glow-swatches"></div>
+                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
+                        <span class="vsm-label">Favorited Tags</span>
+                        <span class="vsm-hint">Rows/cards containing ANY favorite tag glow in the chosen color. Changes apply instantly.</span>
+                    </div>
+                    <div id="vsm-fav-chips-container"></div>
+                    <div id="vsm-fav-add-row">
+                        <input type="text" id="vsm-fav-add-input" placeholder="e.g. lesbian  or  big.tits" autocomplete="off">
+                        <button class="vsm-btn vsm-btn-save" id="vsm-fav-add-btn" type="button">Add</button>
+                        <button class="vsm-btn vsm-btn-reset" id="vsm-fav-clear-btn" type="button">Clear all</button>
+                    </div>
+                    <div id="vsm-fav-disabled-msg" class="vsm-tags-disabled-note" style="display:none;">
+                        No tags found on this page — add is disabled until you visit a page with tags.
                     </div>
                 </div>
 
@@ -879,6 +1018,29 @@ function buildSettingsOverlay() {
         refreshUploaderSettingsPanel();
     });
 
+    // Favorite tags handlers
+    jQuery(document).on('click', '#vsm-fav-add-btn', function() {
+        const val = jQuery('#vsm-fav-add-input').val().trim().toLowerCase();
+        if (!val) return;
+        val.split(/[\s,]+/).forEach(function(t) {
+            t = t.trim();
+            if (t) addTagToFavorites(t);
+        });
+        jQuery('#vsm-fav-add-input').val('');
+        refreshFavoriteTagsPanel();
+    });
+    jQuery(document).on('keydown', '#vsm-fav-add-input', function(e) {
+        if (e.key === 'Enter') jQuery('#vsm-fav-add-btn').trigger('click');
+    });
+    jQuery(document).on('click', '#vsm-fav-clear-btn', function() {
+        if (!TAG_FAVORITES.length) return;
+        if (!confirm('Remove all ' + TAG_FAVORITES.length + ' favorite tag(s)?')) return;
+        TAG_FAVORITES = [];
+        saveFavoriteTags();
+        applyFavoriteGlowToPage();
+        refreshFavoriteTagsPanel();
+    });
+
     jQuery('#vsm-save-btn').on('click', function() {
         const prevGallery = GALLERY_VIEW_MODE;
         saveSettings();
@@ -907,6 +1069,8 @@ function openOverlay()  {
     jQuery('#viewer-settings-backdrop').addClass('active');
     refreshTagSettingsPanel();
     refreshUploaderSettingsPanel();
+    refreshFavoriteTagsPanel();
+    buildGlowSwatches();
 }
 function closeOverlay() { jQuery('#viewer-settings-backdrop').removeClass('active'); }
 
@@ -940,6 +1104,9 @@ function saveSettings() {
     GM_setValue('IMAGE_LOAD_MODE',                 jQuery('#vsm-IMAGE_LOAD_MODE').val());
     GM_setValue('GALLERY_VIEW_MODE',               jQuery('#vsm-GALLERY_VIEW_MODE').is(':checked'));
     GM_setValue('GALLERY_CARD_MIN_WIDTH',          parseInt(jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(), 10) || DEFAULTS.GALLERY_CARD_MIN_WIDTH);
+    // Tag click action — saved immediately on change but also here for consistency
+    TAG_CLICK_ACTION = jQuery('#vsm-TAG_CLICK_ACTION').val() || 'blacklist';
+    GM_setValue('TAG_CLICK_ACTION', TAG_CLICK_ACTION);
 }
 
 // --------------------
@@ -1137,8 +1304,8 @@ function buildGalleryCard($row) {
 
         // ── Image src ──
         const imgSrc = globalBackend
-            ? globalBackend.get_image_src($row)
-            : '/static/common/noartwork/noimage.png';
+        ? globalBackend.get_image_src($row)
+        : '/static/common/noartwork/noimage.png';
 
         // ── Category ──
         let catName = '';
@@ -1167,15 +1334,15 @@ function buildGalleryCard($row) {
             if (catName && (catHref === '#' || !catHref)) {
                 catHref = getCategoryLink(catName, currentCategoryMap);
             }
-			// Subscribed collages: override with the real category from the pre-fetched cache
-			if (location.pathname.includes('/userhistory') &&
-				new URLSearchParams(location.search).get('action') === 'subscribed_collages') {
-				const tid = getTorrentIdFromRow($row);
-				if (tid && subCollagesCatCache[tid]) {
-					catName = subCollagesCatCache[tid];
-					catHref = getCategoryLink(catName, currentCategoryMap);
-				}
-			}
+            // Subscribed collages: override with the real category from the pre-fetched cache
+            if (location.pathname.includes('/userhistory') &&
+                new URLSearchParams(location.search).get('action') === 'subscribed_collages') {
+                const tid = getTorrentIdFromRow($row);
+                if (tid && subCollagesCatCache[tid]) {
+                    catName = subCollagesCatCache[tid];
+                    catHref = getCategoryLink(catName, currentCategoryMap);
+                }
+            }
         }
 
         // ── Title + torrent/request link ──
@@ -1229,19 +1396,41 @@ function buildGalleryCard($row) {
             }
         }
 
-        // Uploader / requester
+        // Uploader / requester — use column when available, fall back to overlay script
         let uploaderText = '';
         let uploaderHref = '#';
         if (cols.uploader >= 0) {
             const $uploaderTd   = $tds.eq(cols.uploader);
             const $uploaderLink = $uploaderTd.find('a').first();
+
             uploaderText = $uploaderLink.length
                 ? $uploaderLink.text().trim()
-                : $uploaderTd.text().trim();
+            : $uploaderTd.text().trim();
+
             uploaderHref = $uploaderLink.length
                 ? ($uploaderLink.attr('href') || '#')
-                : '#';
+            : '#';
+
+        } else {
+            // pages without uploader column
+            const fallbackName = getUploaderFromRow($row);
+
+            if (fallbackName) {
+                uploaderText = fallbackName;
+
+                const token =
+                      document.querySelector('#searchbar_users input[name="token"]')?.value ||
+                      '';
+
+                uploaderHref =
+                    '/user.php?action=search&search=' +
+                    encodeURIComponent(fallbackName) +
+                    '&token=' +
+                    encodeURIComponent(token);
+            }
         }
+
+        const rowTags = getTagsFromRow($row);
 
         // ── Build the card ──
         const $card = jQuery('<div class="vg-card">');
@@ -1293,7 +1482,6 @@ function buildGalleryCard($row) {
         $info.append($titleDiv);
 
         // ── Button row: Download + Tags ──
-        const rowTags = getTagsFromRow($row);
         if (downloadHref || rowTags.length) {
             const $btnRow = jQuery('<div class="vg-dl-row">');
             if (downloadHref) {
@@ -1315,53 +1503,53 @@ function buildGalleryCard($row) {
 
         // Stats chips — layout differs between requests and torrents
         const $stats = jQuery('<div class="vg-stats">');
-    if (cols.pageType === 'requests') {
-        // Filled status from the "extra" column
-        let isFilled = false;
+        if (cols.pageType === 'requests') {
+            // Filled status from the "extra" column
+            let isFilled = false;
 
-        if (cols.extra >= 0) {
-            const $filledTd  = $tds.eq(cols.extra);
-            const filledText = $filledTd.text().trim();
+            if (cols.extra >= 0) {
+                const $filledTd  = $tds.eq(cols.extra);
+                const filledText = $filledTd.text().trim();
 
-            // Filled if there's a link inside the td (links to the torrent); "No" or "--" means unfilled
-            isFilled = $filledTd.find('a').length > 0 && filledText !== 'No';
-        }
+                // Filled if there's a link inside the td (links to the torrent); "No" or "--" means unfilled
+                isFilled = $filledTd.find('a').length > 0 && filledText !== 'No';
+            }
 
-        // Remove " (+)" from votes when request is unfilled
-        let displaySnatches = snatches;
+            // Remove " (+)" from votes when request is unfilled
+            let displaySnatches = snatches;
 
-        if (!isFilled && typeof displaySnatches === 'string') {
-            displaySnatches = displaySnatches.replace(/\s*\(\+\)\s*$/, '');
-        }
+            if (!isFilled && typeof displaySnatches === 'string') {
+                displaySnatches = displaySnatches.replace(/\s*\(\+\)\s*$/, '');
+            }
 
-        // requests: votes | bounty | filled status
-        if (displaySnatches !== '')
-            $stats.append(
-                jQuery('<span class="vg-stat vg-stat-snatch" title="Votes">')
+            // requests: votes | bounty | filled status
+            if (displaySnatches !== '')
+                $stats.append(
+                    jQuery('<span class="vg-stat vg-stat-snatch" title="Votes">')
                     .text('Votes: ' + displaySnatches)
-            );
+                );
 
-        if (size !== '')
-            $stats.append(
-                jQuery('<span class="vg-stat vg-stat-size" title="Bounty">')
+            if (size !== '')
+                $stats.append(
+                    jQuery('<span class="vg-stat vg-stat-size" title="Bounty">')
                     .text('Bounty: ' + size)
-            );
+                );
 
-        if (cols.extra >= 0) {
-            const cls   = isFilled ? 'vg-stat-seed' : 'vg-stat-leech';
-            const label = isFilled ? '&#x2713; Filled' : '&#x2717; Unfilled';
+            if (cols.extra >= 0) {
+                const cls   = isFilled ? 'vg-stat-seed' : 'vg-stat-leech';
+                const label = isFilled ? '&#x2713; Filled' : '&#x2717; Unfilled';
 
-            $stats.append(
-                jQuery(`<span class="vg-stat ${cls}" title="Fill status">`).html(label)
-            );
+                $stats.append(
+                    jQuery(`<span class="vg-stat ${cls}" title="Fill status">`).html(label)
+                );
+            }
+        } else {
+            // torrents/notify: seeders | leechers | snatched | size
+            if (seeders  !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-seed"  title="Seeders">').text('▲ '  + seeders));
+            if (leechers !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-leech" title="Leechers">').text('▼ ' + leechers));
+            if (snatches !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-snatch" title="Snatched">').text('⤓ ' + snatches));
+            if (size     !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-size"  title="Size">').text(size));
         }
-    } else {
-        // torrents/notify: seeders | leechers | snatched | size
-        if (seeders  !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-seed"  title="Seeders">').text('▲ '  + seeders));
-        if (leechers !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-leech" title="Leechers">').text('▼ ' + leechers));
-        if (snatches !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-snatch" title="Snatched">').text('⤓ ' + snatches));
-        if (size     !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-size"  title="Size">').text(size));
-    }
         if ($stats.children().length) $info.append($stats);
 
         // Meta (files, comments)
@@ -1377,14 +1565,42 @@ function buildGalleryCard($row) {
                 const uploaderKey = uploaderText.toLowerCase();
                 const isUlBl = UPLOADER_BLACKLIST.indexOf(uploaderKey) !== -1;
                 const $ulWrap = jQuery('<span style="display:inline-flex;align-items:center;gap:1px;">');
-                jQuery('<a>')
-                    .attr('href', uploaderHref)
-                    .text('👤 ' + uploaderText)
-                    .toggleClass('vg-uploader-bl', isUlBl)
-                    .appendTo($ulWrap);
+                const $uploaderAnchor = jQuery('<a>')
+                .attr('href', uploaderHref)
+                .text('👤 ' + uploaderText)
+                .toggleClass('vg-uploader-bl', isUlBl);
+
+                if (cols.uploader < 0) {
+                    // fallback uploader search links are rate limited
+                    $uploaderAnchor.on('click', function (e) {
+                        e.preventDefault();
+
+                        const now = Date.now();
+                        const elapsed = now - lastUserSearchTimestamp;
+
+                        if (elapsed < USER_SEARCH_COOLDOWN_MS) {
+                            const remaining = Math.ceil(
+                                (USER_SEARCH_COOLDOWN_MS - elapsed) / 1000
+                            );
+
+                            alert(
+                                'User search cooldown active.\n\n' +
+                                'Please wait ' + remaining + ' more seconds.'
+                            );
+
+                            return;
+                        }
+
+                        lastUserSearchTimestamp = now;
+
+                        window.location.href = uploaderHref;
+                    });
+                }
+
+                $uploaderAnchor.appendTo($ulWrap);
                 const $blockBtn = jQuery('<button class="vg-footer-block-btn" type="button">')
-                    .attr('title', isUlBl ? 'Blocked — click to unblock ' + uploaderText : 'Block uploader: ' + uploaderText)
-                    .text('⛔');
+                .attr('title', isUlBl ? 'Blocked — click to unblock ' + uploaderText : 'Block uploader: ' + uploaderText)
+                .text('⛔');
                 $blockBtn.on('click', function (e) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1406,6 +1622,10 @@ function buildGalleryCard($row) {
         }
 
         $card.append($imgWrap, $info);
+
+        // Apply favorite glow if any tag matches
+        if (rowMatchesFavorites($row)) applyGlowToCard($card);
+
         return $card;
 
     } catch (e) {
@@ -1422,30 +1642,30 @@ function buildGalleryCard($row) {
 // We iterate every table and insert an independent grid after each one.
 // --------------------
 function buildGalleryView() {
-	// Subscribed collages: pre-fetch all categories into cache before building cards.
-	// If any are missing we fire the requests and return; the last callback re-calls
-	// this function, at which point the cache is full and we fall through normally.
-	if (location.pathname.includes('/userhistory') &&
-		new URLSearchParams(location.search).get('action') === 'subscribed_collages') {
-		const $scRows = jQuery('.torrent_table').find('tr.torrent');
-		let pending = 0;
-		$scRows.each(function () {
-			const tid = getTorrentIdFromRow(jQuery(this));
-			if (tid && !subCollagesCatCache.hasOwnProperty(tid)) pending++;
-		});
-		if (pending > 0) {
-			$scRows.each(function () {
-				const tid = getTorrentIdFromRow(jQuery(this));
-				if (tid && !subCollagesCatCache.hasOwnProperty(tid)) {
-					fetchCategoryForTorrent(tid, function () {
-						if (--pending === 0) buildGalleryView(); // recurse once cache is full
-					});
-				}
-			});
-			return; // wait for all fetches to complete
-		}
-		// pending === 0 means everything is already cached — fall through and build
-	}
+    // Subscribed collages: pre-fetch all categories into cache before building cards.
+    // If any are missing we fire the requests and return; the last callback re-calls
+    // this function, at which point the cache is full and we fall through normally.
+    if (location.pathname.includes('/userhistory') &&
+        new URLSearchParams(location.search).get('action') === 'subscribed_collages') {
+        const $scRows = jQuery('.torrent_table').find('tr.torrent');
+        let pending = 0;
+        $scRows.each(function () {
+            const tid = getTorrentIdFromRow(jQuery(this));
+            if (tid && !subCollagesCatCache.hasOwnProperty(tid)) pending++;
+        });
+        if (pending > 0) {
+            $scRows.each(function () {
+                const tid = getTorrentIdFromRow(jQuery(this));
+                if (tid && !subCollagesCatCache.hasOwnProperty(tid)) {
+                    fetchCategoryForTorrent(tid, function () {
+                        if (--pending === 0) buildGalleryView(); // recurse once cache is full
+                    });
+                }
+            });
+            return; // wait for all fetches to complete
+        }
+        // pending === 0 means everything is already cached — fall through and build
+    }
     let $tables, rowSelector;
     if (location.pathname.includes('requests.php')) {
         $tables      = jQuery('#request_table, .request_table');
@@ -1625,13 +1845,22 @@ function applyTagBlacklistToPage() { applyBlacklistsToPage(); } // kept for inte
 function applyBlacklistsToPage() {
     // Table view: show/hide rows based on BOTH blacklists
     const rowSel = location.pathname.includes('requests.php')
-        ? 'tr.rowa, tr.rowb'
-        : 'tr.torrent';
+    ? 'tr.rowa, tr.rowb'
+    : 'tr.torrent';
     jQuery(rowSel).each(function () {
         const $r = jQuery(this);
         const hide = rowMatchesBlacklist($r) || rowMatchesUploaderBlacklist($r);
-        if (hide) $r.addClass('vg-bl-hidden').hide();
-        else if ($r.hasClass('vg-bl-hidden')) $r.removeClass('vg-bl-hidden').show();
+        if (hide) {
+            $r.addClass('vg-bl-hidden').hide();
+            removeGlowFromRow($r);
+        } else if ($r.hasClass('vg-bl-hidden')) {
+            $r.removeClass('vg-bl-hidden').show();
+            if (rowMatchesFavorites($r)) applyGlowToRow($r);
+        } else {
+            // Row was already visible — still refresh glow state
+            if (rowMatchesFavorites($r)) applyGlowToRow($r);
+            else removeGlowFromRow($r);
+        }
     });
     // Gallery view: rebuild if active
     if (GALLERY_VIEW_MODE && jQuery('.viewer-gallery-grid').length) {
@@ -1714,7 +1943,7 @@ function rowMatchesUploaderBlacklist($row) {
 
 function toggleUploaderInBlacklist(name) {
     name = String(name).toLowerCase().trim();
-    if (!name) return;
+    if (!name || name === 'anon' || name === 'anonymous') return; // never block anon
     const idx = UPLOADER_BLACKLIST.indexOf(name);
     if (idx === -1) UPLOADER_BLACKLIST.push(name);
     else UPLOADER_BLACKLIST.splice(idx, 1);
@@ -1764,6 +1993,159 @@ function addUploaderBlockBtnToRow($row) {
     if ($link.length) $link.after($btn);
     else $td.append($btn);
 }
+
+// --------------------
+// FAVORITE TAGS — HELPERS
+// --------------------
+const GLOW_COLORS = [
+    { hex: '#f5c518', name: 'Gold'   },
+    { hex: '#00d4ff', name: 'Cyan'   },
+    { hex: '#39ff14', name: 'Green'  },
+    { hex: '#ff69b4', name: 'Pink'   },
+    { hex: '#bf5fff', name: 'Purple' },
+    { hex: '#ff8c00', name: 'Orange' },
+    { hex: '#ff4444', name: 'Red'    },
+    { hex: '#00ffcc', name: 'Teal'   },
+    { hex: '#ffffff', name: 'White'  },
+];
+
+function saveFavoriteTags() {
+    GM_setValue('TAG_FAVORITES', JSON.stringify(TAG_FAVORITES));
+}
+
+// Add a tag to favorites, removing from blacklist if present (mutual exclusivity).
+function addTagToFavorites(tag) {
+    tag = tag.toLowerCase().trim();
+    if (!tag) return;
+    // Remove from blacklist if present
+    const blIdx = TAG_BLACKLIST.indexOf(tag);
+    if (blIdx !== -1) { TAG_BLACKLIST.splice(blIdx, 1); saveTagBlacklist(); }
+    // Add to favorites if not already there
+    if (TAG_FAVORITES.indexOf(tag) === -1) TAG_FAVORITES.push(tag);
+    saveFavoriteTags();
+    applyBlacklistsToPage();
+    applyFavoriteGlowToPage();
+}
+
+// Remove a tag from favorites.
+function removeTagFromFavorites(tag) {
+    tag = tag.toLowerCase().trim();
+    const idx = TAG_FAVORITES.indexOf(tag);
+    if (idx !== -1) { TAG_FAVORITES.splice(idx, 1); saveFavoriteTags(); }
+    applyFavoriteGlowToPage();
+}
+
+// Toggle a tag in the favorites list (mutual exclusivity with blacklist).
+function toggleTagInFavorites(tag) {
+    tag = tag.toLowerCase().trim();
+    if (!tag) return;
+    if (TAG_FAVORITES.indexOf(tag) !== -1) removeTagFromFavorites(tag);
+    else addTagToFavorites(tag);
+    refreshFavoriteTagsPanel();
+    refreshTagSettingsPanel();
+}
+
+function rowMatchesFavorites($row) {
+    if (!TAG_FAVORITES.length) return false;
+    const tags = getTagsFromRow($row);
+    return tags.some(t => TAG_FAVORITES.indexOf(t) !== -1);
+}
+
+// Apply glow inline style to a gallery card element.
+function applyGlowToCard($card) {
+    let c = FAVORITE_GLOW_COLOR || '#ffd700';
+
+    // ensure valid css hex color
+    if (typeof c === 'string' && c && !c.startsWith('#')) {
+        c = '#' + c;
+    }
+
+    $card.css({
+        '--vg-glow-c': c,
+        'border': `2px solid ${c}`,
+        'box-shadow': `
+            0 0 5px ${c},
+            0 0 10px ${c},
+            0 0 15px ${c},
+            0 0 25px ${c}
+        `
+    });
+
+    $card.addClass('vg-fav-match');
+}
+
+// Apply glow inline style to a table row.
+function applyGlowToRow($row) {
+    const c = FAVORITE_GLOW_COLOR;
+    const alpha33 = c + '33', alpha66 = c + '55';
+    $row.css({
+        'box-shadow': 'inset 3px 0 0 0 ' + c + ', 0 0 12px 3px ' + alpha66,
+        'background-color': alpha33,
+    }).addClass('vg-fav-match').css('--vg-glow-c', c);
+}
+
+// Remove glow from a table row.
+function removeGlowFromRow($row) {
+    $row.css({ 'box-shadow': '', 'background-color': '' }).removeClass('vg-fav-match');
+}
+
+// Re-check all visible rows and cards, adding/removing glow.
+function applyFavoriteGlowToPage() {
+    if (GALLERY_VIEW_MODE && jQuery('.viewer-gallery-grid').length) {
+        // Rebuild gallery (it skips blacklisted rows and applies glow via buildGalleryCard)
+        buildGalleryView();
+        return;
+    }
+    // Table view
+    const rowSel = location.pathname.includes('requests.php') ? 'tr.rowa, tr.rowb' : 'tr.torrent';
+    jQuery(rowSel).each(function () {
+        const $r = jQuery(this);
+        if ($r.hasClass('vg-bl-hidden')) return;
+        if (rowMatchesFavorites($r)) applyGlowToRow($r);
+        else removeGlowFromRow($r);
+    });
+}
+
+function refreshFavoriteTagsPanel() {
+    const $container = jQuery('#vsm-fav-chips-container');
+    if (!$container.length) return;
+    $container.empty();
+    if (TAG_FAVORITES.length) {
+        TAG_FAVORITES.forEach(function (tag) {
+            const $chip = jQuery('<span class="vsm-fav-chip">').text(tag);
+            const $rm   = jQuery('<button type="button" title="Remove">').html('&times;');
+            $rm.on('click', function () { toggleTagInFavorites(tag); });
+            $chip.append($rm);
+            $container.append($chip);
+        });
+    } else {
+        $container.append(jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No favorite tags.'));
+    }
+    const hasTags = pageHasTags();
+    jQuery('#vsm-fav-add-input, #vsm-fav-add-btn').prop('disabled', !hasTags);
+    jQuery('#vsm-fav-disabled-msg').toggle(!hasTags);
+}
+
+// Build the color swatch grid in the settings panel.
+function buildGlowSwatches() {
+    const $wrap = jQuery('#vsm-glow-swatches');
+    if (!$wrap.length) return;
+    $wrap.empty();
+    GLOW_COLORS.forEach(function (c) {
+        const isSel = c.hex.toLowerCase() === FAVORITE_GLOW_COLOR.toLowerCase();
+        const $sw = jQuery('<div class="vsm-glow-swatch' + (isSel ? ' selected' : '') + '">')
+        .css({ background: c.hex, 'box-shadow': '0 0 8px 2px ' + c.hex + '88' })
+        .attr('title', c.name)
+        .on('click', function () {
+            FAVORITE_GLOW_COLOR = c.hex;
+            GM_setValue('FAVORITE_GLOW_COLOR', c.hex);
+            jQuery('.vsm-glow-swatch').removeClass('selected');
+            jQuery(this).addClass('selected');
+            applyFavoriteGlowToPage();
+        });
+        $wrap.append($sw);
+    });
+}
 let $tagsPopupEl   = null;
 let tagsHideTimer  = null;
 
@@ -1787,19 +2169,44 @@ function showTagsPopup($btn, tags) {
     if (tagsHideTimer) { clearTimeout(tagsHideTimer); tagsHideTimer = null; }
 
     $tagsPopupEl.empty();
+
+    // Mode hint line
+    const modeLabel = TAG_CLICK_ACTION === 'favorite' ? '★ Click to favorite / unfavorite' : '✖ Click to blacklist / unblacklist';
+    jQuery('<span class="vg-popup-hint">').text(modeLabel).appendTo($tagsPopupEl);
+
     tags.forEach(function (tag) {
-        const isBl  = TAG_BLACKLIST.indexOf(tag) !== -1;
-        const $chip = jQuery('<span class="vg-tag-chip">')
-            .text(tag)
-            .toggleClass('vg-tag-bl', isBl)
-            .attr('title', isBl ? 'Blacklisted — click to remove' : 'Click to blacklist')
-            .on('click', function (e) {
-                e.stopPropagation();
+        const isBl  = TAG_BLACKLIST.indexOf(tag)  !== -1;
+        const isFav = TAG_FAVORITES.indexOf(tag)  !== -1;
+
+        let chipClass = 'vg-tag-chip';
+        let tipText;
+        if (isBl)       { chipClass += ' vg-tag-bl';  tipText = 'Blacklisted — click to remove'; }
+        else if (isFav) { chipClass += ' vg-tag-fav'; tipText = 'Favorite — click to remove'; }
+        else {
+            tipText = TAG_CLICK_ACTION === 'favorite' ? 'Click to add to favorites' : 'Click to blacklist';
+        }
+
+        const $chip = jQuery('<span>').addClass(chipClass).text(tag).attr('title', tipText)
+        .on('click', function (e) {
+            e.stopPropagation();
+            if (TAG_CLICK_ACTION === 'favorite') {
+                toggleTagInFavorites(tag);
+            } else {
+                // Blacklist action — also removes from favorites (mutual exclusivity)
+                const favIdx = TAG_FAVORITES.indexOf(tag);
+                if (favIdx !== -1) { TAG_FAVORITES.splice(favIdx, 1); saveFavoriteTags(); }
                 toggleTagInBlacklist(tag);
-                const nowBl = TAG_BLACKLIST.indexOf(tag) !== -1;
-                jQuery(this).toggleClass('vg-tag-bl', nowBl)
-                            .attr('title', nowBl ? 'Blacklisted — click to remove' : 'Click to blacklist');
-            });
+            }
+            // Refresh chip appearance
+            const nowBl  = TAG_BLACKLIST.indexOf(tag)  !== -1;
+            const nowFav = TAG_FAVORITES.indexOf(tag)  !== -1;
+            jQuery(this).removeClass('vg-tag-bl vg-tag-fav');
+            if (nowBl)       { jQuery(this).addClass('vg-tag-bl');  jQuery(this).attr('title', 'Blacklisted — click to remove'); }
+            else if (nowFav) { jQuery(this).addClass('vg-tag-fav'); jQuery(this).attr('title', 'Favorite — click to remove'); }
+            else {
+                jQuery(this).attr('title', TAG_CLICK_ACTION === 'favorite' ? 'Click to add to favorites' : 'Click to blacklist');
+            }
+        });
         $tagsPopupEl.append($chip);
     });
 
@@ -2063,34 +2470,34 @@ function TableThumbnailBackend(isCollage, remove_categories) {
                 const $title = get_collage_title($row);
                 if ($title.length) $title.css({ 'vertical-align': 'top' });
             }
-			// Async overlay for subscribed collages (category must be fetched from torrent page)
-			if (location.pathname === "/userhistory.php" &&
-				new URLSearchParams(location.search).get("action") === "subscribed_collages" &&
-				!this.remove_categories) {
-				const $catCell   = $category;
-				const torrentId  = getTorrentIdFromRow($row);
-				if (torrentId) {
-					fetchCategoryForTorrent(torrentId, function (fetchedCatName) {
-						if (!fetchedCatName) return;
-						const overlayText = fetchedCatName.replace(/\./g, ' ').toUpperCase().trim();
-						const catHref = getCategoryLink(fetchedCatName, currentCategoryMap);
-						const $link = jQuery('<a>').text(overlayText).attr('href', catHref)
-							.css({ 'color': 'white', 'text-decoration': 'none' });
-						const $ov = jQuery('<div>').css({
-							'position': 'absolute', 'top': '5px', 'left': '5px',
-							'padding': '2px 6px', 'background': 'rgba(0,0,0,0.65)',
-							'color': 'white', 'font-size': '12px', 'font-weight': '700',
-							'line-height': '1.1', 'border-radius': '3px',
-							'z-index': 9999, 'pointer-events': 'auto', 'white-space': 'normal',
-							'max-width': (TABLE_MAX_IMAGE_SIZE - 20) + 'px', 'box-sizing': 'border-box'
-						}).append($link);
-						$catCell.css('position',
-							$catCell.css('position') === 'static' ? 'relative' : $catCell.css('position')
-						);
-						$catCell.append($ov);
-					});
-				}
-			}
+            // Async overlay for subscribed collages (category must be fetched from torrent page)
+            if (location.pathname === "/userhistory.php" &&
+                new URLSearchParams(location.search).get("action") === "subscribed_collages" &&
+                !this.remove_categories) {
+                const $catCell   = $category;
+                const torrentId  = getTorrentIdFromRow($row);
+                if (torrentId) {
+                    fetchCategoryForTorrent(torrentId, function (fetchedCatName) {
+                        if (!fetchedCatName) return;
+                        const overlayText = fetchedCatName.replace(/\./g, ' ').toUpperCase().trim();
+                        const catHref = getCategoryLink(fetchedCatName, currentCategoryMap);
+                        const $link = jQuery('<a>').text(overlayText).attr('href', catHref)
+                        .css({ 'color': 'white', 'text-decoration': 'none' });
+                        const $ov = jQuery('<div>').css({
+                            'position': 'absolute', 'top': '5px', 'left': '5px',
+                            'padding': '2px 6px', 'background': 'rgba(0,0,0,0.65)',
+                            'color': 'white', 'font-size': '12px', 'font-weight': '700',
+                            'line-height': '1.1', 'border-radius': '3px',
+                            'z-index': 9999, 'pointer-events': 'auto', 'white-space': 'normal',
+                            'max-width': (TABLE_MAX_IMAGE_SIZE - 20) + 'px', 'box-sizing': 'border-box'
+                        }).append($link);
+                        $catCell.css('position',
+                                     $catCell.css('position') === 'static' ? 'relative' : $catCell.css('position')
+                                    );
+                        $catCell.append($ov);
+                    });
+                }
+            }
         } catch (e) {
             console.error(`${LOG_PREFIX} attach_image error:`, e, $row, $img);
         }
@@ -2139,14 +2546,14 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
 
     this.lazyObserver = observerOptions
         ? new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    self.show_img(jQuery(entry.target));
-                    self.lazyObserver.unobserve(entry.target);
-                }
-            });
-        }, observerOptions)
-        : null;
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                self.show_img(jQuery(entry.target));
+                self.lazyObserver.unobserve(entry.target);
+            }
+        });
+    }, observerOptions)
+    : null;
 
     this.attach_thumbnails_init = function () {
         try {
@@ -2175,6 +2582,8 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
                     // Hide row if tags or uploader are blacklisted
                     if (rowMatchesBlacklist($row) || rowMatchesUploaderBlacklist($row)) {
                         $row.addClass('vg-bl-hidden').hide();
+                    } else if (rowMatchesFavorites($row)) {
+                        applyGlowToRow($row);
                     }
                     // Add ⛔ block button next to uploader name (where column exists)
                     addUploaderBlockBtnToRow($row);
