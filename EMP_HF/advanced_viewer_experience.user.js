@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     2.7
+// @version     2.8
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -51,9 +51,16 @@ let lastUserSearchTimestamp = 0;
 // VERSION HISTORY
 // Entries are newest-first. Add a new entry here with every release.
 // --------------------
-const SCRIPT_VERSION = '2.7';
+const SCRIPT_VERSION = '2.8';
 const VERSION_HISTORY = [
     {
+        version: '2.8',
+        changes: [
+            'Changed font size of title in cards in Gallery View.',
+            'Added Dark Mode toggle to Gallery View cards, Enabled by default.',
+        ],
+    },
+        {
         version: '2.7',
         changes: [
             'Added Favorite Tags list: rows/cards whose tags include any favorite tag glow in a custom color.',
@@ -118,6 +125,7 @@ const DEFAULTS = {
     TABLE_MAX_IMAGE_SIZE:            250,
     REMOVE_CATEGORIES:               false,
     SMALL_THUMBNAILS:                true,
+    GRID_DARK_MODE:                  true,
     ENABLE_WIDER_TABLE_VIEW:         true,
     TRIM_TEXT_COLLAGE_PAGE_MODE:     "smaller_text_wrap",
     REMOVE_MAIN_IMAGES_COLLAGE_PAGE: false,
@@ -133,6 +141,7 @@ const DEFAULTS = {
 let TABLE_MAX_IMAGE_SIZE            = GM_getValue('TABLE_MAX_IMAGE_SIZE',            DEFAULTS.TABLE_MAX_IMAGE_SIZE);
 let REMOVE_CATEGORIES               = GM_getValue('REMOVE_CATEGORIES',               DEFAULTS.REMOVE_CATEGORIES);
 let SMALL_THUMBNAILS                = GM_getValue('SMALL_THUMBNAILS',                DEFAULTS.SMALL_THUMBNAILS);
+let GRID_DARK_MODE                  = GM_getValue('GRID_DARK_MODE',                  DEFAULTS.GRID_DARK_MODE);
 let ENABLE_WIDER_TABLE_VIEW         = GM_getValue('ENABLE_WIDER_TABLE_VIEW',         DEFAULTS.ENABLE_WIDER_TABLE_VIEW);
 let TRIM_TEXT_COLLAGE_PAGE_MODE     = GM_getValue('TRIM_TEXT_COLLAGE_PAGE_MODE',     DEFAULTS.TRIM_TEXT_COLLAGE_PAGE_MODE);
 let REMOVE_MAIN_IMAGES_COLLAGE_PAGE = GM_getValue('REMOVE_MAIN_IMAGES_COLLAGE_PAGE', DEFAULTS.REMOVE_MAIN_IMAGES_COLLAGE_PAGE);
@@ -198,6 +207,20 @@ let galleryLazyObserver = null;
 // Cache for categories fetched from individual torrent pages (subscribed collages page)
 const subCollagesCatCache = {};
 
+// Dark Mode Cards Settings
+
+const CARD_BG = GRID_DARK_MODE ? '#161616' : '#d0d0d0';
+const CARD_BORDER      = GRID_DARK_MODE ? '#2a2a2a' : '#d8d8d8';
+const IMAGE_BG         = GRID_DARK_MODE ? '#0d0d0d' : '#c0c0c0';
+const TITLE_COLOR      = GRID_DARK_MODE ? '#c8d8ec' : '#1d4f8f';
+const TITLE_HOVER      = GRID_DARK_MODE ? '#90b8e0' : '#0f3e75';
+const META_COLOR       = GRID_DARK_MODE ? '#585858' : '#666666';
+const FOOTER_COLOR     = GRID_DARK_MODE ? '#484848' : '#555555';
+const FOOTER_BORDER    = GRID_DARK_MODE ? '#1e1e1e' : '#e0e0e0';
+const TIME_COLOR       = GRID_DARK_MODE ? '#404040' : '#777777';
+const CAT_BADGE_BG     = GRID_DARK_MODE ? 'rgba(0,0,0,0.78)' : 'rgba(255,255,255,0.92)';
+const CAT_BADGE_COLOR  = GRID_DARK_MODE ? '#e0e0e0' : '#333333';
+
 // --------------------
 // CSS — base
 // --------------------
@@ -240,8 +263,8 @@ GM_addStyle(`
 
 /* ── CARD ── */
 .vg-card {
-    background: #161616;
-    border: 1px solid #2a2a2a;
+    background: ${CARD_BG};
+    border: 1px solid ${CARD_BORDER};
     border-radius: 7px;
 
     overflow: visible;
@@ -270,7 +293,7 @@ GM_addStyle(`
 .vg-img-wrap {
     position: relative;
     overflow: hidden;
-    background: #0d0d0d;
+    background: ${IMAGE_BG};
     height: 210px;
     display: flex;
     align-items: center;
@@ -302,8 +325,8 @@ GM_addStyle(`
 }
 .vg-cat-badge a {
     display: inline-block;
-    background: rgba(0,0,0,0.78);
-    color: #e0e0e0 !important;
+    background: ${CAT_BADGE_BG};
+    color: ${CAT_BADGE_COLOR} !important;
     font-size: 9px; font-weight: 800;
     letter-spacing: 0.08em; text-transform: uppercase;
     padding: 3px 7px; border-radius: 3px;
@@ -336,11 +359,13 @@ GM_addStyle(`
     overflow: hidden;
 }
 .vg-title a {
-    color: #c8d8ec; text-decoration: none;
-    font-size: 12px; font-weight: 600;
+    color: ${TITLE_COLOR}; text-decoration: none;
+    font-size: 10px; font-weight: 600;
     transition: color 0.12s;
 }
-.vg-title a:hover { color: #90b8e0; text-decoration: underline; }
+.vg-title a:hover {
+    color: ${TITLE_HOVER}; text-decoration: underline;
+}
 
 /* ── STATS CHIPS ── */
 .vg-stats { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -358,19 +383,21 @@ GM_addStyle(`
 /* filled/unfilled reuse seed/leech */
 
 /* ── META ROW ── */
-.vg-meta { display: flex; gap: 10px; font-size: 10px; color: #585858; flex-wrap: wrap; }
+.vg-meta {
+    display: flex; gap: 10px; font-size: 10px; color: ${META_COLOR}; flex-wrap: wrap;
+}
 .vg-meta span { white-space: nowrap; }
 
 /* ── FOOTER ROW (uploader + time) ── */
 .vg-footer {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 6px; font-size: 10px; color: #484848;
+    gap: 6px; font-size: 10px; color: ${FOOTER_COLOR};
     margin-top: auto; padding-top: 2px;
-    border-top: 1px solid #1e1e1e; flex-wrap: wrap;
+    border-top: 1px solid ${FOOTER_BORDER}; flex-wrap: wrap;
 }
 .vg-footer a { color: #5a7a9a; text-decoration: none; font-weight: 600; }
 .vg-footer a:hover { text-decoration: underline; color: #7aa0c8; }
-.vg-time { font-size: 9px; color: #404040; white-space: nowrap; flex-shrink: 0; }
+.vg-time { font-size: 9px; color: ${TIME_COLOR}; white-space: nowrap; flex-shrink: 0; }
 
 /* ── GALLERY TOGGLE BUTTON IN NAV ── */
 #nav_gallery_toggle a {
@@ -587,7 +614,7 @@ GM_addStyle(`
 }
 .vg-fav-match {
     position: relative;
-    background: #161616 !important;
+    background: ${CARD_BG} !important;
 }
 /* ── FAVORITE TAGS SETTINGS PANEL ── */
 #vsm-fav-chips-container {
@@ -857,6 +884,9 @@ function buildSettingsOverlay() {
                     ${row('Gallery Mode',
                           'Display results as an image card grid instead of the table. Toggle instantly with the Grid/List button in the nav bar.',
                           toggle('vsm-GALLERY_VIEW_MODE', GALLERY_VIEW_MODE))}
+                    ${row('Card Dark Mode',
+                          'Display Toggle Dark Mode for the cards in grid view.',
+                          toggle('vsm-GRID_DARK_MODE', GRID_DARK_MODE))}
                     ${row('Min Card Width',
                           'Minimum card width in the gallery grid (px). Affects how many columns fit.',
                           `<input type="number" id="vsm-GALLERY_CARD_MIN_WIDTH" min="140" max="480" step="10" value="${GALLERY_CARD_MIN_WIDTH}">`)}
@@ -1090,6 +1120,7 @@ function applyDefaultsToForm() {
     jQuery('#vsm-REMOVE_MAIN_IMAGES_COLLAGE_PAGE').prop('checked', DEFAULTS.REMOVE_MAIN_IMAGES_COLLAGE_PAGE);
     jQuery('#vsm-IMAGE_LOAD_MODE').val(DEFAULTS.IMAGE_LOAD_MODE);
     jQuery('#vsm-GALLERY_VIEW_MODE').prop('checked', DEFAULTS.GALLERY_VIEW_MODE);
+    jQuery('#vsm-GRID_DARK_MODE').prop('checked', DEFAULTS.GRID_DARK_MODE);
     jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(DEFAULTS.GALLERY_CARD_MIN_WIDTH);
 }
 
@@ -1103,6 +1134,7 @@ function saveSettings() {
     GM_setValue('REMOVE_MAIN_IMAGES_COLLAGE_PAGE', jQuery('#vsm-REMOVE_MAIN_IMAGES_COLLAGE_PAGE').is(':checked'));
     GM_setValue('IMAGE_LOAD_MODE',                 jQuery('#vsm-IMAGE_LOAD_MODE').val());
     GM_setValue('GALLERY_VIEW_MODE',               jQuery('#vsm-GALLERY_VIEW_MODE').is(':checked'));
+    GM_setValue('GRID_DARK_MODE',                  jQuery('#vsm-GRID_DARK_MODE').is(':checked'));
     GM_setValue('GALLERY_CARD_MIN_WIDTH',          parseInt(jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(), 10) || DEFAULTS.GALLERY_CARD_MIN_WIDTH);
     // Tag click action — saved immediately on change but also here for consistency
     TAG_CLICK_ACTION = jQuery('#vsm-TAG_CLICK_ACTION').val() || 'blacklist';
