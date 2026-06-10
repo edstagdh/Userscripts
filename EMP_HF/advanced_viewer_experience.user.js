@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     2.8
+// @version     2.9
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -54,6 +54,12 @@ let lastUserSearchTimestamp = 0;
 const SCRIPT_VERSION = '2.8';
 const VERSION_HISTORY = [
     {
+        version: '2.9',
+        changes: [
+            'Added version number to settings menu header.',
+        ],
+    },
+        {
         version: '2.8',
         changes: [
             'Changed font size of title in cards in Gallery View.',
@@ -858,7 +864,7 @@ function buildSettingsOverlay() {
     <div id="viewer-settings-backdrop">
         <div id="viewer-settings-modal">
             <div class="vsm-header">
-                <h2>&#9881; Viewer Settings</h2>
+                <h2>&#9881; Viewer Settings ${SCRIPT_VERSION}</h2>
                 <button class="vsm-close" id="vsm-close-btn" title="Close">&#x2715;</button>
             </div>
             <div class="vsm-body">
