@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP] Advanced Better filelist
-// @version      1.0
+// @version      1.1
 // @description  inspired by original script by ephraim
 // @author       edstagdh + others
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -19,9 +19,9 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
 
-// ==/UserScript==
-
 // CHANGELOG
+// v1.1:
+// -replaced the view filelist action link with a more visible button and added space between the "[Mass PM Snatchers]" to it.
 // v1.0:
 // -added case-sensitive search button, toggle.
 // -added multi keyword based search logic button, toggle.
@@ -637,14 +637,52 @@ function bindGallery() {
 
 var fileList = document.querySelector('div[id^="files_"]');
 var fileListToggle = document.querySelector('a[onclick^="show_files"]');
-fileListToggle.text = '(Show file tree)';
+
+if (!document.getElementById('filetree-toggle-style')) {
+    var ftStyle = document.createElement('style');
+    ftStyle.id = 'filetree-toggle-style';
+    ftStyle.textContent = `
+        .filetree-toggle-btn {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 4px 12px;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #ff9800, #ff5722);
+            color: white !important;
+            font-weight: bold;
+            text-decoration: none !important;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(255,87,34,0.7), 0 0 16px rgba(255,87,34,0.4);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+            animation: ftPulse 1.8s infinite;
+        }
+        .filetree-toggle-btn:hover {
+            transform: scale(1.08);
+            filter: brightness(1.1);
+            box-shadow: 0 0 12px rgba(255,87,34,0.9), 0 0 24px rgba(255,87,34,0.7);
+        }
+        @keyframes ftPulse {
+            0%   { box-shadow: 0 0 6px rgba(255,87,34,0.5), 0 0 12px rgba(255,87,34,0.3); }
+            50%  { box-shadow: 0 0 12px rgba(255,87,34,0.9), 0 0 24px rgba(255,87,34,0.7); }
+            100% { box-shadow: 0 0 6px rgba(255,87,34,0.5), 0 0 12px rgba(255,87,34,0.3); }
+        }
+    `;
+    document.head.appendChild(ftStyle);
+}
+
+var ftSpacer = document.createElement('br');
+fileListToggle.parentNode.insertBefore(ftSpacer, fileListToggle);
+
+fileListToggle.textContent = '📂 Show file tree';
+fileListToggle.className = (fileListToggle.className + ' filetree-toggle-btn').trim();
+
 var root = {};
 fileListToggle.onclick = function toggleTree() {
     findThumbnails();
     if (this.classList.contains('open_tree')) {
-        this.text = '(Show file tree)';
+        this.textContent = '📂 Show file tree';
     } else {
-        this.text = '(Hide file tree)';
+        this.textContent = '📂 Hide file tree';
     }
     this.classList.toggle('open_tree');
     fileList.classList.toggle('hidden');
