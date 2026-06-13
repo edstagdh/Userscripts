@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     2.9
+// @version     3.0
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -51,9 +51,15 @@ let lastUserSearchTimestamp = 0;
 // VERSION HISTORY
 // Entries are newest-first. Add a new entry here with every release.
 // --------------------
-const SCRIPT_VERSION = '2.8';
+const SCRIPT_VERSION = '3.0';
 const VERSION_HISTORY = [
     {
+        version: '3.0',
+        changes: [
+            'Fixed small issue with gallery grid view when hovering on cards title on the bottom right corner of the viewport.',
+        ],
+    },
+        {
         version: '2.9',
         changes: [
             'Added version number to settings menu header.',
@@ -2723,6 +2729,7 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
         if (top  + rect.height + pad > window.innerHeight) top  = Math.max(pad, window.innerHeight - rect.height - pad);
         if (top  < pad) top  = pad;
         outer.style.position = 'fixed';
+        outer.style.pointerEvents = 'none'; // ← add this
         outer.style.left = left + 'px';
         outer.style.top  = top  + 'px';
         const img = outer.querySelector('img');
