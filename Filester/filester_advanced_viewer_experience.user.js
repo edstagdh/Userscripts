@@ -1,22 +1,32 @@
 // ==UserScript==
 // @name         [Filester] Advanced Viewer Experience
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  This script provides better experience viewing filster folders, using real anchor links, large previews, hover zoom, table view, persistent sort & view, cross-page search.
-// @match        https://filester.me/f/*
-// @match        https://filester.sh/f/*
-// @match        https://filester.si/f/*
-// @match        https://filester.gg/f/*
+// @version      1.1
+// @description  This script provides better experience viewing filester folders, using real anchor links, large previews, hover zoom, table view, persistent sort & view, cross-page search.
+// @match        https://filester.me/*
+// @match        https://filester.sh/*
+// @match        https://filester.si/*
+// @match        https://filester.gg/*
 // @author       edstagdh
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=filester.me
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/Filester/filester_advanced_viewer_experience.user.js
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/Filester/filester_advanced_viewer_experience.user.js
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @grant        none
 // ==/UserScript==
 (function () {
     'use strict';
+
+    // =========================================
+    // Domain canonicalization
+    // Always redirect non-.me domains to filester.me so the user's
+    // session (logged in via filester.me) is always active.
+    // =========================================
+    if (location.hostname !== 'filester.me') {
+        location.replace('https://filester.me' + location.pathname + location.search + location.hash);
+        return;
+    }
 
     // =========================================
     // Persistence helpers
@@ -46,11 +56,17 @@
     // Script identity / version tracking
     // =========================================
     const SCRIPT_NAME    = '[Filester] Advanced Viewer Experience';
-    const SCRIPT_VERSION = '1.0';
+    const SCRIPT_VERSION = '1.1';
     const GITHUB_REPO_URL = 'https://github.com/edstagdh/Userscripts/tree/master/Filester/filester_advanced_viewer_experience.user.js';
 
     // Entries are newest-first. Add a new entry here with every release.
     const VERSION_HISTORY = [
+        {
+            version: '1.1',
+            changes: [
+                'Domain canonicalization: opening a filester.sh / .si / .gg link now automatically redirects to filester.me, so your login session is always active.',
+            ],
+        },
         {
             version: '1.0',
             changes: [
@@ -861,9 +877,6 @@
                         deactivateTableView();
                         if (typeof window.setViewMode === 'function') window.setViewMode('grid');
                         else {
-                            // Fallback: the page's own setViewMode() wasn't found
-                            // (e.g. it hadn't loaded yet) — restore grid layout
-                            // ourselves so the view isn't left class-less.
                             const grid = document.getElementById('filesGrid');
                             if (grid) grid.classList.add('grid-view');
                             saveView('grid');
@@ -872,9 +885,6 @@
                         activateTableView();
                     }
                 });
-                // Sits right after the site's native list-view button.
-                // (Search is pinned as the absolute leftmost button separately
-                // in setupSearch(), so it doesn't need to be considered here.)
                 const listBtn = document.getElementById('listViewBtn');
                 if (listBtn) listBtn.after(btn); else viewControls.appendChild(btn);
             }
@@ -951,7 +961,6 @@
         try { sessionStorage.setItem(FOLDER_KEY, JSON.stringify(files)); } catch (_) {}
     }
 
-    // Utility to map size strings like '1.2 MB' to bytes for accurate sorting
     function parseSizeToBytes(sizeStr) {
         if (!sizeStr) return 0;
         const units = { 'b': 1, 'kb': 1024, 'mb': 1048576, 'gb': 1073741824, 'tb': 1099511627776 };
@@ -1014,7 +1023,7 @@
         const seenUrls = new Set();
         let page = 1;
         let consecutiveEmptyPages = 0;
-        const MAX_PAGES = 2000; // safety cap against a runaway crawl
+        const MAX_PAGES = 2000;
 
         while (page <= MAX_PAGES) {
             try {
@@ -1069,13 +1078,11 @@
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    // --- Sort files logic ---
     function sortFiles(files, mode) {
         return [...files].sort((a, b) => {
             switch (mode) {
                 case 'name_asc':  return a.name.localeCompare(b.name);
                 case 'name_desc': return b.name.localeCompare(a.name);
-                    // Fallback parses inline if data is old/cached from previous script version
                 case 'size_desc': return (b.sizeRaw ?? parseSizeToBytes(b.size)) - (a.sizeRaw ?? parseSizeToBytes(a.size));
                 case 'size_asc':  return (a.sizeRaw ?? parseSizeToBytes(a.size)) - (b.sizeRaw ?? parseSizeToBytes(b.size));
                 case 'date_desc': return (b.timestamp || 0) - (a.timestamp || 0);
@@ -1094,7 +1101,6 @@
     function renderResults(files, query, container, currentView) {
         container.innerHTML = '';
 
-        // ── Empty state ───────────────────────────────────────────────────
         if (!files.length) {
             container.innerHTML = `
                 <div class="fm-search-empty">
@@ -1107,15 +1113,10 @@
         }
 
         if (currentView === 'grid') {
-            // ── GRID ─────────────────────────────────────────────────────
-            // Outer wrapper is a <div> (not <a>) so the page's a{display:inline}
-            // rules can never interfere. A full-cover <a> sits inside it.
             files.forEach(f => {
-                // Card shell — plain div, so display:flex is unchallengeable
                 const card = document.createElement('div');
                 card.className = 'fmg-card';
 
-                // Full-cover link (sits under all other content via z-index)
                 const coverLink = document.createElement('a');
                 coverLink.href = f.href;
                 coverLink.target = '_blank';
@@ -1123,7 +1124,6 @@
                 coverLink.className = 'fmg-cover';
                 card.appendChild(coverLink);
 
-                // Thumbnail
                 const thumb = document.createElement('div');
                 thumb.className = 'fmg-thumb';
                 if (f.thumb) {
@@ -1139,7 +1139,6 @@
                 }
                 card.appendChild(thumb);
 
-                // Info section
                 const info = document.createElement('div');
                 info.className = 'fmg-info';
 
@@ -1159,7 +1158,6 @@
                 info.appendChild(meta);
                 card.appendChild(info);
 
-                // Download button — above the cover link
                 const dlA = document.createElement('a');
                 dlA.className = 'fmg-dl';
                 dlA.href = f.dlHref;
@@ -1177,8 +1175,6 @@
             });
 
         } else {
-            // ── TABLE ─────────────────────────────────────────────────────
-            // Sticky header
             const header = document.createElement('div');
             header.className = 'fm-table-header';
             header.style.cssText = 'display:grid;grid-template-columns:82px 1fr 90px 110px 60px 50px;';
@@ -1197,7 +1193,6 @@
                 row.target = '_blank';
                 row.rel = 'noopener noreferrer';
 
-                // Thumb
                 const thumb = document.createElement('div');
                 thumb.className = 'fmr-thumb';
                 if (f.thumb) {
@@ -1212,25 +1207,21 @@
                 }
                 row.appendChild(thumb);
 
-                // Name
                 const nameDiv = document.createElement('div');
                 nameDiv.className = 'fmr-name';
                 nameDiv.innerHTML = highlight(f.name, query);
                 row.appendChild(nameDiv);
 
-                // Size
                 const sizeDiv = document.createElement('div');
                 sizeDiv.className = 'fmr-cell';
                 sizeDiv.textContent = f.size || '—';
                 row.appendChild(sizeDiv);
 
-                // Date
                 const dateDiv = document.createElement('div');
                 dateDiv.className = 'fmr-cell';
                 dateDiv.textContent = f.dateStr || '—';
                 row.appendChild(dateDiv);
 
-                // Page
                 const pageDiv = document.createElement('div');
                 pageDiv.className = 'fmr-cell';
                 const badge = document.createElement('span');
@@ -1239,7 +1230,6 @@
                 pageDiv.appendChild(badge);
                 row.appendChild(pageDiv);
 
-                // Download
                 const dlWrap = document.createElement('div');
                 dlWrap.className = 'fmr-dl-cell';
                 const dlA = document.createElement('a');
@@ -1261,14 +1251,13 @@
             });
         }
     }
-    // --- Build and wire up the search modal ---
+
     function setupSearch() {
 
         let searchView = loadSearchView();
 
         if (document.getElementById('fm-search-overlay')) return;
 
-        // ── Overlay / modal DOM ──────────────────────────────────────────
         const overlay = document.createElement('div');
         overlay.id = 'fm-search-overlay';
 
@@ -1310,10 +1299,8 @@
         const results    = document.getElementById('fm-search-results');
         const closeBtn   = document.getElementById('fm-search-close');
 
-        // Initialize sort dropdown
         sortSelect.value = loadSearchSort();
 
-        // Core render function that applies filter -> sort -> render
         function updateAndRender() {
             if (!searchIndex) return;
             const q = input.value;
@@ -1437,8 +1424,6 @@
                     <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                 </svg>`;
                 btn.addEventListener('click', openModal);
-                // Search is the most-left button in the whole toolbar,
-                // ahead of the site's own grid/list buttons too.
                 viewControls.prepend(btn);
             }
         }
@@ -1510,8 +1495,6 @@
         buildChangelogModal(VERSION_HISTORY, 'manual');
     }
 
-    // Shows a popup with only the entries newer than what the user has
-    // already seen. On first install, only the current version is shown.
     function checkVersionAndShowChangelog() {
         const lastSeen = loadLastSeenVersion();
         if (lastSeen === SCRIPT_VERSION) return;
@@ -1533,9 +1516,6 @@
     function setupChangelogButton() {
         if (document.getElementById('fm-changelog-btn')) return;
 
-        // Lives in the site's own header <nav> (next to [Home] [FAQ] etc.),
-        // not in the file-listing toolbar — only its visual style matches
-        // the toolbar buttons (#tableViewBtn / #searchBtn).
         const navTarget = document.querySelector('header nav .flex')
             || document.querySelector('header nav > div')
             || document.querySelector('nav .flex')
@@ -1580,8 +1560,6 @@
         initControls();
     }
 
-    // Debounced so rapid/bulk DOM mutations (e.g. re-rendering search
-    // results) coalesce into a single run() instead of firing repeatedly.
     let runDebounceTimer = null;
     function scheduleRun() {
         clearTimeout(runDebounceTimer);
