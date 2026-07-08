@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [Filester] Advanced Viewer Experience
-// @namespace    http://tampermonkey.net/
+// @namespace    https://github.com/edstagdh/Userscripts
 // @version      1.1
 // @description  This script provides better experience viewing filester folders, using real anchor links, large previews, hover zoom, table view, persistent sort & view, cross-page search.
 // @match        https://filester.me/*
