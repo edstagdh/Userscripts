@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         [Pixeldrain] Gallery View
 // @namespace    https://github.com/edstagdh
-// @version      1.1
+// @version      1.2
 // @description  Adds a toggleable grid/table gallery view with modal lightbox and hover previews to pixeldrain list/album pages, launched from the sidebar.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
 // @match        https://pixeldrain.net/l/*
+// @match        https://pixeldrain.com/u/*
+// @match        https://pixeldrain.net/u/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pixeldrain.com
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/PD/pd_album_gallery_view.user.js
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/PD/pd_album_gallery_view.user.js
@@ -24,12 +26,21 @@
     const API_BASE = 'https://pixeldrain.com/api';
     const STORAGE_KEY_ACTIVE = 'pdg_view_active';
     const STORAGE_KEY_MODE = 'pdg_view_mode'; // 'grid' | 'table'
-    const PREVIEW_SCALE_PERCENT = 250;
+    const PREVIEW_SCALE_PERCENT = 150;
     const PREVIEW_BASE_SIZE = 200;
     const PREVIEW_MAX_SIZE = Math.round(PREVIEW_BASE_SIZE * (PREVIEW_SCALE_PERCENT / 100));
 
     // ---------- version history ----------
     const CHANGELOG = [
+        {
+            version: '1.2',
+            date: '2026-07-20',
+            changes: [
+                'Removed redundant file size overlay on thumbnails.',
+                'Changed Hover Preview to apply only when hovering the thumbnails in both grid and table view.',
+                'Changed preview scale to 150%.'
+            ]
+        },
         {
             version: '1.1',
             date: '2026-07-20',
@@ -78,6 +89,8 @@
         border: none;
         border-radius: 8px;
         padding: 10px 14px;
+        margin-top: 10px;
+        margin-bottom: 10px;
         box-shadow: 0 0 8px rgba(88,101,242,.5), 0 3px 10px rgba(0,0,0,.35);
         transition: transform .12s ease, filter .12s ease;
     }
@@ -95,6 +108,8 @@
         z-index: 100000;
         width: auto;
         padding: 11px 18px;
+        margin-top: 0;
+        margin-bottom: 0;
     }
 
     #pdg-gallery-root {
@@ -767,11 +782,6 @@
             setThumb(img, file);
             thumbWrap.appendChild(img);
 
-            const badge = document.createElement('span');
-            badge.className = 'pdg-badge';
-            badge.textContent = fmtSize(file.size);
-            thumbWrap.appendChild(badge);
-
             const meta = document.createElement('div');
             meta.className = 'pdg-meta';
             meta.innerHTML = `
@@ -785,7 +795,7 @@
             card.appendChild(thumbWrap);
             card.appendChild(meta);
             bindItemLink(card, idx);
-            attachHoverPreview(card, file);
+            attachHoverPreview(thumbWrap, file);
             grid.appendChild(card);
         });
     }
@@ -882,7 +892,7 @@
                 if (e.target.closest('a')) return;
                 openModal(realIdx);
             });
-            attachHoverPreview(tr, file);
+            attachHoverPreview(thumbLink, file);
 
             tbody.appendChild(tr);
         });
@@ -1094,16 +1104,43 @@
     }
 
     function injectSidebarButton() {
-        const sidebar = document.querySelector('.sidebar') || document.querySelector('[class*="sidebar"]') || document.querySelector('nav');
-        if (sidebar) {
-            const btn = makeToggleButton('button');
-            sidebar.prepend(btn);
+        if (document.getElementById('pdg-sidebar-btn') || document.getElementById('pdg-sidebar-btn-fallback')) return;
+
+        // Target Pixeldrain sidebar metadata labels (Size, Files, Date)
+        const labels = document.querySelectorAll('div.label');
+        let targetElement = null;
+
+        labels.forEach((label) => {
+            const text = label.textContent.trim();
+            if (text === 'Size' || text === 'Files' || text === 'Date') {
+                targetElement = label.nextElementSibling;
+            }
+        });
+
+        const btn = makeToggleButton('button');
+        const isActive = galleryEl && !galleryEl.classList.contains('pdg-hidden');
+        updateToggleLabel(isActive);
+
+        if (targetElement) {
+            targetElement.insertAdjacentElement('afterend', btn);
         } else {
-            const fallbackBtn = makeToggleButton('button');
-            fallbackBtn.id = 'pdg-sidebar-btn-fallback';
-            document.body.appendChild(fallbackBtn);
+            const sidebar = document.querySelector('.sidebar') || document.querySelector('[class*="sidebar"]') || document.querySelector('.details') || document.querySelector('nav');
+            if (sidebar) {
+                sidebar.appendChild(btn);
+            } else {
+                btn.id = 'pdg-sidebar-btn-fallback';
+                document.body.appendChild(btn);
+            }
         }
     }
+
+    // Dynamic SPA observer to handle Pixeldrain route navigation and delayed sidebar rendering
+    const sidebarObserver = new MutationObserver(() => {
+        if (location.pathname.includes('/l/') || location.pathname.includes('/u/')) {
+            injectSidebarButton();
+        }
+    });
+    sidebarObserver.observe(document.body, { childList: true, subtree: true });
 
     async function init() {
         galleryEl = buildGalleryRoot();
