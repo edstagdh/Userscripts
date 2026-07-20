@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [Pixeldrain] Gallery View
 // @namespace    https://github.com/edstagdh
-// @version      1.2
+// @version      1.3
 // @description  Adds a toggleable grid/table gallery view with modal lightbox and hover previews to pixeldrain list/album pages, launched from the sidebar.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
