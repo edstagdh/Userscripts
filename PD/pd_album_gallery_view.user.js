@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [Pixeldrain] Gallery View
 // @namespace    https://github.com/edstagdh
-// @version      1.0
+// @version      1.1
 // @description  Adds a toggleable grid/table gallery view with modal lightbox and hover previews to pixeldrain list/album pages, launched from the sidebar.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
@@ -9,13 +9,17 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pixeldrain.com
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/PD/pd_album_gallery_view.user.js
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/PD/pd_album_gallery_view.user.js
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @grant        GM_info
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
     'use strict';
 
+    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.1';
     const LIST_ID = location.pathname.split('/').filter(Boolean).pop();
     const API_BASE = 'https://pixeldrain.com/api';
     const STORAGE_KEY_ACTIVE = 'pdg_view_active';
@@ -24,9 +28,31 @@
     const PREVIEW_BASE_SIZE = 200;
     const PREVIEW_MAX_SIZE = Math.round(PREVIEW_BASE_SIZE * (PREVIEW_SCALE_PERCENT / 100));
 
+    // ---------- version history ----------
+    const CHANGELOG = [
+        {
+            version: '1.1',
+            date: '2026-07-20',
+            changes: [
+                'Added Version History modal and automatic update detection.',
+                'Added item size, upload date, and view count to grid view cards.',
+                'Fixed text horizontal and vertical truncation in both Grid and Table views.',
+                'Added Tampermonkey menu command to manually view changelog anytime.'
+            ]
+        },
+        {
+            version: '1.0',
+            date: '2026-07-20',
+            changes: [
+                'Initial release with Grid & Table gallery views, lightbox modal, and hover previews.'
+            ]
+        }
+    ];
+
     let listData = null;
     let galleryEl = null;
     let modalEl = null;
+    let changelogModalEl = null;
     let previewBox = null;
     let previewImg = null;
     let currentIndex = 0;
@@ -150,6 +176,7 @@
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
         gap: 20px;
+        align-items: start;
     }
     .pdg-card {
         background: #232631;
@@ -160,6 +187,7 @@
         transition: transform .12s ease, border-color .12s ease;
         display: flex;
         flex-direction: column;
+        height: auto;
         text-decoration: none;
         color: inherit;
     }
@@ -203,18 +231,26 @@
     .pdg-name {
         font-size: 16px;
         line-height: 1.35;
-        max-height: 2.7em;
-        overflow: hidden;
-        text-overflow: ellipsis;
         display: -webkit-box;
-        -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        overflow: hidden;
         color: #eceef3;
+        overflow-wrap: anywhere;
+        word-break: break-word;
     }
-    .pdg-size {
-        font-size: 14px;
-        color: #9aa0b4;
-        margin-top: 4px;
+    .pdg-card-stats {
+        font-size: 13.5px;
+        color: #b0b6c8;
+        margin-top: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .pdg-card-date {
+        font-size: 12.5px;
+        color: #82889e;
+        margin-top: 3px;
     }
 
     /* table view */
@@ -270,10 +306,11 @@
         display: block;
         color: #eceef3;
         text-decoration: none;
-        max-width: 420px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        min-width: 200px;
+        max-width: 450px;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        white-space: normal;
     }
     a.pdg-table-name:hover { color: #8b95f7; text-decoration: underline; }
     .pdg-table-link {
@@ -401,6 +438,122 @@
     }
     #pdg-download-btn:hover { background: rgba(88,101,242,.6); }
 
+    /* changelog modal */
+    #pdg-changelog-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 100055;
+        background: rgba(8, 9, 13, 0.85);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+    #pdg-changelog-modal.pdg-hidden { display: none; }
+    .pdg-changelog-box {
+        background: #1f222b;
+        border: 1px solid #333747;
+        border-radius: 12px;
+        width: 100%;
+        max-width: 520px;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        overflow: hidden;
+        color: #eceef3;
+        font-family: system-ui, sans-serif;
+    }
+    .pdg-changelog-header {
+        padding: 16px 20px;
+        background: #262a37;
+        border-bottom: 1px solid #333747;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .pdg-changelog-header h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .pdg-changelog-close {
+        background: transparent;
+        border: none;
+        color: #9aa0b4;
+        font-size: 20px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+    }
+    .pdg-changelog-close:hover { color: #fff; }
+    .pdg-changelog-body {
+        padding: 20px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+    }
+    .pdg-version-block {
+        border-bottom: 1px solid #2a2d38;
+        padding-bottom: 14px;
+    }
+    .pdg-version-block:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+    .pdg-version-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        font-size: 15px;
+        color: #fff;
+        margin-bottom: 8px;
+    }
+    .pdg-version-badge {
+        background: #5865f2;
+        color: #fff;
+        font-size: 12px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+    .pdg-version-date {
+        font-size: 12px;
+        color: #82889e;
+    }
+    .pdg-version-changes {
+        margin: 0;
+        padding-left: 18px;
+        font-size: 14px;
+        color: #c2c6d4;
+        line-height: 1.5;
+    }
+    .pdg-changelog-footer {
+        padding: 12px 20px;
+        background: #1a1c23;
+        border-top: 1px solid #333747;
+        display: flex;
+        justify-content: flex-end;
+    }
+    .pdg-changelog-btn {
+        background: #5865f2;
+        color: #fff;
+        border: none;
+        padding: 8px 18px;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    .pdg-changelog-btn:hover { background: #4752c4; }
+
     #pdg-loading, #pdg-error {
         max-width: 1600px;
         margin: 40px auto;
@@ -477,10 +630,6 @@
         const box = document.createElement('div');
         box.id = 'pdg-preview-box';
         const img = document.createElement('img');
-        // Force an explicit target size so the browser actually upscales the
-        // (already-loaded, small) thumbnail instead of just capping it with
-        // max-width/max-height, which only ever shrinks larger images and
-        // never stretches a smaller one up.
         img.style.width = `${PREVIEW_MAX_SIZE}px`;
         img.style.height = `${PREVIEW_MAX_SIZE}px`;
         box.appendChild(img);
@@ -489,9 +638,6 @@
     }
 
     function showPreview(file, x, y) {
-        // Reuse the exact same thumbnail source already used on the page/API
-        // (no extra network request, no relying on pixeldrain to generate a
-        // bigger image) - we just stretch it up ourselves via CSS.
         previewImg.onerror = null;
         previewImg.src = thumbUrl(file);
         previewBox.style.display = 'block';
@@ -517,11 +663,6 @@
         previewBox.style.top = `${posY}px`;
     }
 
-    // Only intercept a plain left-click to open the modal. Middle-click and
-    // ctrl/cmd+click are left completely alone so the browser opens the real
-    // pixeldrain link in a new tab, and right-click gets the native "open in
-    // new tab / copy link address" context menu for free, since these are
-    // real <a href> elements.
     function bindItemLink(el, idx) {
         el.addEventListener('click', (e) => {
             if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
@@ -635,7 +776,10 @@
             meta.className = 'pdg-meta';
             meta.innerHTML = `
                 <div class="pdg-name" title="${file.name.replace(/"/g, '&quot;')}">${file.name}</div>
-                <div class="pdg-size">${file.mime_type || ''}</div>
+                <div class="pdg-card-stats">
+                    <span>${fmtSize(file.size)}</span> &bull; <span>${file.views ?? 0} views</span>
+                </div>
+                <div class="pdg-card-date">Uploaded ${fmtDate(file.date_upload)}</div>
             `;
 
             card.appendChild(thumbWrap);
@@ -778,10 +922,6 @@
             if (!modal.classList.contains('pdg-hidden')) {
                 if (e.key === 'Escape') { closeModal(); return; }
                 if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                    // While a video is open, arrow keys are reserved for the
-                    // player itself (seeking) regardless of play/pause state.
-                    // Navigation between files is only available via the
-                    // on-screen nav buttons (mouse click) in that case.
                     const currentFile = listData && listData.files[currentIndex];
                     if (currentFile && isVideo(currentFile.mime_type)) return;
                     stepModal(e.key === 'ArrowLeft' ? -1 : 1);
@@ -789,7 +929,6 @@
                 }
                 return;
             }
-            // modal is closed - let Escape exit the whole gallery view instead
             if (e.key === 'Escape' && galleryEl && !galleryEl.classList.contains('pdg-hidden')) {
                 setActive(false);
             }
@@ -853,6 +992,67 @@
         modalEl.querySelector('#pdg-download-btn').href = downloadUrl(file.id);
     }
 
+    // ---------- changelog / version history modal ----------
+    function buildChangelogModal() {
+        const modal = document.createElement('div');
+        modal.id = 'pdg-changelog-modal';
+        modal.className = 'pdg-hidden';
+
+        const historyHtml = CHANGELOG.map(item => `
+            <div class="pdg-version-block">
+                <div class="pdg-version-title">
+                    <span class="pdg-version-badge">v${item.version}</span>
+                    <span class="pdg-version-date">${item.date}</span>
+                </div>
+                <ul class="pdg-version-changes">
+                    ${item.changes.map(c => `<li>${c}</li>`).join('')}
+                </ul>
+            </div>
+        `).join('');
+
+        modal.innerHTML = `
+            <div class="pdg-changelog-box">
+                <div class="pdg-changelog-header">
+                    <h2>📜 [Pixeldrain] Gallery View History</h2>
+                    <button class="pdg-changelog-close" title="Close">&#10005;</button>
+                </div>
+                <div class="pdg-changelog-body">
+                    ${historyHtml}
+                </div>
+                <div class="pdg-changelog-footer">
+                    <button class="pdg-changelog-btn">Got it!</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const closeFn = () => modal.classList.add('pdg-hidden');
+        modal.querySelector('.pdg-changelog-close').addEventListener('click', closeFn);
+        modal.querySelector('.pdg-changelog-btn').addEventListener('click', closeFn);
+        modal.addEventListener('click', (e) => { if (e.target === modal) closeFn(); });
+
+        return modal;
+    }
+
+    function showChangelogModal() {
+        if (!changelogModalEl) {
+            changelogModalEl = buildChangelogModal();
+        }
+        changelogModalEl.classList.remove('pdg-hidden');
+    }
+
+    function checkVersionUpdate() {
+        if (typeof GM_getValue === 'undefined' || typeof GM_setValue === 'undefined') return;
+
+        const lastVersion = GM_getValue('pdg_last_version', null);
+        if (lastVersion !== SCRIPT_VERSION) {
+            GM_setValue('pdg_last_version', SCRIPT_VERSION);
+            // Show changelog automatically if updating from an older version
+            showChangelogModal();
+        }
+    }
+
     // ---------- toggle / sidebar injection ----------
     function setActive(active) {
         localStorage.setItem(STORAGE_KEY_ACTIVE, active ? '1' : '0');
@@ -881,79 +1081,64 @@
         return document.getElementById('app') || document.body.firstElementChild;
     }
 
-    function makeToggleButton(tag) {
+    function makeToggleButton(tag = 'button') {
         const btn = document.createElement(tag);
+        btn.id = 'pdg-sidebar-btn';
         btn.innerHTML = `<span class="pdg-icon pdg-toggle-icon">&#9638;</span><span class="pdg-toggle-label">Gallery view</span>`;
-        btn.addEventListener('click', () => {
-            const isActive = !galleryEl.classList.contains('pdg-hidden');
-            setActive(!isActive);
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isHidden = galleryEl.classList.contains('pdg-hidden');
+            setActive(isHidden);
         });
         return btn;
     }
 
-    function injectToggleButton() {
-        const labels = document.querySelectorAll('div.label');
-        for (const label of labels) {
-            if (label.textContent.trim().toLowerCase() === 'size') {
-                const target = label.nextElementSibling || label.parentElement;
-                const btn = makeToggleButton('button');
-                btn.id = 'pdg-sidebar-btn';
-                (target || label).insertAdjacentElement('afterend', btn);
-                return true;
-            }
+    function injectSidebarButton() {
+        const sidebar = document.querySelector('.sidebar') || document.querySelector('[class*="sidebar"]') || document.querySelector('nav');
+        if (sidebar) {
+            const btn = makeToggleButton('button');
+            sidebar.prepend(btn);
+        } else {
+            const fallbackBtn = makeToggleButton('button');
+            fallbackBtn.id = 'pdg-sidebar-btn-fallback';
+            document.body.appendChild(fallbackBtn);
         }
-        return false;
     }
 
-    function injectFallbackButton() {
-        const btn = makeToggleButton('button');
-        btn.id = 'pdg-sidebar-btn-fallback';
-        document.body.appendChild(btn);
-    }
-
-    // ---------- init ----------
     async function init() {
-        if (!LIST_ID) return;
-
+        galleryEl = buildGalleryRoot();
+        modalEl = buildModal();
         const preview = buildPreviewBox();
         previewBox = preview.box;
         previewImg = preview.img;
 
-        galleryEl = buildGalleryRoot();
-        modalEl = buildModal();
-
-        if (!injectToggleButton()) {
-            let attempts = 0;
-            const retry = setInterval(() => {
-                attempts++;
-                if (injectToggleButton() || attempts > 10) {
-                    clearInterval(retry);
-                    if (attempts > 10 && !document.getElementById('pdg-sidebar-btn')) {
-                        injectFallbackButton();
-                    }
-                }
-            }, 500);
-        }
+        injectSidebarButton();
 
         try {
             listData = await fetchListData();
             renderAll(listData);
+
+            const wasActive = localStorage.getItem(STORAGE_KEY_ACTIVE) === '1';
+            if (wasActive) {
+                setActive(true);
+            }
         } catch (err) {
-            galleryEl.querySelector('#pdg-loading').textContent =
-                `Failed to load gallery: ${err.message}`;
-            console.error('[Pixeldrain Gallery View]', err);
+            console.error('[Pixeldrain Gallery View] Failed to load list:', err);
+            galleryEl.querySelector('#pdg-loading').style.display = 'none';
+            const errDiv = document.createElement('div');
+            errDiv.id = 'pdg-error';
+            errDiv.textContent = 'Failed to load list data. Please refresh or try again.';
+            galleryEl.querySelector('#pdg-gallery-body').appendChild(errDiv);
         }
 
-        if (localStorage.getItem(STORAGE_KEY_ACTIVE) === '1') {
-            setActive(true);
-        } else {
-            updateToggleLabel(false);
-        }
+        // Check version update state
+        checkVersionUpdate();
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    // Register Userscript Menu Command
+    if (typeof GM_registerMenuCommand !== 'undefined') {
+        GM_registerMenuCommand('📜 Version History / Changelog', () => showChangelogModal());
     }
+
+    init();
 })();
