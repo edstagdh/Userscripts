@@ -6,8 +6,6 @@
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
 // @match        https://pixeldrain.net/l/*
-// @match        https://pixeldrain.com/u/*
-// @match        https://pixeldrain.net/u/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pixeldrain.com
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/PD/pd_album_gallery_view.user.js
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/PD/pd_album_gallery_view.user.js
@@ -33,6 +31,13 @@
     // ---------- version history ----------
     const CHANGELOG = [
         {
+            version: '1.3',
+            date: '2026-07-20',
+            changes: [
+                'Removed single file links match.',
+            ]
+        },
+                {
             version: '1.2',
             date: '2026-07-20',
             changes: [
