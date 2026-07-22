@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [Pixeldrain] Gallery View
 // @namespace    https://github.com/edstagdh
-// @version      1.3
+// @version      1.4
 // @description  Adds a toggleable grid/table gallery view with modal lightbox and hover previews to pixeldrain list/album pages, launched from the sidebar.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
@@ -31,13 +31,20 @@
     // ---------- version history ----------
     const CHANGELOG = [
         {
+            version: '1.4',
+            date: '2026-07-22',
+            changes: [
+                'Added Bypass logic.',
+            ]
+        },
+        {
             version: '1.3',
             date: '2026-07-20',
             changes: [
                 'Removed single file links match.',
             ]
         },
-                {
+        {
             version: '1.2',
             date: '2026-07-20',
             changes: [
@@ -645,6 +652,61 @@
         return span;
     }
 
+    // ---------- bypass proxy (from Gamedrive) ----------
+    const PROXY_JSON_URL = 'https://pixeldrain-bypass.gamedrive.org/api/proxy.json';
+    const PROXY_LIST_KEY = 'pd_proxy_list_v3';
+    const PROXY_TS_KEY = 'pd_proxy_list_ts_v3';
+    const PROXY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+    let cachedProxyList = [];
+    let activeBypassProxy = null; // one proxy chosen per render pass, used for every row
+
+    function normalizeProxyEntry(entry) {
+        if (!entry || typeof entry !== 'string') return null;
+        entry = entry.trim();
+        if (/^https?:\/\//i.test(entry)) return entry.endsWith('/') ? entry : entry + '/';
+        return 'https://' + (entry.endsWith('/') ? entry : entry + '/');
+    }
+
+    async function refreshProxyList() {
+        const ts = parseInt(localStorage.getItem(PROXY_TS_KEY) || '0', 10);
+        const cached = localStorage.getItem(PROXY_LIST_KEY);
+        if (cached && (Date.now() - ts) < PROXY_CACHE_TTL_MS) {
+            try {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length) { cachedProxyList = parsed; return; }
+            } catch (e) { }
+        }
+        try {
+            const resp = await fetch(PROXY_JSON_URL, { cache: 'no-store' });
+            if (!resp.ok) throw new Error('fetch failed ' + resp.status);
+            const json = await resp.json();
+            let list = [];
+            if (json && Array.isArray(json.proxies)) list = json.proxies.slice();
+            else if (json && typeof json.proxy === 'string') list = [json.proxy];
+            else if (Array.isArray(json)) list = json.slice();
+            const normalized = list.map(normalizeProxyEntry).filter(Boolean);
+            if (normalized.length) {
+                localStorage.setItem(PROXY_LIST_KEY, JSON.stringify(normalized));
+                localStorage.setItem(PROXY_TS_KEY, String(Date.now()));
+                cachedProxyList = normalized;
+                return;
+            }
+            if (cached) {
+                try { const parsed = JSON.parse(cached); if (Array.isArray(parsed) && parsed.length) cachedProxyList = parsed; } catch (e) { }
+            }
+        } catch (e) {
+            if (cached) {
+                try { const parsed = JSON.parse(cached); if (Array.isArray(parsed) && parsed.length) cachedProxyList = parsed; } catch (err) { }
+            }
+        }
+    }
+
+    function pickBypassProxy() {
+        if (!cachedProxyList.length) return null;
+        if (cachedProxyList.length === 1) return cachedProxyList[0];
+        return cachedProxyList[Math.floor(Math.random() * cachedProxyList.length)];
+    }
     // ---------- hover preview ----------
     function buildPreviewBox() {
         const box = document.createElement('div');
@@ -822,6 +884,7 @@
     function renderTable() {
         const tbody = galleryEl.querySelector('#pdg-table tbody');
         tbody.innerHTML = '';
+        activeBypassProxy = pickBypassProxy();
 
         galleryEl.querySelectorAll('#pdg-table th[data-col] .pdg-sort-arrow').forEach((el) => (el.textContent = ''));
         const activeTh = galleryEl.querySelector(`#pdg-table th[data-col="${sortState.col}"] .pdg-sort-arrow`);
@@ -882,9 +945,27 @@
             dlA.className = 'pdg-table-link';
             dlA.href = downloadUrl(file.id);
             dlA.textContent = 'Download';
+
+            const bypassA = document.createElement('a');
+            bypassA.className = 'pdg-table-link';
+            if (activeBypassProxy) {
+                bypassA.href = activeBypassProxy + file.id;
+                bypassA.target = '_blank';
+                bypassA.rel = 'noopener noreferrer';
+                bypassA.referrerPolicy = 'no-referrer';
+                bypassA.textContent = 'Bypass';
+            } else {
+                bypassA.href = '#';
+                bypassA.textContent = 'Bypass (unavailable)';
+                bypassA.style.opacity = '0.5';
+                bypassA.style.cursor = 'default';
+                bypassA.addEventListener('click', (e) => e.preventDefault());
+            }
+
             tdLinks.appendChild(openA);
             tdLinks.appendChild(viewA);
             tdLinks.appendChild(dlA);
+            tdLinks.appendChild(bypassA);
 
             tr.appendChild(tdThumb);
             tr.appendChild(tdName);
@@ -1157,7 +1238,8 @@
         injectSidebarButton();
 
         try {
-            listData = await fetchListData();
+            const [listResult] = await Promise.all([fetchListData(), refreshProxyList()]);
+            listData = listResult;
             renderAll(listData);
 
             const wasActive = localStorage.getItem(STORAGE_KEY_ACTIVE) === '1';
