@@ -31,7 +31,7 @@ const SCRIPT_VERSION = '1.1';
 // Changelog is no longer stored inline (kept the script file lean) — it's fetched
 // on demand from this repo's CHANGELOG.md, either when the version changes or when
 // the user manually requests it via the GM menu command.
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/main/Pornolab/CHANGELOG.md';
+const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/PLAB/Changelog.md';
 let changelogCache = null; // parsed [{version, changes:[...]}] once fetched this session
 
 // --------------------
