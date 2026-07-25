@@ -2,13 +2,19 @@
 // @name        [Pornolab] Advanced Viewer Experience
 // @description Adds a Grid/List toggle, image previews pulled from inside each topic, download buttons, forum & uploader blacklist/favorites with glow highlighting, and a settings panel to Pornolab's tracker search results.
 // @namespace   https://github.com/edstagdh/Userscripts
-// @version     1.0
+// @version     1.1
 // @author      edstagdh
 // @match       https://pornolab.net/forum/tracker.php*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=pornolab.net
+// @updateURL   https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PLAB/plab_advanced_viewer.user.js
+// @installURL  https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PLAB/plab_advanced_viewer.user.js
 // @require     https://code.jquery.com/jquery-2.1.1.js
 // @grant       GM_addStyle
 // @grant       GM_setValue
 // @grant       GM_getValue
+// @grant       GM_registerMenuCommand
+// @grant       GM_xmlhttpRequest
+// @connect     raw.githubusercontent.com
 // ==/UserScript==
 
 "use strict";
@@ -18,23 +24,15 @@ this.$ = this.jQuery = jQuery.noConflict(true);
 const LOG_PREFIX = '[PL-VIEWER]';
 
 // --------------------
-// VERSION HISTORY (newest first — add an entry here with every release)
+// VERSION / CHANGELOG
 // --------------------
-const SCRIPT_VERSION = '1.0';
-const VERSION_HISTORY = [
-    {
-        version: '1.0',
-        changes: [
-            'Initial release: ported the [HF][EMP] Advanced Viewer Experience gallery/settings system to Pornolab.',
-            'Grid/List toggle button next to "Опции показа".',
-            'Preview images are pulled live from inside each topic page (first valid image found), lazy-loaded via IntersectionObserver.',
-            'Download button added to both table and grid views.',
-            'Forum Blacklist & Favorite Forums (with configurable glow color) — since Pornolab rows have one forum instead of tags.',
-            'Uploader Blacklist with inline ⛔ block buttons in both views.',
-            'Table view: category text trimmed to English only, Russian month abbreviations translated.',
-        ],
-    },
-];
+const SCRIPT_VERSION = '1.1';
+
+// Changelog is no longer stored inline (kept the script file lean) — it's fetched
+// on demand from this repo's CHANGELOG.md, either when the version changes or when
+// the user manually requests it via the GM menu command.
+const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/main/Pornolab/CHANGELOG.md';
+let changelogCache = null; // parsed [{version, changes:[...]}] once fetched this session
 
 // --------------------
 // CONFIG DEFAULTS
@@ -349,6 +347,8 @@ GM_addStyle(`
     background: #2d4a2d; border: 1px solid #4a7a4a; color: #8fc88f; transition: background 0.15s, color 0.15s; letter-spacing: 0.03em;
 }
 #vcl-modal .vcl-ok-btn:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
+#vcl-modal .vcl-error { font-size: 11px; color: #c88; padding: 8px 0; }
+#vcl-modal .vcl-loading { font-size: 11px; color: #888; padding: 8px 0; }
 `);
 
 // --------------------
@@ -504,10 +504,12 @@ function tryTopicImage($imageTags, index, fallbackSrc, done) {
     testImg.src = imgSrc;
 }
 
-function loadImageForImgElement(imgEl, topicId, topicHref) {
+function loadImageForImgElement(imgEl, topicId, topicHref, $imgJQ) {
     fetchPreviewImageForTopic(topicId, topicHref, function (src) {
         if (!imgEl) return;
-        imgEl.src = src || FALLBACK_IMG;
+        const finalSrc = src || FALLBACK_IMG;
+        imgEl.src = finalSrc;
+        if (src && $imgJQ) attachScaledHoverPreview($imgJQ, finalSrc);
     });
 }
 
@@ -663,7 +665,7 @@ function buildGalleryCard($row) {
                 $img.attr('data-topic-id', topicId).attr('data-topic-href', titleInfo.href);
                 setTimeout(() => { if ($img[0]) galleryLazyObserver.observe($img[0]); }, 0);
             } else {
-                loadImageForImgElement($img[0], topicId, titleInfo.href);
+                loadImageForImgElement($img[0], topicId, titleInfo.href, $img);
             }
         } else {
             $img.attr('src', FALLBACK_IMG);
@@ -741,7 +743,7 @@ function buildGalleryView() {
                 const topicId   = img.getAttribute('data-topic-id');
                 const topicHref = img.getAttribute('data-topic-href');
                 galleryLazyObserver.unobserve(img);
-                if (topicId) loadImageForImgElement(img, topicId, topicHref);
+                if (topicId) loadImageForImgElement(img, topicId, topicHref, jQuery(img));
             });
         }, { root: null, rootMargin, threshold });
     } else {
@@ -852,7 +854,7 @@ function enhanceTableRow($row) {
             fetchPreviewImageForTopic(topicId, titleInfo.href, function (src) {
                 const finalSrc = src || FALLBACK_IMG;
                 $thumb.attr('src', finalSrc);
-                if (src) attachZoomPopup($thumb, finalSrc);
+                if (src) attachScaledHoverPreview($thumb, finalSrc);
             });
         };
 
@@ -892,45 +894,72 @@ function enhanceTableRow($row) {
     }
 }
 
-// Hover-zoom popup, ported from the original Pornolab preview script, with viewport
-// clamping added: if the zoomed image would run off the right/bottom edge, it flips
-// to the left/above the cursor instead of being cut off.
-function attachZoomPopup($thumb, imgSrc) {
-    const popup = document.createElement('div');
-    Object.assign(popup.style, {
-        position: 'fixed', display: 'none', zIndex: '9999', border: '2px solid #000',
-        backgroundColor: '#000', padding: '1px', pointerEvents: 'none',
-    });
-    const popupImg = document.createElement('img');
-    popupImg.src = imgSrc;
-    Object.assign(popupImg.style, { maxWidth: '600px', maxHeight: '400px', display: 'block' });
-    popup.appendChild(popupImg);
-    document.body.appendChild(popup);
 
-    function positionPopup(clientX, clientY) {
+const PREVIEW_HOVER_SCALE = 1.8; // 150% of the image's on-page rendered size
+
+function attachScaledHoverPreview($el, imgSrc) {
+    let popup = null, popupImg = null;
+
+    function ensurePopup() {
+        if (popup) return;
+        popup = document.createElement('div');
+        Object.assign(popup.style, {
+            position: 'fixed', display: 'none', zIndex: '9999',
+            border: '2px solid #000', backgroundColor: '#000',
+            padding: '2px', pointerEvents: 'none',
+        });
+        popupImg = document.createElement('img');
+        popupImg.style.display = 'block';
+        popup.appendChild(popupImg);
+        document.body.appendChild(popup);
+    }
+
+    function position(clientX, clientY) {
         const pad = 12;
-        popup.style.display = 'block';
         const rect = popup.getBoundingClientRect();
 
         let left = clientX + 20;
-        if (left + rect.width + pad > window.innerWidth) {
-            left = clientX - rect.width - 20; // flip to the left of the cursor
-        }
+        if (left + rect.width + pad > window.innerWidth) left = clientX - rect.width - 20;
         left = Math.min(Math.max(left, pad), window.innerWidth - rect.width - pad);
 
         let top = clientY + 20;
-        if (top + rect.height + pad > window.innerHeight) {
-            top = clientY - rect.height - 20; // flip above the cursor
-        }
+        if (top + rect.height + pad > window.innerHeight) top = clientY - rect.height - 20;
         top = Math.min(Math.max(top, pad), window.innerHeight - rect.height - pad);
 
         popup.style.left = left + 'px';
         popup.style.top = top + 'px';
     }
 
-    $thumb.on('mouseenter', function (e) { positionPopup(e.clientX, e.clientY); });
-    $thumb.on('mousemove', function (e) { positionPopup(e.clientX, e.clientY); });
-    $thumb.on('mouseleave', function () { popup.style.display = 'none'; });
+    $el.on('mouseenter.scaledPreview', function (e) {
+        ensurePopup();
+        const el = $el[0];
+        const renderedW = el.offsetWidth  || el.getBoundingClientRect().width;
+        const renderedH = el.offsetHeight || el.getBoundingClientRect().height;
+        if (!renderedW || !renderedH) return; // element not laid out yet — skip rather than show a bad popup
+
+        const maxW = window.innerWidth - 24;
+        const maxH = window.innerHeight - 24;
+        let w = renderedW * PREVIEW_HOVER_SCALE;
+        let h = renderedH * PREVIEW_HOVER_SCALE;
+        // If 150% of the card's size would overflow the viewport, shrink just enough
+        // to fit (keeping aspect ratio) rather than letting the popup get clipped.
+        if (w > maxW || h > maxH) {
+            const shrink = Math.min(maxW / w, maxH / h);
+            w *= shrink; h *= shrink;
+        }
+
+        popupImg.style.width = w + 'px';
+        popupImg.style.height = h + 'px';
+        popupImg.src = imgSrc;
+        popup.style.display = 'block';
+        position(e.clientX, e.clientY);
+    });
+    $el.on('mousemove.scaledPreview', function (e) {
+        if (popup && popup.style.display === 'block') position(e.clientX, e.clientY);
+    });
+    $el.on('mouseleave.scaledPreview', function () {
+        if (popup) popup.style.display = 'none';
+    });
 }
 
 function enhanceAllTableRows() {
@@ -1242,13 +1271,73 @@ function injectNavButtons() {
 }
 
 // --------------------
-// CHANGELOG POPUP
+// CHANGELOG — fetched on demand from CHANGELOG.md (GitHub raw), not stored inline.
+// Expected file format (see CHANGELOG.md in the same repo folder):
+//
+//   ## v1.1
+//   - Change one
+//   - Change two
+//
+//   ## v1.0
+//   - Change one
+//
+// Parsed into the same [{version, changes:[...]}] shape the popup renderer expects.
 // --------------------
-function buildChangelogPopup(versionsToShow) {
-    const blocksHtml = versionsToShow.map(function (entry) {
-        const items = entry.changes.map(c => `<li>${c}</li>`).join('');
-        return `<div class="vcl-version-block"><span class="vcl-version-label">v${entry.version}</span><ul class="vcl-changes">${items}</ul></div>`;
-    }).join('');
+function parseChangelogMarkdown(md) {
+    const lines = md.split(/\r?\n/);
+    const entries = [];
+    let current = null;
+    lines.forEach(function (line) {
+        const headerMatch = line.match(/^##\s*v?([0-9][0-9.]*)\s*$/i);
+        if (headerMatch) {
+            current = { version: headerMatch[1], changes: [] };
+            entries.push(current);
+            return;
+        }
+        const itemMatch = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+        if (itemMatch && current) {
+            current.changes.push(itemMatch[1]);
+        }
+    });
+    return entries.filter(e => e.changes.length);
+}
+
+function fetchChangelog(callback) {
+    if (changelogCache) { callback(changelogCache, null); return; }
+    if (typeof GM_xmlhttpRequest !== 'function') { callback(null, 'GM_xmlhttpRequest not available'); return; }
+    GM_xmlhttpRequest({
+        method: 'GET',
+        url: CHANGELOG_URL,
+        onload: function (res) {
+            if (res.status < 200 || res.status >= 300) { callback(null, 'HTTP ' + res.status); return; }
+            try {
+                const parsed = parseChangelogMarkdown(res.responseText);
+                changelogCache = parsed;
+                callback(parsed, null);
+            } catch (e) {
+                callback(null, 'Parse error: ' + e.message);
+            }
+        },
+        onerror: function () { callback(null, 'Network error fetching changelog'); },
+        ontimeout: function () { callback(null, 'Timed out fetching changelog'); },
+        timeout: 10000,
+    });
+}
+
+function buildChangelogPopup(versionsToShow, errorMsg) {
+    jQuery('#vcl-backdrop').remove(); // in case a stale popup/loading state is still around
+
+    let bodyHtml;
+    if (errorMsg) {
+        bodyHtml = `<div class="vcl-error">Couldn't load the changelog (${errorMsg}). You can view it directly on GitHub using the link below.</div>`;
+    } else if (!versionsToShow || !versionsToShow.length) {
+        bodyHtml = `<div class="vcl-error">No changelog entries found.</div>`;
+    } else {
+        bodyHtml = versionsToShow.map(function (entry) {
+            const items = entry.changes.map(c => `<li>${c}</li>`).join('');
+            return `<div class="vcl-version-block"><span class="vcl-version-label">v${entry.version}</span><ul class="vcl-changes">${items}</ul></div>`;
+        }).join('');
+    }
 
     const html = `
     <div id="vcl-backdrop">
@@ -1259,7 +1348,7 @@ function buildChangelogPopup(versionsToShow) {
                     <span class="vcl-subtitle">[Pornolab] Advanced Viewer Experience &mdash; updated to v${SCRIPT_VERSION}</span>
                 </div>
             </div>
-            <div class="vcl-body">${blocksHtml}</div>
+            <div class="vcl-body">${bodyHtml}</div>
             <div class="vcl-footer">
                 <a class="vcl-github-link" href="https://github.com/edstagdh/Userscripts" target="_blank">&#128279; View on GitHub</a>
                 <button class="vcl-ok-btn" id="vcl-ok-btn">OK, got it</button>
@@ -1281,14 +1370,26 @@ function dismissChangelog() {
 function checkVersionAndShowChangelog() {
     const lastSeen = GM_getValue('LAST_SEEN_VERSION', '');
     if (lastSeen === SCRIPT_VERSION) return;
-    const toShow = [];
-    for (let i = 0; i < VERSION_HISTORY.length; i++) {
-        if (VERSION_HISTORY[i].version === lastSeen) break;
-        toShow.push(VERSION_HISTORY[i]);
-    }
-    if (!lastSeen) { toShow.length = 0; toShow.push(VERSION_HISTORY[0]); }
-    if (!toShow.length) { GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION); return; }
-    buildChangelogPopup(toShow);
+    fetchChangelog(function (entries, err) {
+        if (err) { buildChangelogPopup(null, err); return; }
+        let toShow;
+        if (!lastSeen) {
+            toShow = entries.length ? [entries[0]] : [];
+        } else {
+            toShow = [];
+            for (let i = 0; i < entries.length; i++) {
+                if (entries[i].version === lastSeen) break;
+                toShow.push(entries[i]);
+            }
+        }
+        if (!toShow.length) { GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION); return; }
+        buildChangelogPopup(toShow, null);
+    });
+}
+function showFullChangelog() {
+    fetchChangelog(function (entries, err) {
+        buildChangelogPopup(entries, err);
+    });
 }
 
 // --------------------
@@ -1299,13 +1400,14 @@ function checkVersionAndShowChangelog() {
 
     buildSettingsOverlay();
 
+    if (typeof GM_registerMenuCommand === 'function') {
+        GM_registerMenuCommand('📋 Show Changelog', showFullChangelog);
+    }
+
     jQuery(document).ready(function () {
         injectNavButtons();
         checkVersionAndShowChangelog();
 
-        // Always enhance the underlying table (translations, Preview/Download columns,
-        // blacklist hide, uploader block buttons) regardless of which view loads first —
-        // otherwise switching from Grid back to List showed the raw, unmodified table.
         setTimeout(function () {
             enhanceAllTableRows();
             if (GALLERY_VIEW_MODE) buildGalleryView();
