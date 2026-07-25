@@ -2,10 +2,10 @@
 // @name        [Pornolab] Advanced Viewer Experience
 // @description Adds a Grid/List toggle, image previews pulled from inside each topic, download buttons, forum & uploader blacklist/favorites with glow highlighting, and a settings panel to Pornolab's tracker search results.
 // @namespace   https://github.com/edstagdh/Userscripts
-// @version     1.1
+// @version     1.2
 // @author      edstagdh
 // @match       https://pornolab.net/forum/tracker.php*
-// @icon         https://www.google.com/s2/favicons?sz=64&domain=pornolab.net
+// @icon        https://www.google.com/s2/favicons?sz=64&domain=pornolab.net
 // @updateURL   https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PLAB/plab_advanced_viewer.user.js
 // @installURL  https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PLAB/plab_advanced_viewer.user.js
 // @require     https://code.jquery.com/jquery-2.1.1.js
@@ -26,7 +26,7 @@ const LOG_PREFIX = '[PL-VIEWER]';
 // --------------------
 // VERSION / CHANGELOG
 // --------------------
-const SCRIPT_VERSION = '1.1';
+const SCRIPT_VERSION = '1.2';
 
 // Changelog is no longer stored inline (kept the script file lean) — it's fetched
 // on demand from this repo's CHANGELOG.md, either when the version changes or when
@@ -186,7 +186,8 @@ GM_addStyle(`
 #pl_viewer_nav_wrap a:hover { text-decoration: underline; }
 
 /* ── Table view extras ── */
-.pl-preview-cell img { cursor: zoom-in; display: block; }
+.pl-preview-cell { text-align: center; }
+.pl-preview-cell img { cursor: zoom-in; display: inline-block; }
 .pl-download-btn {
     display: inline-block; padding: 3px 8px; background: #2d4a2d; border: 1px solid #4a7a4a;
     color: #8fc88f !important; text-decoration: none; border-radius: 4px; font-size: 11px; font-weight: 700;
@@ -368,14 +369,21 @@ function getTopicIdFromRow($row) {
     return m ? m[1] : null;
 }
 
-function getForumFromRow($row) {
-    const $a = $row.find('a.gen.f').first();
-    let text = ($a.length ? $a.text() : '').trim();
+// Pornolab category text is usually "Russian Name / English Name" — we only ever
+// want the English half. If there's no " / " separator, assume the text is
+// already English-only and use it as-is.
+function toEnglishCategoryText(rawText) {
+    const text = (rawText || '').trim();
     if (text.includes(' / ')) {
         const parts = text.split(' / ');
-        text = parts[parts.length - 1].trim();
+        return parts[parts.length - 1].trim();
     }
     return text;
+}
+
+function getForumFromRow($row) {
+    const $a = $row.find('a.gen.f').first();
+    return toEnglishCategoryText($a.length ? $a.text() : '');
 }
 function getForumHrefFromRow($row) {
     const $a = $row.find('a.gen.f').first();
@@ -445,6 +453,40 @@ function translateMonth(text) {
     let out = text;
     Object.keys(MONTH_MAP).forEach(ru => { out = out.replace(new RegExp(ru, 'g'), MONTH_MAP[ru]); });
     return out;
+}
+
+// --------------------
+// TABLE HEADER TRANSLATION — Pornolab's tracker table headers are in Russian;
+// translate the visible label text (and hover titles, where present) to English.
+// --------------------
+const HEADER_LABEL_TRANSLATIONS = {
+    'Форум': 'Forum',
+    'Тема': 'Topic',
+    'Автор': 'Uploader',
+    'Размер': 'Size',
+    'Добавлен': 'Added',
+};
+const HEADER_TITLE_TRANSLATIONS = {
+    'Сиды': 'Seeders',
+    'Личи': 'Leechers',
+    'Торрент скачан': 'Times completed',
+    'Приватный торрент (отключён DHT)': 'Private torrent (DHT disabled)',
+};
+function translateTableHeaders() {
+    const $headerRow = jQuery('#tor-tbl thead tr').first();
+    if (!$headerRow.length) return;
+    $headerRow.find('th').each(function () {
+        const $th = jQuery(this);
+        const $label = $th.find('b.tbs-text').first();
+        if ($label.length) {
+            const text = $label.text().trim();
+            if (HEADER_LABEL_TRANSLATIONS.hasOwnProperty(text)) $label.text(HEADER_LABEL_TRANSLATIONS[text]);
+        }
+        const title = $th.attr('title');
+        if (title && HEADER_TITLE_TRANSLATIONS.hasOwnProperty(title)) {
+            $th.attr('title', HEADER_TITLE_TRANSLATIONS[title]);
+        }
+    });
 }
 
 // --------------------
@@ -789,18 +831,17 @@ function updateGalleryToggleLabel(isGrid) {
 
 // --------------------
 // TABLE VIEW ENHANCEMENTS
-// (English-only category text, translated dates, preview + download columns,
+// (English-only category text, translated headers/dates, preview column,
 //  uploader block button, blacklist hide, favorite glow — applied once per row)
 // --------------------
 function injectTableHeaders() {
     const $headerRow = jQuery('#tor-tbl thead tr').first();
     if (!$headerRow.length) return;
     if ($headerRow.find('th.pl-preview-th').length) return; // already injected
-    const $forumTh = $headerRow.children().eq(2); // "Форум" header — insert Preview/Download right after it, before "Тема"
+    const $forumTh = $headerRow.children().eq(2); // "Форум" header — insert Preview right after it, before "Тема"
     const $previewTh = jQuery('<th class="{sorter: false} pl-preview-th"><b class="tbs-text">Preview</b></th>');
-    const $downloadTh = jQuery('<th class="{sorter: false} pl-download-th"><b class="tbs-text">DL</b></th>');
     $forumTh.after($previewTh);
-    $previewTh.after($downloadTh);
+    translateTableHeaders();
 }
 
 function enhanceTableRow($row) {
@@ -810,13 +851,7 @@ function enhanceTableRow($row) {
     // English-only forum text
     try {
         const $forumA = $row.find('a.gen.f').first();
-        if ($forumA.length) {
-            const original = $forumA.text();
-            if (original.includes(' / ')) {
-                const parts = original.split(' / ');
-                $forumA.text(parts[parts.length - 1].trim());
-            }
-        }
+        if ($forumA.length) $forumA.text(toEnglishCategoryText($forumA.text()));
     } catch (e) { console.error(`${LOG_PREFIX} forum text cleanup error:`, e); }
 
     // Translate Russian month abbreviation in the date column
@@ -826,20 +861,18 @@ function enhanceTableRow($row) {
         if ($dateP.length) $dateP.text(translateMonth($dateP.text()));
     } catch (e) { console.error(`${LOG_PREFIX} date translation error:`, e); }
 
-    // Insert Preview + Download cells right after the forum (3rd) column, before the title —
-    // keeping these columns on the left side of the row means the hover-zoom popup opens
+    // Insert Preview cell right after the forum (3rd) column, before the title —
+    // keeping it on the left side of the row means the hover-zoom popup opens
     // with plenty of horizontal room before it would run off the right edge of the viewport.
     const $forumTd = $row.find('> td').eq(2);
     const $previewTd = jQuery('<td class="pl-preview-cell">');
-    const $downloadTd = jQuery('<td class="pl-download-cell">');
     $forumTd.after($previewTd);
-    $previewTd.after($downloadTd);
 
-    const sizeInfo = getSizeAndDownloadFromRow($row);
-    if (sizeInfo.downloadHref) {
-        jQuery('<a class="pl-download-btn">').attr('href', sizeInfo.downloadHref).attr('target', '_blank')
-            .html('&#11015;').appendTo($downloadTd);
-    }
+    // No dedicated download column: the Size column's link (a.tr-dl) already
+    // downloads the torrent, so we just style that existing link as a button
+    // instead of duplicating it in a separate cell.
+    const $sizeLink = $row.find('a.tr-dl').first();
+    if ($sizeLink.length) $sizeLink.addClass('pl-download-btn');
 
     const topicId = getTopicIdFromRow($row);
     const titleInfo = getTitleFromRow($row);

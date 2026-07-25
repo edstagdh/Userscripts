@@ -4,8 +4,13 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v1.2
+- Table view: preview thumbnails are now centered in their cell instead of left-aligned when narrower than the max thumbnail size.
+- Table view: removed the dedicated Download column — the existing Size column link already downloads the torrent, so it's now styled as the download button instead of duplicating it.
+- Table view: column headers (Forum, Topic, Uploader, Size, Added, and the S/L/C/private-torrent tooltips) are now translated to English.
+
 ## v1.1
-- Moved Changelog to external file hosted in GitHub.
+- Initial release: ported the [HF][EMP] Advanced Viewer Experience gallery/settings system to Pornolab.
 
 ## v1.0
 - Initial release: ported the [HF][EMP] Advanced Viewer Experience gallery/settings system to Pornolab.
