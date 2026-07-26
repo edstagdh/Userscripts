@@ -2,7 +2,7 @@
 // @name        [Pornolab] Advanced Viewer Experience
 // @description Adds a Grid/List toggle, image previews pulled from inside each topic, download buttons, forum & uploader blacklist/favorites with glow highlighting, and a settings panel to Pornolab's tracker search results.
 // @namespace   https://github.com/edstagdh/Userscripts
-// @version     1.2
+// @version     1.3
 // @author      edstagdh
 // @match       https://pornolab.net/forum/tracker.php*
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=pornolab.net
@@ -26,7 +26,7 @@ const LOG_PREFIX = '[PL-VIEWER]';
 // --------------------
 // VERSION / CHANGELOG
 // --------------------
-const SCRIPT_VERSION = '1.2';
+const SCRIPT_VERSION = '1.3';
 
 // Changelog is no longer stored inline (kept the script file lean) — it's fetched
 // on demand from this repo's CHANGELOG.md, either when the version changes or when
@@ -350,6 +350,10 @@ GM_addStyle(`
 #vcl-modal .vcl-ok-btn:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
 #vcl-modal .vcl-error { font-size: 11px; color: #c88; padding: 8px 0; }
 #vcl-modal .vcl-loading { font-size: 11px; color: #888; padding: 8px 0; }
+#vcl-modal .vcl-update-banner {
+    display: flex; align-items: center; gap: 8px; font-size: 11px; color: #f0d080;
+    background: #2e2810; border: 1px solid #6a5a1a; border-radius: 4px; padding: 8px 10px; margin-bottom: 14px;
+}
 `);
 
 // --------------------
@@ -1305,13 +1309,15 @@ function injectNavButtons() {
 
 // --------------------
 // CHANGELOG — fetched on demand from CHANGELOG.md (GitHub raw), not stored inline.
-// Expected file format (see CHANGELOG.md in the same repo folder):
+// Expected file format (see CHANGELOG.md in the same repo folder). IMPORTANT: newest
+// version must be listed FIRST — index-based "is a newer version available" checks
+// below rely on that ordering:
 //
-//   ## v1.1
+//   ## v1.2
 //   - Change one
 //   - Change two
 //
-//   ## v1.0
+//   ## v1.1
 //   - Change one
 //
 // Parsed into the same [{version, changes:[...]}] shape the popup renderer expects.
@@ -1333,6 +1339,25 @@ function parseChangelogMarkdown(md) {
         }
     });
     return entries.filter(e => e.changes.length);
+}
+
+// Finds the index of a given version within the parsed entries (newest-first order).
+// Returns -1 if the version isn't present (e.g. a dev/test build not yet released).
+function findVersionIndex(entries, version) {
+    for (let i = 0; i < entries.length; i++) {
+        if (entries[i].version === version) return i;
+    }
+    return -1;
+}
+
+// Returns the index of `version` within `entries`, assuming CHANGELOG.md lists the
+// newest version first. Index 0 = latest; a higher index = an older version.
+// Returns -1 if the version isn't present in the fetched changelog.
+function findChangelogIndexForVersion(entries, version) {
+    for (let i = 0; i < entries.length; i++) {
+        if (entries[i].version === version) return i;
+    }
+    return -1;
 }
 
 function fetchChangelog(callback) {
@@ -1357,16 +1382,19 @@ function fetchChangelog(callback) {
     });
 }
 
-function buildChangelogPopup(versionsToShow, errorMsg) {
+function buildChangelogPopup(versionsToShow, errorMsg, updateAvailableVersion) {
     jQuery('#vcl-backdrop').remove(); // in case a stale popup/loading state is still around
 
-    let bodyHtml;
+    let bodyHtml = '';
+    if (updateAvailableVersion) {
+        bodyHtml += `<div class="vcl-update-banner">&#128276; A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
+    }
     if (errorMsg) {
-        bodyHtml = `<div class="vcl-error">Couldn't load the changelog (${errorMsg}). You can view it directly on GitHub using the link below.</div>`;
+        bodyHtml += `<div class="vcl-error">Couldn't load the changelog (${errorMsg}). You can view it directly on GitHub using the link below.</div>`;
     } else if (!versionsToShow || !versionsToShow.length) {
-        bodyHtml = `<div class="vcl-error">No changelog entries found.</div>`;
+        bodyHtml += `<div class="vcl-error">No changelog entries found.</div>`;
     } else {
-        bodyHtml = versionsToShow.map(function (entry) {
+        bodyHtml += versionsToShow.map(function (entry) {
             const items = entry.changes.map(c => `<li>${c}</li>`).join('');
             return `<div class="vcl-version-block"><span class="vcl-version-label">v${entry.version}</span><ul class="vcl-changes">${items}</ul></div>`;
         }).join('');
@@ -1378,7 +1406,7 @@ function buildChangelogPopup(versionsToShow, errorMsg) {
             <div class="vcl-header">
                 <div class="vcl-header-left">
                     <h2>&#127381; What's New</h2>
-                    <span class="vcl-subtitle">[Pornolab] Advanced Viewer Experience &mdash; updated to v${SCRIPT_VERSION}</span>
+                    <span class="vcl-subtitle">[Pornolab] Advanced Viewer Experience &mdash; currently v${SCRIPT_VERSION}</span>
                 </div>
             </div>
             <div class="vcl-body">${bodyHtml}</div>
@@ -1405,23 +1433,40 @@ function checkVersionAndShowChangelog() {
     if (lastSeen === SCRIPT_VERSION) return;
     fetchChangelog(function (entries, err) {
         if (err) { buildChangelogPopup(null, err); return; }
+        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        // Only ever show changes up through the version actually running right now —
+        // entries above currentIdx belong to a newer release we haven't been updated to yet.
+        const availableEntries = currentIdx === -1 ? entries : entries.slice(currentIdx);
         let toShow;
         if (!lastSeen) {
-            toShow = entries.length ? [entries[0]] : [];
+            toShow = availableEntries.length ? [availableEntries[0]] : [];
         } else {
             toShow = [];
-            for (let i = 0; i < entries.length; i++) {
-                if (entries[i].version === lastSeen) break;
-                toShow.push(entries[i]);
+            for (let i = 0; i < availableEntries.length; i++) {
+                if (availableEntries[i].version === lastSeen) break;
+                toShow.push(availableEntries[i]);
             }
         }
         if (!toShow.length) { GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION); return; }
-        buildChangelogPopup(toShow, null);
+        // If the remote changelog has entries newer than what's installed (e.g. the
+        // GreasyFork/GitHub copy updated but this browser hasn't picked it up yet),
+        // surface that as an update notice rather than silently showing future changes.
+        const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+        buildChangelogPopup(toShow, null, updateAvailableVersion);
     });
 }
 function showFullChangelog() {
     fetchChangelog(function (entries, err) {
-        buildChangelogPopup(entries, err);
+        if (err) { buildChangelogPopup(null, err); return; }
+        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        if (currentIdx === -1) {
+            // Installed version isn't in the fetched changelog at all — show the latest
+            // entry as a best-effort fallback rather than nothing.
+            buildChangelogPopup(entries.length ? [entries[0]] : [], null, null);
+            return;
+        }
+        const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+        buildChangelogPopup([entries[currentIdx]], null, updateAvailableVersion);
     });
 }
 
