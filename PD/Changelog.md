@@ -4,6 +4,10 @@ Format: each version is a `## v<version> - <date>` heading followed by a bullet 
 of changes. The userscript parses this file directly, so keep that structure — one
 `##` heading per version (newest first), one `-` bullet per change entry.
 
+## v1.6 - 2026-07-26
+- Changelog popup now shows the current version in the subtitle and includes a "View on GitHub" link, matching the structure used across the other userscripts.
+- Renamed the Tampermonkey menu command to "Show Changelog" for consistency.
+
 ## v1.5 - 2026-07-26
 - Changelog moved out of the script into this file, fetched on demand instead of being bundled inline.
 - Manually opening "Version History / Changelog" now shows the entry for the version you're actually running, plus a notice if a newer version is available on GitHub.

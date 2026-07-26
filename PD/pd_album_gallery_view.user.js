@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [Pixeldrain] Gallery View
 // @namespace    https://github.com/edstagdh
-// @version      1.5
+// @version      1.6
 // @description  Adds a toggleable grid/table gallery view with modal lightbox and hover previews to pixeldrain list/album pages, launched from the sidebar.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
@@ -21,7 +21,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.5';
+    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.6';
     const LIST_ID = location.pathname.split('/').filter(Boolean).pop();
     const API_BASE = 'https://pixeldrain.com/api';
     const STORAGE_KEY_ACTIVE = 'pdg_view_active';
@@ -460,6 +460,18 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 12px;
+    }
+    .pdg-changelog-header-left {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 0;
+    }
+    .pdg-changelog-subtitle {
+        font-size: 12.5px;
+        color: #82889e;
+        font-weight: 500;
     }
     .pdg-changelog-header h2 {
         margin: 0;
@@ -528,8 +540,18 @@
         background: #1a1c23;
         border-top: 1px solid #333747;
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
     }
+    .pdg-changelog-github-link {
+        font-size: 13px;
+        color: #8b95f7;
+        text-decoration: none;
+        font-weight: 600;
+    }
+    .pdg-changelog-github-link:hover { text-decoration: underline; color: #a5aefa; }
     .pdg-changelog-btn {
         background: #5865f2;
         color: #fff;
@@ -1123,11 +1145,15 @@
         modal.innerHTML = `
             <div class="pdg-changelog-box">
                 <div class="pdg-changelog-header">
-                    <h2>📜 [Pixeldrain] Gallery View History</h2>
+                    <div class="pdg-changelog-header-left">
+                        <h2>📜 What's New</h2>
+                        <span class="pdg-changelog-subtitle">[Pixeldrain] Gallery View &mdash; currently v${SCRIPT_VERSION}</span>
+                    </div>
                     <button class="pdg-changelog-close" title="Close">&#10005;</button>
                 </div>
                 <div class="pdg-changelog-body" id="pdg-changelog-body-content"></div>
                 <div class="pdg-changelog-footer">
+                    <a class="pdg-changelog-github-link" href="https://github.com/edstagdh/Userscripts" target="_blank" rel="noopener noreferrer">&#128279; View on GitHub</a>
                     <button class="pdg-changelog-btn">Got it!</button>
                 </div>
             </div>
@@ -1182,6 +1208,8 @@
             if (err) { renderChangelogBody(null, err, null); return; }
             const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
             if (currentIdx === -1) {
+                // Installed version isn't in the fetched changelog — show the latest
+                // entry as a best-effort fallback rather than nothing.
                 renderChangelogBody(entries.length ? [entries[0]] : [], null, null);
                 return;
             }
@@ -1200,6 +1228,8 @@
         fetchChangelog((entries, err) => {
             if (err) return; // stay quiet on auto-check failures; the manual menu command still works
             const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+            // Only ever show changes up through the version actually running right now —
+            // entries above currentIdx belong to a newer release we haven't been updated to yet.
             const availableEntries = currentIdx === -1 ? entries : entries.slice(currentIdx);
             let toShow;
             if (!lastVersion) {
@@ -1333,7 +1363,7 @@
 
     // Register Userscript Menu Command
     if (typeof GM_registerMenuCommand !== 'undefined') {
-        GM_registerMenuCommand('📜 Version History / Changelog', () => showChangelogModal());
+        GM_registerMenuCommand('📋 Show Changelog', () => showChangelogModal());
     }
 
     init();
