@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [Pixeldrain] Gallery View
 // @namespace    https://github.com/edstagdh
-// @version      1.4
+// @version      1.5
 // @description  Adds a toggleable grid/table gallery view with modal lightbox and hover previews to pixeldrain list/album pages, launched from the sidebar.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
@@ -13,13 +13,15 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_info
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.1';
+    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.5';
     const LIST_ID = location.pathname.split('/').filter(Boolean).pop();
     const API_BASE = 'https://pixeldrain.com/api';
     const STORAGE_KEY_ACTIVE = 'pdg_view_active';
@@ -28,49 +30,8 @@
     const PREVIEW_BASE_SIZE = 200;
     const PREVIEW_MAX_SIZE = Math.round(PREVIEW_BASE_SIZE * (PREVIEW_SCALE_PERCENT / 100));
 
-    // ---------- version history ----------
-    const CHANGELOG = [
-        {
-            version: '1.4',
-            date: '2026-07-22',
-            changes: [
-                'Added Bypass logic.',
-            ]
-        },
-        {
-            version: '1.3',
-            date: '2026-07-20',
-            changes: [
-                'Removed single file links match.',
-            ]
-        },
-        {
-            version: '1.2',
-            date: '2026-07-20',
-            changes: [
-                'Removed redundant file size overlay on thumbnails.',
-                'Changed Hover Preview to apply only when hovering the thumbnails in both grid and table view.',
-                'Changed preview scale to 150%.'
-            ]
-        },
-        {
-            version: '1.1',
-            date: '2026-07-20',
-            changes: [
-                'Added Version History modal and automatic update detection.',
-                'Added item size, upload date, and view count to grid view cards.',
-                'Fixed text horizontal and vertical truncation in both Grid and Table views.',
-                'Added Tampermonkey menu command to manually view changelog anytime.'
-            ]
-        },
-        {
-            version: '1.0',
-            date: '2026-07-20',
-            changes: [
-                'Initial release with Grid & Table gallery views, lightbox modal, and hover previews.'
-            ]
-        }
-    ];
+    const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/PD/Changelog.md';
+    let changelogCache = null; // parsed [{version, date, changes:[...]}] once fetched this session
 
     let listData = null;
     let galleryEl = null;
@@ -580,6 +541,23 @@
         font-size: 14px;
     }
     .pdg-changelog-btn:hover { background: #4752c4; }
+    .pdg-changelog-loading, .pdg-changelog-error {
+        font-size: 14px;
+        color: #9aa0b4;
+        padding: 4px 0;
+    }
+    .pdg-changelog-error { color: #e0a0a0; }
+    .pdg-update-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13.5px;
+        color: #f0d080;
+        background: #2e2810;
+        border: 1px solid #6a5a1a;
+        border-radius: 8px;
+        padding: 10px 12px;
+    }
 
     #pdg-loading, #pdg-error {
         max-width: 1600px;
@@ -1089,22 +1067,58 @@
     }
 
     // ---------- changelog / version history modal ----------
+    function parseChangelogMarkdown(md) {
+        const lines = md.split(/\r?\n/);
+        const entries = [];
+        let current = null;
+        lines.forEach((line) => {
+            const headerMatch = line.match(/^##\s*v?([0-9][0-9.]*)\s*(?:-\s*(.+))?\s*$/i);
+            if (headerMatch) {
+                current = { version: headerMatch[1], date: (headerMatch[2] || '').trim(), changes: [] };
+                entries.push(current);
+                return;
+            }
+            const itemMatch = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+            if (itemMatch && current) {
+                current.changes.push(itemMatch[1]);
+            }
+        });
+        return entries.filter((e) => e.changes.length);
+    }
+
+    function findChangelogIndexForVersion(entries, version) {
+        for (let i = 0; i < entries.length; i++) {
+            if (entries[i].version === version) return i;
+        }
+        return -1;
+    }
+
+    function fetchChangelog(callback) {
+        if (changelogCache) { callback(changelogCache, null); return; }
+        if (typeof GM_xmlhttpRequest !== 'function') { callback(null, 'GM_xmlhttpRequest not available'); return; }
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: CHANGELOG_URL,
+            onload: (res) => {
+                if (res.status < 200 || res.status >= 300) { callback(null, 'HTTP ' + res.status); return; }
+                try {
+                    const parsed = parseChangelogMarkdown(res.responseText);
+                    changelogCache = parsed;
+                    callback(parsed, null);
+                } catch (e) {
+                    callback(null, 'Parse error: ' + e.message);
+                }
+            },
+            onerror: () => callback(null, 'Network error fetching changelog'),
+            ontimeout: () => callback(null, 'Timed out fetching changelog'),
+            timeout: 10000,
+        });
+    }
+
     function buildChangelogModal() {
         const modal = document.createElement('div');
         modal.id = 'pdg-changelog-modal';
         modal.className = 'pdg-hidden';
-
-        const historyHtml = CHANGELOG.map(item => `
-            <div class="pdg-version-block">
-                <div class="pdg-version-title">
-                    <span class="pdg-version-badge">v${item.version}</span>
-                    <span class="pdg-version-date">${item.date}</span>
-                </div>
-                <ul class="pdg-version-changes">
-                    ${item.changes.map(c => `<li>${c}</li>`).join('')}
-                </ul>
-            </div>
-        `).join('');
 
         modal.innerHTML = `
             <div class="pdg-changelog-box">
@@ -1112,9 +1126,7 @@
                     <h2>📜 [Pixeldrain] Gallery View History</h2>
                     <button class="pdg-changelog-close" title="Close">&#10005;</button>
                 </div>
-                <div class="pdg-changelog-body">
-                    ${historyHtml}
-                </div>
+                <div class="pdg-changelog-body" id="pdg-changelog-body-content"></div>
                 <div class="pdg-changelog-footer">
                     <button class="pdg-changelog-btn">Got it!</button>
                 </div>
@@ -1131,22 +1143,82 @@
         return modal;
     }
 
+    function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion) {
+        const body = changelogModalEl.querySelector('#pdg-changelog-body-content');
+        let html = '';
+        if (updateAvailableVersion) {
+            html += `<div class="pdg-update-banner">&#128276; A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
+        }
+        if (errorMsg) {
+            html += `<div class="pdg-changelog-error">Couldn't load the changelog (${errorMsg}). Check the GitHub repo directly for the latest version history.</div>`;
+        } else if (!versionsToShow || !versionsToShow.length) {
+            html += `<div class="pdg-changelog-error">No changelog entries found.</div>`;
+        } else {
+            html += versionsToShow.map((item) => `
+                <div class="pdg-version-block">
+                    <div class="pdg-version-title">
+                        <span class="pdg-version-badge">v${item.version}</span>
+                        ${item.date ? `<span class="pdg-version-date">${item.date}</span>` : ''}
+                    </div>
+                    <ul class="pdg-version-changes">
+                        ${item.changes.map((c) => `<li>${c}</li>`).join('')}
+                    </ul>
+                </div>
+            `).join('');
+        }
+        body.innerHTML = html;
+    }
+
     function showChangelogModal() {
         if (!changelogModalEl) {
             changelogModalEl = buildChangelogModal();
         }
         changelogModalEl.classList.remove('pdg-hidden');
+        renderChangelogBody(null, null, null);
+        changelogModalEl.querySelector('#pdg-changelog-body-content').innerHTML =
+            '<div class="pdg-changelog-loading">Loading changelog&hellip;</div>';
+
+        fetchChangelog((entries, err) => {
+            if (err) { renderChangelogBody(null, err, null); return; }
+            const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+            if (currentIdx === -1) {
+                renderChangelogBody(entries.length ? [entries[0]] : [], null, null);
+                return;
+            }
+            const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+            renderChangelogBody([entries[currentIdx]], null, updateAvailableVersion);
+        });
     }
 
     function checkVersionUpdate() {
         if (typeof GM_getValue === 'undefined' || typeof GM_setValue === 'undefined') return;
 
         const lastVersion = GM_getValue('pdg_last_version', null);
-        if (lastVersion !== SCRIPT_VERSION) {
-            GM_setValue('pdg_last_version', SCRIPT_VERSION);
-            // Show changelog automatically if updating from an older version
-            showChangelogModal();
-        }
+        if (lastVersion === SCRIPT_VERSION) return;
+        GM_setValue('pdg_last_version', SCRIPT_VERSION);
+
+        fetchChangelog((entries, err) => {
+            if (err) return; // stay quiet on auto-check failures; the manual menu command still works
+            const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+            const availableEntries = currentIdx === -1 ? entries : entries.slice(currentIdx);
+            let toShow;
+            if (!lastVersion) {
+                toShow = availableEntries.length ? [availableEntries[0]] : [];
+            } else {
+                toShow = [];
+                for (let i = 0; i < availableEntries.length; i++) {
+                    if (availableEntries[i].version === lastVersion) break;
+                    toShow.push(availableEntries[i]);
+                }
+                if (!toShow.length && availableEntries.length) toShow = [availableEntries[0]];
+            }
+            if (!toShow.length) return;
+            const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+
+            if (!changelogModalEl) changelogModalEl = buildChangelogModal();
+            changelogModalEl.classList.remove('pdg-hidden');
+            renderChangelogBody(toShow, null, updateAvailableVersion);
+        });
     }
 
     // ---------- toggle / sidebar injection ----------

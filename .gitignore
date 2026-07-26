@@ -4,3 +4,4 @@ config*.json
 !/.pixeldrain_D_folder_bypasser.js
 
 !/.pixeldrain_L_folder_bypasser.js
+!/SC/*
