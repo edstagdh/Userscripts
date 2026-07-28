@@ -2268,7 +2268,7 @@ function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion, h
         }).join('');
 
         if (hasMore) {
-            html += `<div class="vcl-changelog-more">Showing the ${versionsToShow.length} most recent versions &mdash; <a href="https://github.com/edstagdh/Userscripts/blob/master/EMP_HF/AVE_Changlog.md" target="_blank">see full version history on GitHub</a>.</div>`;
+            html += `<div class="vcl-changelog-more">Showing the ${versionsToShow.length} most recent versions &mdash; <a href="${CHANGELOG_URL}" target="_blank">see full version history on GitHub</a>.</div>`;
         }
     }
     jQuery('#vcl-body-content').html(html);
