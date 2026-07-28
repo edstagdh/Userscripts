@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     3.0
+// @version     3.1
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -37,6 +37,9 @@
 // @grant       GM_addStyle
 // @grant       GM_setValue
 // @grant       GM_getValue
+// @grant       GM_xmlhttpRequest
+// @grant       GM_registerMenuCommand
+// @connect     raw.githubusercontent.com
 // ==/UserScript==
 
 
@@ -49,86 +52,10 @@ const USER_SEARCH_COOLDOWN_MS = 30 * 1000;
 let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
-// Entries are newest-first. Add a new entry here with every release.
 // --------------------
-const SCRIPT_VERSION = '3.0';
-const VERSION_HISTORY = [
-    {
-        version: '3.0',
-        changes: [
-            'Fixed small issue with gallery grid view when hovering on cards title on the bottom right corner of the viewport.',
-        ],
-    },
-        {
-        version: '2.9',
-        changes: [
-            'Added version number to settings menu header.',
-        ],
-    },
-        {
-        version: '2.8',
-        changes: [
-            'Changed font size of title in cards in Gallery View.',
-            'Added Dark Mode toggle to Gallery View cards, Enabled by default.',
-        ],
-    },
-        {
-        version: '2.7',
-        changes: [
-            'Added Favorite Tags list: rows/cards whose tags include any favorite tag glow in a custom color.',
-            'Glow color is configurable from a palette of 9 glow-friendly colors (gold, cyan, green, pink, purple, orange, red, teal, white) in Viewer Settings.',
-            'New setting: Tag Click Action — choose whether clicking a tag chip in the Tags popup blacklists it(default behavior) or adds it to favorites. The popup shows a hint and three chip states: red=blacklisted, gold=favorite, grey=neutral.',
-            'Tags are mutually exclusive between blacklist and favorites — adding to one removes from the other.',
-            'Gallery cards now always show the uploader name, even on pages with no dedicated uploader column (collage, notifications), extracted from the torrent overlay data.',
-            'Added guard: "anon" can never be blacklisted or blocked as an uploader.',
-            'Username Link: in pages where no uploader name is displayed, the hyperlink to the uploader profile page will have cooldown.',
-        ],
-    },
-    {
-        version: '2.6',
-        changes: [
-            'Added Uploader Blacklist: uploads from blacklisted uploaders will be hidden in both list and grid view.',
-            'Gallery grid card footer: uploader name shows a ⛔ block button on hover. Click it to instantly blacklist that uploader.',
-            'Table list view (pages with an uploader column): a ⛔ block button appears next to each uploader name.',
-            'Uploader names extracted from the overlay script on pages without a dedicated uploader column (collage, notifications) so blocking works everywhere.',
-            'New Uploader Blacklist section in Viewer Settings: manually add usernames, remove via chips, or clear all.',
-        ],
-    },
-    {
-        version: '2.5',
-        changes: [
-            'Added Tag Blacklist feature: rows whose tags match any blacklisted tag are hidden in both list and grid view. Blacklist data is stored persistently via GM_setValue and is saved across configured domains.',
-            'Added Tags hover button in gallery cards: hovering shows a popup of all tags for that torrent. Clicking a tag name chip in the popup toggles its blacklist state and refreshes the results for that page.',
-            'Added Tag Blacklist section in Viewer Settings: add/remove tags, clear all, live chip editor. Controls are disabled with a note on pages with no tags, meaning this feature requires tags to be enabled in settings.',
-            'Download and Tags buttons now share the same button row in gallery cards.',
-            'Added change log notice on updates.',
-        ],
-    },
-    {
-        version: '2.4',
-        changes: [
-            'Fixed missing/invalid categories on items in userhistory.php (subscribed collages) for both list and grid mode.',
-            'Added blue Download button in gallery cards (separate from the icon that can be obscured by the thumbnail).',
-            'Fixed top10.php grid view which showed incorrect data values in cards.',
-        ],
-    },
-    {
-        version: '2.3',
-        changes: [
-            'Fixed gallery column mapping for torrents.php?action=notify (leading checkbox column was shifting cat/title offsets).',
-            'Fixed gallery showing only the first filter group on the notify page (now renders one grid per filter group).',
-            'Fixed gallery column mapping for requests.php (votes, bounty, filled status now display correctly).',
-            'Gallery grid container changed from ID to class so multiple grids can coexist on one page.',
-        ],
-    },
-    {
-        version: '2.2',
-        changes: [
-            'Added quick-edit Viewer Settings button next to username in the nav bar.',
-            'Renamed script, updated namespace, added installURL, updated domain URLs.',
-        ],
-    },
-];
+const SCRIPT_VERSION = '3.1';
+const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/AVE_Changelog.md';
+let changelogCache = null;
 
 // --------------------
 // CONFIG DEFAULTS
@@ -833,8 +760,19 @@ GM_addStyle(`
     transition: background 0.15s, color 0.15s; letter-spacing: 0.03em;
 }
 #vcl-modal .vcl-ok-btn:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
-`);
 
+#vcl-modal .vcl-update-banner {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #f0d080;
+    background: #2e2810; border: 1px solid #6a5a1a;
+    border-radius: 8px; padding: 8px 10px; margin-bottom: 14px;
+}
+#vcl-modal .vcl-changelog-loading, #vcl-modal .vcl-changelog-error {
+    font-size: 12px; color: #999; padding: 4px 0;
+}
+#vcl-modal .vcl-changelog-error { color: #d09090; }
+#vcl-modal .vcl-version-date { font-size: 10px; color: #777; margin-left: 8px; }
+`);
 // --------------------
 // SETTINGS OVERLAY — BUILD & INJECT
 // --------------------
@@ -2270,16 +2208,11 @@ function showTagsPopup($btn, tags) {
 // --------------------
 // CHANGELOG POPUP
 // --------------------
-function buildChangelogPopup(versionsToShow) {
-    // Build version blocks HTML
-    const blocksHtml = versionsToShow.map(function (entry) {
-        const items = entry.changes.map(c => `<li>${c}</li>`).join('');
-        return `
-        <div class="vcl-version-block">
-            <span class="vcl-version-label">v${entry.version}</span>
-            <ul class="vcl-changes">${items}</ul>
-        </div>`;
-    }).join('');
+let changelogModalBuilt = false;
+
+function ensureChangelogModal() {
+    if (changelogModalBuilt) return;
+    changelogModalBuilt = true;
 
     const html = `
     <div id="vcl-backdrop">
@@ -2287,10 +2220,10 @@ function buildChangelogPopup(versionsToShow) {
             <div class="vcl-header">
                 <div class="vcl-header-left">
                     <h2>&#127381; What's New</h2>
-                    <span class="vcl-subtitle">[HF][EMP] Advanced Viewer Experience &mdash; updated to v${SCRIPT_VERSION}</span>
+                    <span class="vcl-subtitle">[HF][EMP] Advanced Viewer Experience &mdash; currently v${SCRIPT_VERSION}</span>
                 </div>
             </div>
-            <div class="vcl-body">${blocksHtml}</div>
+            <div class="vcl-body" id="vcl-body-content"></div>
             <div class="vcl-footer">
                 <a class="vcl-github-link" href="https://github.com/edstagdh/Userscripts" target="_blank">
                     &#128279; View on GitHub
@@ -2305,42 +2238,129 @@ function buildChangelogPopup(versionsToShow) {
     jQuery('#vcl-backdrop').on('click', function (e) { if (e.target === this) dismissChangelog(); });
     jQuery('#vcl-ok-btn').on('click', dismissChangelog);
     jQuery(document).on('keydown.vcl', function (e) { if (e.key === 'Escape') dismissChangelog(); });
+}
 
-    // Show
-    jQuery('#vcl-backdrop').addClass('active');
+function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion) {
+    let html = '';
+    if (updateAvailableVersion) {
+        html += `<div class="vcl-update-banner">&#128276; A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
+    }
+    if (errorMsg) {
+        html += `<div class="vcl-changelog-error">Couldn't load the changelog (${errorMsg}). Check the GitHub repo directly for the latest version history.</div>`;
+    } else if (!versionsToShow || !versionsToShow.length) {
+        html += `<div class="vcl-changelog-error">No changelog entries found.</div>`;
+    } else {
+        html += versionsToShow.map((entry) => {
+            const items = entry.changes.map(c => `<li>${c}</li>`).join('');
+            return `
+            <div class="vcl-version-block">
+                <span class="vcl-version-label">v${entry.version}</span>
+                ${entry.date ? `<span class="vcl-version-date">${entry.date}</span>` : ''}
+                <ul class="vcl-changes">${items}</ul>
+            </div>`;
+        }).join('');
+    }
+    jQuery('#vcl-body-content').html(html);
 }
 
 function dismissChangelog() {
     jQuery('#vcl-backdrop').removeClass('active');
-    GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION);
     jQuery(document).off('keydown.vcl');
+}
+function showChangelogModal() {
+    ensureChangelogModal();
+    jQuery('#vcl-backdrop').addClass('active');
+    jQuery('#vcl-body-content').html('<div class="vcl-changelog-loading">Loading changelog&hellip;</div>');
+
+    fetchChangelog((entries, err) => {
+        if (err) { renderChangelogBody(null, err, null); return; }
+        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        if (currentIdx === -1) {
+            renderChangelogBody(entries.length ? [entries[0]] : [], null, null);
+            return;
+        }
+        const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+        renderChangelogBody([entries[currentIdx]], null, updateAvailableVersion);
+    });
 }
 
 function checkVersionAndShowChangelog() {
     const lastSeen = GM_getValue('LAST_SEEN_VERSION', '');
-    if (lastSeen === SCRIPT_VERSION) return; // already seen this version
+    if (lastSeen === SCRIPT_VERSION) return;
+    GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION);
 
-    // Collect all versions newer than lastSeen (VERSION_HISTORY is newest-first)
-    const toShow = [];
-    for (let i = 0; i < VERSION_HISTORY.length; i++) {
-        if (VERSION_HISTORY[i].version === lastSeen) break; // stop at last seen
-        toShow.push(VERSION_HISTORY[i]);
-    }
+    fetchChangelog((entries, err) => {
+        if (err) return; // stay quiet on auto-check failures; menu command still works
 
-    // First-ever install (lastSeen === '') — only show the current version
-    if (!lastSeen) {
-        toShow.length = 0;
-        toShow.push(VERSION_HISTORY[0]);
-    }
+        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        const availableEntries = currentIdx === -1 ? entries : entries.slice(currentIdx);
 
-    if (!toShow.length) {
-        GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION);
-        return;
-    }
+        let toShow;
+        if (!lastSeen) {
+            toShow = availableEntries.length ? [availableEntries[0]] : [];
+        } else {
+            toShow = [];
+            for (let i = 0; i < availableEntries.length; i++) {
+                if (availableEntries[i].version === lastSeen) break;
+                toShow.push(availableEntries[i]);
+            }
+            if (!toShow.length && availableEntries.length) toShow = [availableEntries[0]];
+        }
+        if (!toShow.length) return;
 
-    buildChangelogPopup(toShow);
+        const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+
+        ensureChangelogModal();
+        jQuery('#vcl-backdrop').addClass('active');
+        renderChangelogBody(toShow, null, updateAvailableVersion);
+    });
 }
 
+function parseChangelogMarkdown(md) {
+    const lines = md.split(/\r?\n/);
+    const entries = [];
+    let current = null;
+    lines.forEach((line) => {
+        const headerMatch = line.match(/^##\s*v?([0-9][0-9.]*)\s*(?:-\s*(.+))?\s*$/i);
+        if (headerMatch) {
+            current = { version: headerMatch[1], date: (headerMatch[2] || '').trim(), changes: [] };
+            entries.push(current);
+            return;
+        }
+        const itemMatch = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+        if (itemMatch && current) current.changes.push(itemMatch[1]);
+    });
+    return entries.filter((e) => e.changes.length);
+}
+
+function findChangelogIndexForVersion(entries, version) {
+    for (let i = 0; i < entries.length; i++) {
+        if (entries[i].version === version) return i;
+    }
+    return -1;
+}
+
+function fetchChangelog(callback) {
+    if (changelogCache) { callback(changelogCache, null); return; }
+    if (typeof GM_xmlhttpRequest !== 'function') { callback(null, 'GM_xmlhttpRequest not available'); return; }
+    GM_xmlhttpRequest({
+        method: 'GET',
+        url: CHANGELOG_URL,
+        onload: (res) => {
+            if (res.status < 200 || res.status >= 300) { callback(null, 'HTTP ' + res.status); return; }
+            try {
+                const parsed = parseChangelogMarkdown(res.responseText);
+                changelogCache = parsed;
+                callback(parsed, null);
+            } catch (e) {
+                callback(null, 'Parse error: ' + e.message);
+            }
+        },
+        onerror: () => callback(null, 'Network error fetching changelog'),
+        ontimeout: () => callback(null, 'Timed out fetching changelog'),
+        timeout: 10000,
+    });
+}
 // --------------------
 // SUBSCRIBED COLLAGES — CATEGORY FETCH HELPERS
 // --------------------
@@ -2648,6 +2668,10 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
 // --------------------
 (function init() {
     buildSettingsOverlay();
+
+    if (typeof GM_registerMenuCommand !== 'undefined') {
+        GM_registerMenuCommand('📋 Show Changelog', () => showChangelogModal());
+    }
 
     jQuery(document).ready(function () {
         injectNavButton();
