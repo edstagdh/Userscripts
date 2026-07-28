@@ -4,6 +4,9 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.2 - 2026-07-28
+- Fixed Manual "Show Changelog" menu.
+
 ## v3.1 - 2026-07-28
 - Split Changelog into external file. 
 

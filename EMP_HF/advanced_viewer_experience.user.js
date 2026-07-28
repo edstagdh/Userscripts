@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     3.1
+// @version     3.2
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -53,9 +53,10 @@ let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
 // --------------------
-const SCRIPT_VERSION = '3.1';
+const SCRIPT_VERSION = '3.2';
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/AVE_Changelog.md';
 let changelogCache = null;
+const CHANGELOG_HISTORY_DEPTH = 3; // how many versions to show in the manual "Show Changelog" view
 
 // --------------------
 // CONFIG DEFAULTS
@@ -772,6 +773,12 @@ GM_addStyle(`
 }
 #vcl-modal .vcl-changelog-error { color: #d09090; }
 #vcl-modal .vcl-version-date { font-size: 10px; color: #777; margin-left: 8px; }
+#vcl-modal .vcl-changelog-more {
+    font-size: 11px; color: #777; padding: 10px 0 2px;
+    border-top: 1px solid #2a2a2a; margin-top: 4px;
+}
+#vcl-modal .vcl-changelog-more a { color: #5a7a9a; text-decoration: none; }
+#vcl-modal .vcl-changelog-more a:hover { color: #7aa0c8; text-decoration: underline; }
 `);
 // --------------------
 // SETTINGS OVERLAY — BUILD & INJECT
@@ -2240,7 +2247,7 @@ function ensureChangelogModal() {
     jQuery(document).on('keydown.vcl', function (e) { if (e.key === 'Escape') dismissChangelog(); });
 }
 
-function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion) {
+function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion, hasMore) {
     let html = '';
     if (updateAvailableVersion) {
         html += `<div class="vcl-update-banner">&#128276; A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
@@ -2259,6 +2266,10 @@ function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion) {
                 <ul class="vcl-changes">${items}</ul>
             </div>`;
         }).join('');
+
+        if (hasMore) {
+            html += `<div class="vcl-changelog-more">Showing the ${versionsToShow.length} most recent versions &mdash; <a href="https://github.com/edstagdh/Userscripts/blob/master/EMP_HF/AVE_Changlog.md" target="_blank">see full version history on GitHub</a>.</div>`;
+        }
     }
     jQuery('#vcl-body-content').html(html);
 }
@@ -2274,13 +2285,16 @@ function showChangelogModal() {
 
     fetchChangelog((entries, err) => {
         if (err) { renderChangelogBody(null, err, null); return; }
+
         const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
-        if (currentIdx === -1) {
-            renderChangelogBody(entries.length ? [entries[0]] : [], null, null);
-            return;
-        }
         const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
-        renderChangelogBody([entries[currentIdx]], null, updateAvailableVersion);
+
+        // Start from the installed version if we can find it, otherwise from the top
+        const startIdx = currentIdx === -1 ? 0 : currentIdx;
+        const toShow = entries.slice(startIdx, startIdx + CHANGELOG_HISTORY_DEPTH);
+        const hasMore = entries.length > startIdx + CHANGELOG_HISTORY_DEPTH;
+
+        renderChangelogBody(toShow, null, updateAvailableVersion, hasMore);
     });
 }
 
