@@ -1,40 +1,217 @@
 // ==UserScript==
 // @name         [HF][EMP] Advanced Better filelist
-// @version      1.1
+// @version      1.4
 // @description  inspired by original script by ephraim
-// @author       edstagdh + others
+// @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
 // @match        https://www.empornium.sx/torrents.php?id=*
 // @match        https://emparadise.rs/torrents.php?id=*
-// @match        https://www.homeporntorrents.club/torrents.php?id=*
-// @match        https://femdomcult.org/torrents.php?id=*
-// @match        https://sextorrent.eu/torrents.php?id=*
-// @match        https://kufirc.com/torrents.php?id=*
-// @match        https://pornbay.org/torrents.php?id=*
 // @match        https://www.happyfappy.net/torrents.php?id=*
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @grant        GM_info
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_better_filelist.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_better_filelist.user.js
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
-// @icon         https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // ==/UserScript==
-
-// CHANGELOG
-// v1.1:
-// -replaced the view filelist action link with a more visible button and added space between the "[Mass PM Snatchers]" to it.
-// v1.0:
-// -added case-sensitive search button, toggle.
-// -added multi keyword based search logic button, toggle.
-// -added file size filter, text based.
-// -added file types filter, toggle.
-// -added filename search link to filename on site, toggle.
 
 var urlMap = {};
 var multiKeywordMode = false;
 var caseSensitive = false;
 var clickSearchMode = false;
 var hiddenFileTypes = new Set();
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+// Simple on/off flags for optional features. Defaults live here; if GM_getValue
+// / GM_setValue are available (they are, per the @grant lines above) the actual
+// value is persisted and can be flipped live via the Tampermonkey menu (the
+// little script-manager icon in the browser toolbar → script commands), no
+// code editing required. Toggling reloads the page so the change takes effect.
+
+var DEFAULT_SETTINGS = {
+    tagColumnsEnabled: false, // off by default — moves the tag list into the middle column and lays it out in columns
+};
+var SETTINGS_KEY_PREFIX = 'abf_setting_';
+
+function getSetting(name) {
+    if (typeof GM_getValue === 'undefined') return DEFAULT_SETTINGS[name];
+    return GM_getValue(SETTINGS_KEY_PREFIX + name, DEFAULT_SETTINGS[name]);
+}
+
+function setSetting(name, value) {
+    if (typeof GM_setValue === 'undefined') return;
+    GM_setValue(SETTINGS_KEY_PREFIX + name, value);
+}
+
+// ── Changelog / "What's New" ────────────────────────────────────────────────
+
+const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.4';
+
+const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/ABF_Changelog.md';
+var changelogCache = null; // parsed [{version, date, changes:[...]}] once fetched this session
+var changelogModalEl = null;
+
+function parseChangelogMarkdown(md) {
+    var lines = md.split(/\r?\n/);
+    var entries = [];
+    var current = null;
+    lines.forEach(line => {
+        var headerMatch = line.match(/^##\s*v?([0-9][0-9.]*)\s*(?:-\s*(.+))?\s*$/i);
+        if (headerMatch) {
+            current = { version: headerMatch[1], date: (headerMatch[2] || '').trim(), changes: [] };
+            entries.push(current);
+            return;
+        }
+        var itemMatch = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+        if (itemMatch && current) {
+            current.changes.push(itemMatch[1]);
+        }
+    });
+    return entries.filter(e => e.changes.length);
+}
+
+function findChangelogIndexForVersion(entries, version) {
+    for (var i = 0; i < entries.length; i++) {
+        if (entries[i].version === version) return i;
+    }
+    return -1;
+}
+
+function fetchChangelog(callback) {
+    if (changelogCache) { callback(changelogCache, null); return; }
+    if (typeof GM_xmlhttpRequest !== 'function') { callback(null, 'GM_xmlhttpRequest not available'); return; }
+    GM_xmlhttpRequest({
+        method: 'GET',
+        url: CHANGELOG_URL,
+        onload: function (res) {
+            if (res.status < 200 || res.status >= 300) { callback(null, 'HTTP ' + res.status); return; }
+            try {
+                var parsed = parseChangelogMarkdown(res.responseText);
+                changelogCache = parsed;
+                callback(parsed, null);
+            } catch (e) {
+                callback(null, 'Parse error: ' + e.message);
+            }
+        },
+        onerror: function () { callback(null, 'Network error fetching changelog'); },
+        ontimeout: function () { callback(null, 'Timed out fetching changelog'); },
+        timeout: 10000,
+    });
+}
+
+function buildChangelogModal() {
+    var modal = ce('div', 'abf_changelog_modal hidden');
+    modal.innerHTML = `
+        <div class="abf_changelog_box">
+            <div class="abf_changelog_header">
+                <div class="abf_changelog_header_left">
+                    <h2>📜 What's New</h2>
+                    <span class="abf_changelog_subtitle">Advanced Better filelist &mdash; currently v${SCRIPT_VERSION}</span>
+                </div>
+                <button type="button" class="abf_changelog_close" title="Close">✕</button>
+            </div>
+            <div class="abf_changelog_body" id="abf_changelog_body_content"></div>
+            <div class="abf_changelog_footer">
+                <a class="abf_changelog_github_link" href="https://github.com/edstagdh/Userscripts" target="_blank" rel="noopener noreferrer">🔗 View on GitHub</a>
+                <button type="button" class="abf_changelog_btn">Got it!</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    var closeFn = () => modal.classList.add('hidden');
+    modal.querySelector('.abf_changelog_close').addEventListener('click', closeFn);
+    modal.querySelector('.abf_changelog_btn').addEventListener('click', closeFn);
+    modal.addEventListener('click', e => { if (e.target === modal) closeFn(); });
+
+    return modal;
+}
+
+function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion) {
+    var body = changelogModalEl.querySelector('#abf_changelog_body_content');
+    var html = '';
+    if (updateAvailableVersion) {
+        html += `<div class="abf_update_banner">🔔 A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
+    }
+    if (errorMsg) {
+        html += `<div class="abf_changelog_error">Couldn't load the changelog (${errorMsg}). Check the GitHub repo directly for the latest version history.</div>`;
+    } else if (!versionsToShow || !versionsToShow.length) {
+        html += `<div class="abf_changelog_error">No changelog entries found.</div>`;
+    } else {
+        html += versionsToShow.map(item => `
+            <div class="abf_version_block">
+                <div class="abf_version_title">
+                    <span class="abf_version_badge">v${item.version}</span>
+                    ${item.date ? `<span class="abf_version_date">${item.date}</span>` : ''}
+                </div>
+                <ul class="abf_version_changes">
+                    ${item.changes.map(c => `<li>${c}</li>`).join('')}
+                </ul>
+            </div>
+        `).join('');
+    }
+    body.innerHTML = html;
+}
+
+function showChangelogModal() {
+    if (!changelogModalEl) {
+        changelogModalEl = buildChangelogModal();
+    }
+    changelogModalEl.classList.remove('hidden');
+    changelogModalEl.querySelector('#abf_changelog_body_content').innerHTML =
+        '<div class="abf_changelog_loading">Loading changelog&hellip;</div>';
+
+    fetchChangelog((entries, err) => {
+        if (err) { renderChangelogBody(null, err, null); return; }
+        var currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        if (currentIdx === -1) {
+            // Installed version isn't in the fetched changelog — show the latest
+            // entry as a best-effort fallback rather than nothing.
+            renderChangelogBody(entries.length ? [entries[0]] : [], null, null);
+            return;
+        }
+        var updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+        renderChangelogBody([entries[currentIdx]], null, updateAvailableVersion);
+    });
+}
+
+function checkVersionUpdate() {
+    if (typeof GM_getValue === 'undefined' || typeof GM_setValue === 'undefined') return;
+
+    var lastVersion = GM_getValue('abf_last_version', null);
+    if (lastVersion === SCRIPT_VERSION) return;
+    GM_setValue('abf_last_version', SCRIPT_VERSION);
+
+    fetchChangelog((entries, err) => {
+        if (err) return; // stay quiet on auto-check failures; the manual menu command still works
+        var currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        // Only ever show changes up through the version actually running right now —
+        // entries above currentIdx belong to a newer release we haven't been updated to yet.
+        var availableEntries = currentIdx === -1 ? entries : entries.slice(currentIdx);
+        var toShow;
+        if (!lastVersion) {
+            toShow = availableEntries.length ? [availableEntries[0]] : [];
+        } else {
+            toShow = [];
+            for (var i = 0; i < availableEntries.length; i++) {
+                if (availableEntries[i].version === lastVersion) break;
+                toShow.push(availableEntries[i]);
+            }
+            if (!toShow.length && availableEntries.length) toShow = [availableEntries[0]];
+        }
+        if (!toShow.length) return;
+        var updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+
+        if (!changelogModalEl) changelogModalEl = buildChangelogModal();
+        changelogModalEl.classList.remove('hidden');
+        renderChangelogBody(toShow, null, updateAvailableVersion);
+    });
+}
 
 const combinedPattern = new RegExp(
     '(?:_?(?:thumb|screen|preview|s)s?)?\.(?:jpg|jpeg|webp|bmp|png|gif|mp4|avi|m4v|mpg|mpeg|mkv|mov|wmv|flv|vob)', 'ig');
@@ -485,6 +662,7 @@ function list2Tree() {
     var sizeFilterInput = ce('input', 'header_size_filter');
     var typesToggle = ce('button', 'header_types_toggle');
     var searchToggle = ce('button', 'header_search_toggle');
+    var changelogToggle = ce('button', 'header_changelog_toggle');
 
     var allTypes = collectFileTypes(root, new Set());
     var typesPanel = buildTypePanel(allTypes);
@@ -521,6 +699,11 @@ function list2Tree() {
         document.querySelector('.tree_container')?.classList.toggle('click_search_mode', clickSearchMode);
     });
 
+    changelogToggle.type = 'button';
+    changelogToggle.title = "Show changelog / what's new";
+    changelogToggle.innerText = '📜';
+    changelogToggle.addEventListener('click', () => showChangelogModal());
+
     expand.text = '(📁Expand all)';
     expand.href = '#';
     expand.title = 'Expand all folders';
@@ -539,7 +722,7 @@ function list2Tree() {
     sizeFilterInput.addEventListener('input', applyFilters);
     sizeFilterInput.addEventListener('keyup', clearFilter);
 
-    tools.append(expand, multiToggle, caseToggle, filterInput, sizeFilterInput, typesToggle, searchToggle);
+    tools.append(expand, multiToggle, caseToggle, filterInput, sizeFilterInput, typesToggle, searchToggle, changelogToggle);
 
     var headerLeft = ce('span', 'header_left');
     var headerRight = ce('span', 'header_right');
@@ -777,7 +960,8 @@ treeStyle.innerHTML = `
 .header_multi_toggle,
 .header_case_toggle,
 .header_types_toggle,
-.header_search_toggle {
+.header_search_toggle,
+.header_changelog_toggle {
     border: 1px solid #4a6080;
     border-radius: 4px;
     background: #29374F;
@@ -792,7 +976,8 @@ treeStyle.innerHTML = `
 .header_multi_toggle:hover,
 .header_case_toggle:hover,
 .header_types_toggle:hover,
-.header_search_toggle:hover {
+.header_search_toggle:hover,
+.header_changelog_toggle:hover {
     background: #354a68;
     color: #bcd;
 }
@@ -973,4 +1158,260 @@ treeStyle.innerHTML = `
 .file_type_wmv {
     color: #694d00;
 }
+
+/* changelog / "What's New" modal */
+.abf_changelog_modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100055;
+    background: rgba(8, 9, 13, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.abf_changelog_modal.hidden {
+    display: none;
+}
+.abf_changelog_box {
+    background: #1e2b3e;
+    border: 1px solid #3a5070;
+    border-radius: 10px;
+    width: 100%;
+    max-width: 480px;
+    max-height: 78vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+    overflow: hidden;
+    color: #bcd;
+    font-family: inherit;
+}
+.abf_changelog_header {
+    padding: 14px 18px;
+    background: #29374F;
+    border-bottom: 1px solid #3a5070;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.abf_changelog_header_left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.abf_changelog_subtitle {
+    font-size: 9pt;
+    color: #89a0b8;
+}
+.abf_changelog_header h2 {
+    margin: 0;
+    font-size: 13pt;
+    color: #dce6f2;
+}
+.abf_changelog_close {
+    background: transparent;
+    border: none;
+    color: #89a0b8;
+    font-size: 14pt;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+.abf_changelog_close:hover {
+    color: #fff;
+}
+.abf_changelog_body {
+    padding: 16px 18px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.abf_version_block {
+    border-bottom: 1px solid #29374F;
+    padding-bottom: 10px;
+}
+.abf_version_block:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.abf_version_title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.abf_version_badge {
+    background: #1a4a7a;
+    color: #7ecfff;
+    border: 1px solid #4a9fd4;
+    font-size: 8pt;
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-weight: bold;
+}
+.abf_version_date {
+    font-size: 8pt;
+    color: #89a0b8;
+}
+.abf_version_changes {
+    margin: 0;
+    padding-left: 16px;
+    font-size: 9pt;
+    color: #bcd;
+    line-height: 1.5;
+}
+.abf_changelog_footer {
+    padding: 10px 18px;
+    background: #182335;
+    border-top: 1px solid #3a5070;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.abf_changelog_github_link {
+    font-size: 8pt;
+    color: #7ecfff;
+    text-decoration: none;
+    font-weight: bold;
+}
+.abf_changelog_github_link:hover {
+    text-decoration: underline;
+}
+.abf_changelog_btn {
+    background: #1a4a7a;
+    color: #7ecfff;
+    border: 1px solid #4a9fd4;
+    padding: 5px 14px;
+    border-radius: 5px;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 8pt;
+}
+.abf_changelog_btn:hover {
+    background: #234f83;
+}
+.abf_changelog_loading,
+.abf_changelog_error {
+    font-size: 9pt;
+    color: #89a0b8;
+    padding: 4px 0;
+}
+.abf_changelog_error {
+    color: #e0a0a0;
+}
+.abf_update_banner {
+    font-size: 8.5pt;
+    color: #f0d080;
+    background: #2e2810;
+    border: 1px solid #6a5a1a;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
 `;
+
+
+// ── Tag list columns ────────────────────────────────────────────────────────
+// Moves the tag list into the middle column and lays it out in columns
+// instead of a single vertical list. Re-applies itself whenever the tag
+// list is replaced (e.g. after voting on or adding a tag).
+
+var tagMinRowsPerColumn = 5;
+var tagColumns = 5;
+
+function makeTagColumns() {
+    var tagListEl = document.getElementById('torrent_tags_list');
+    if (!tagListEl) return;
+    tagListEl.classList.add('tag_list');
+    for (var tagLi of tagListEl.children) {
+        tagLi.classList.add('tag_item');
+    }
+    var cols = Math.min(Math.round(tagListEl.children.length / tagMinRowsPerColumn), tagColumns);
+    tagListEl.style.columnCount = cols;
+}
+
+function initTagColumns() {
+    var tagContainer = document.getElementById('tag_container');
+    if (!tagContainer) return; // torrent has no tags / no tag panel on this page
+
+    var middleColumn = document.getElementsByClassName('middle_column')[0];
+    var sidebar = document.querySelector('.sidebar');
+    if (!middleColumn || !sidebar) return;
+
+    var coverImage = document.getElementById('coverimage');
+    var sidebarHeads = sidebar.querySelectorAll('.head');
+    if (!sidebarHeads.length) return;
+    var tagHeader = coverImage === null ? sidebarHeads[0] : sidebarHeads[1];
+    if (!tagHeader) return;
+
+    var tagStyle = ce('style');
+    document.head.append(tagStyle);
+    tagStyle.innerHTML = `
+ul.tag_list {
+    margin: 15px;
+}
+
+li.tag_item {
+    margin: 1px 0px 3px 0px;
+    overflow: hidden;
+    max-width: 420px;
+}
+
+li.tag_item > a {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 410px;
+}
+
+a[title^="Vote up tag"] + span {
+    display: none;
+}
+
+#torrent_tags_list {
+    column-width: 180px;
+    column-count: 5;
+    display: inline-block;
+}
+`;
+
+    middleColumn.appendChild(tagContainer);
+    middleColumn.insertBefore(tagHeader, tagContainer);
+
+    makeTagColumns();
+
+    // After adding/voting on a tag the whole list is re-rendered by the site,
+    // so the column classes need to be re-applied.
+    var torrentTags = document.getElementById('torrent_tags');
+    if (torrentTags) {
+        var tagsObserver = new MutationObserver(() => makeTagColumns());
+        tagsObserver.observe(torrentTags, { childList: true, subtree: true });
+    }
+}
+
+if (getSetting('tagColumnsEnabled')) {
+    initTagColumns();
+}
+
+
+// ── Changelog: menu command + auto "what's new" check ─────────────────────────
+
+if (typeof GM_registerMenuCommand !== 'undefined') {
+    GM_registerMenuCommand('📜 Show Changelog', () => showChangelogModal());
+
+    var tagColumnsCurrentlyEnabled = getSetting('tagColumnsEnabled');
+    GM_registerMenuCommand(
+        (tagColumnsCurrentlyEnabled ? '✅' : '⬜') + ' Tag List Columns (click to ' +
+        (tagColumnsCurrentlyEnabled ? 'disable' : 'enable') + ', reloads page)',
+        () => {
+            setSetting('tagColumnsEnabled', !tagColumnsCurrentlyEnabled);
+            location.reload();
+        }
+    );
+}
+
+checkVersionUpdate();
