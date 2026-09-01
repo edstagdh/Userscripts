@@ -2,7 +2,7 @@
 // @name        [Pornolab] Advanced Viewer Experience
 // @description Adds a Grid/List toggle, image previews pulled from inside each topic, download buttons, forum & uploader blacklist/favorites with glow highlighting, and a settings panel to Pornolab's tracker search results.
 // @namespace   https://github.com/edstagdh/Userscripts
-// @version     1.3
+// @version     1.4
 // @author      edstagdh
 // @match       https://pornolab.net/forum/tracker.php*
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=pornolab.net
@@ -26,7 +26,7 @@ const LOG_PREFIX = '[PL-VIEWER]';
 // --------------------
 // VERSION / CHANGELOG
 // --------------------
-const SCRIPT_VERSION = '1.3';
+const SCRIPT_VERSION = '1.4';
 
 // Changelog is no longer stored inline (kept the script file lean) — it's fetched
 // on demand from this repo's CHANGELOG.md, either when the version changes or when
@@ -43,6 +43,9 @@ const DEFAULTS = {
     GALLERY_CARD_MIN_WIDTH:  220,
     IMAGE_LOAD_MODE:         "near",   // "disabled" | "near" | "lazy"
     TABLE_THUMB_SIZE:        90,
+    FETCH_CONCURRENCY_LIMIT: 4,        // max simultaneous topic-page fetches
+    FETCH_STAGGER_MS:        120,      // delay (ms) between dequeuing new requests
+    FETCH_TIMEOUT_MS:        12000,    // per-request timeout (ms) so a hung request can't jam the queue forever
 };
 const MIN_VALID_IMAGE_SIZE = 150; // px — reject tiny placeholder images found inside topics
 const FALLBACK_IMG = '//static.pornolab.net/templates/default/images/icon_minipost.gif';
@@ -55,6 +58,9 @@ let GALLERY_VIEW_MODE      = GM_getValue('GALLERY_VIEW_MODE',      DEFAULTS.GALL
 let GALLERY_CARD_MIN_WIDTH = GM_getValue('GALLERY_CARD_MIN_WIDTH', DEFAULTS.GALLERY_CARD_MIN_WIDTH);
 let IMAGE_LOAD_MODE        = GM_getValue('IMAGE_LOAD_MODE',        DEFAULTS.IMAGE_LOAD_MODE);
 let TABLE_THUMB_SIZE       = GM_getValue('TABLE_THUMB_SIZE',       DEFAULTS.TABLE_THUMB_SIZE);
+let FETCH_CONCURRENCY_LIMIT = GM_getValue('FETCH_CONCURRENCY_LIMIT', DEFAULTS.FETCH_CONCURRENCY_LIMIT);
+let FETCH_STAGGER_MS        = GM_getValue('FETCH_STAGGER_MS',        DEFAULTS.FETCH_STAGGER_MS);
+let FETCH_TIMEOUT_MS        = GM_getValue('FETCH_TIMEOUT_MS',        DEFAULTS.FETCH_TIMEOUT_MS);
 
 function loadListSetting(key) {
     try {
@@ -494,8 +500,40 @@ function translateTableHeaders() {
 }
 
 // --------------------
+// FETCH QUEUE — caps concurrent topic-page fetches and staggers new ones so we
+// don't fire dozens of simultaneous requests at once (which can trip site-side
+// rate limiting and, combined with a hung/no-timeout request, exhaust the
+// browser's per-host connection pool and stall the whole page).
+// --------------------
+let activeFetchCount = 0;
+const fetchQueue = [];
+
+function enqueueFetch(taskFn) {
+    // taskFn receives a `done` callback it MUST call exactly once when finished
+    // (success, error, or timeout) so the queue can advance.
+    fetchQueue.push(taskFn);
+    drainFetchQueue();
+}
+
+function drainFetchQueue() {
+    while (activeFetchCount < FETCH_CONCURRENCY_LIMIT && fetchQueue.length) {
+        const task = fetchQueue.shift();
+        activeFetchCount++;
+        task(function done() {
+            activeFetchCount--;
+            // Stagger before pulling the next item so requests don't all
+            // fire back-to-back the instant a slot frees up.
+            setTimeout(drainFetchQueue, FETCH_STAGGER_MS);
+        });
+    }
+}
+
+// --------------------
 // PREVIEW IMAGE FETCH — pulls the first valid image out of the topic page
-// (ported from the Pornolab preview script's var.postImg / size-validation logic)
+// (ported from the Pornolab preview script's var.postImg / size-validation logic).
+// Requests are routed through the fetch queue above, and always carry a timeout,
+// so a slow/rate-limited response can't hold a connection slot forever and jam
+// every other pending preview.
 // --------------------
 const imagePreviewCache = {};     // topicId -> src string | null
 const pendingImageFetches = {};   // topicId -> [callback, ...]
@@ -506,21 +544,29 @@ function fetchPreviewImageForTopic(topicId, topicHref, callback) {
     if (pendingImageFetches[topicId]) { pendingImageFetches[topicId].push(callback); return; }
     pendingImageFetches[topicId] = [callback];
 
-    jQuery.ajax({
-        url: topicHref,
-        method: 'GET',
-        success: function (html) {
-            const $page = jQuery('<div>').html(html);
-            const $imageTags = $page.find('var.postImg');
-            tryTopicImage($imageTags, 0, null, function (finalSrc) {
-                imagePreviewCache[topicId] = finalSrc;
-                resolvePending(topicId, finalSrc);
-            });
-        },
-        error: function () {
-            imagePreviewCache[topicId] = null;
-            resolvePending(topicId, null);
-        },
+    enqueueFetch(function (done) {
+        jQuery.ajax({
+            url: topicHref,
+            method: 'GET',
+            timeout: FETCH_TIMEOUT_MS,
+            success: function (html) {
+                const $page = jQuery('<div>').html(html);
+                const $imageTags = $page.find('var.postImg');
+                tryTopicImage($imageTags, 0, null, function (finalSrc) {
+                    imagePreviewCache[topicId] = finalSrc;
+                    resolvePending(topicId, finalSrc);
+                    done();
+                });
+            },
+            error: function () {
+                // Covers real HTTP errors AND $.ajax timeouts (jQuery calls `error`
+                // with textStatus === 'timeout' when the `timeout` option elapses),
+                // so a stalled/rate-limited request still frees its queue slot.
+                imagePreviewCache[topicId] = null;
+                resolvePending(topicId, null);
+                done();
+            },
+        });
     });
 }
 
@@ -1059,6 +1105,12 @@ function buildSettingsOverlay() {
                     <p class="vsm-section-title">Performance</p>
                     ${row('Image Load Mode', 'When preview images are fetched from inside each topic, relative to the viewport.',
                           select('vsm-IMAGE_LOAD_MODE', [['disabled','Immediate (no lazy load)'],['near','Near (~1–2 screens away)'],['lazy','Lazy (only when visible)']], IMAGE_LOAD_MODE))}
+                    ${row('Max Concurrent Fetches', 'How many topic pages can be fetched for previews at the same time. Lower this if the page stalls or looks rate-limited.',
+                          `<input type="number" id="vsm-FETCH_CONCURRENCY_LIMIT" min="1" max="12" step="1" value="${FETCH_CONCURRENCY_LIMIT}">`)}
+                    ${row('Fetch Stagger (ms)', 'Delay between starting new preview fetches once a slot frees up.',
+                          `<input type="number" id="vsm-FETCH_STAGGER_MS" min="0" max="2000" step="50" value="${FETCH_STAGGER_MS}">`)}
+                    ${row('Fetch Timeout (ms)', 'How long to wait for a topic page before giving up on its preview.',
+                          `<input type="number" id="vsm-FETCH_TIMEOUT_MS" min="2000" max="60000" step="1000" value="${FETCH_TIMEOUT_MS}">`)}
                 </div>
                 <div class="vsm-section" id="vsm-forums-section">
                     <p class="vsm-section-title">Forum Blacklist</p>
@@ -1176,7 +1228,7 @@ function buildSettingsOverlay() {
         GALLERY_VIEW_MODE = jQuery('#vsm-GALLERY_VIEW_MODE').is(':checked');
         if (GALLERY_VIEW_MODE !== prevGallery) { if (GALLERY_VIEW_MODE) buildGalleryView(); else destroyGalleryView(); }
         closeOverlay();
-        if (confirm('Settings saved!\n\nReload the page now for all changes (thumbnail size, dark mode, card width, image load mode) to take effect?')) location.reload();
+        if (confirm('Settings saved!\n\nReload the page now for all changes (thumbnail size, dark mode, card width, image load mode, fetch throttling) to take effect?')) location.reload();
     });
     jQuery('#vsm-reset-btn').on('click', function () {
         if (!confirm('Reset all viewer settings to their defaults?')) return;
@@ -1213,6 +1265,9 @@ function applyDefaultsToForm() {
     jQuery('#vsm-GRID_DARK_MODE').prop('checked', DEFAULTS.GRID_DARK_MODE);
     jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(DEFAULTS.GALLERY_CARD_MIN_WIDTH);
     jQuery('#vsm-IMAGE_LOAD_MODE').val(DEFAULTS.IMAGE_LOAD_MODE);
+    jQuery('#vsm-FETCH_CONCURRENCY_LIMIT').val(DEFAULTS.FETCH_CONCURRENCY_LIMIT);
+    jQuery('#vsm-FETCH_STAGGER_MS').val(DEFAULTS.FETCH_STAGGER_MS);
+    jQuery('#vsm-FETCH_TIMEOUT_MS').val(DEFAULTS.FETCH_TIMEOUT_MS);
 }
 function saveSettings() {
     GM_setValue('TABLE_THUMB_SIZE', parseInt(jQuery('#vsm-TABLE_THUMB_SIZE').val(), 10) || DEFAULTS.TABLE_THUMB_SIZE);
@@ -1220,6 +1275,9 @@ function saveSettings() {
     GM_setValue('GRID_DARK_MODE', jQuery('#vsm-GRID_DARK_MODE').is(':checked'));
     GM_setValue('GALLERY_CARD_MIN_WIDTH', parseInt(jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(), 10) || DEFAULTS.GALLERY_CARD_MIN_WIDTH);
     GM_setValue('IMAGE_LOAD_MODE', jQuery('#vsm-IMAGE_LOAD_MODE').val());
+    GM_setValue('FETCH_CONCURRENCY_LIMIT', parseInt(jQuery('#vsm-FETCH_CONCURRENCY_LIMIT').val(), 10) || DEFAULTS.FETCH_CONCURRENCY_LIMIT);
+    GM_setValue('FETCH_STAGGER_MS', parseInt(jQuery('#vsm-FETCH_STAGGER_MS').val(), 10) || DEFAULTS.FETCH_STAGGER_MS);
+    GM_setValue('FETCH_TIMEOUT_MS', parseInt(jQuery('#vsm-FETCH_TIMEOUT_MS').val(), 10) || DEFAULTS.FETCH_TIMEOUT_MS);
 }
 
 function refreshForumSettingsPanel() {

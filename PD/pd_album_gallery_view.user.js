@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         [Pixeldrain] Gallery View
 // @namespace    https://github.com/edstagdh
-// @version      1.6
+// @version      1.8
 // @description  Adds a toggleable grid/table gallery view with modal lightbox and hover previews to pixeldrain list/album pages, launched from the sidebar.
 // @author       edstagdh
 // @match        https://pixeldrain.com/l/*
@@ -21,7 +21,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.6';
+    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.8';
     const LIST_ID = location.pathname.split('/').filter(Boolean).pop();
     const API_BASE = 'https://pixeldrain.com/api';
     const STORAGE_KEY_ACTIVE = 'pdg_view_active';
@@ -43,6 +43,16 @@
     let currentMode = localStorage.getItem(STORAGE_KEY_MODE) || 'grid';
     let originalContainer = null;
     let sortState = { col: 'name', asc: true };
+
+    // Descriptive direction labels per sortable column, since "Ascending/Descending"
+    // doesn't convey much without knowing what's being sorted.
+    const SORT_DIR_LABELS = {
+        name: { asc: 'A \u2192 Z', desc: 'Z \u2192 A' },
+        mime_type: { asc: 'A \u2192 Z', desc: 'Z \u2192 A' },
+        size: { asc: 'Smallest', desc: 'Biggest' },
+        date_upload: { asc: 'Oldest', desc: 'Newest' },
+        views: { asc: 'Least Viewed', desc: 'Most Viewed' },
+    };
 
     // ---------- styles ----------
     const style = document.createElement('style');
@@ -157,6 +167,46 @@
     }
 
     #pdg-gallery-body { padding: 24px 28px 50px; }
+
+    #pdg-grid-sort-bar {
+        max-width: 1600px;
+        margin: 0 auto 18px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    #pdg-grid-sort-bar label {
+        font-size: 14.5px;
+        color: #9aa0b4;
+        font-weight: 600;
+    }
+    #pdg-grid-sort-select {
+        background: #2c303c;
+        border: 1px solid #454a5c;
+        color: #eceef3;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 14.5px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    #pdg-grid-sort-select:hover, #pdg-grid-sort-select:focus { border-color: #5865f2; }
+    #pdg-grid-sort-dir {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #2c303c;
+        border: 1px solid #454a5c;
+        color: #eceef3;
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 14.5px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    #pdg-grid-sort-dir:hover { border-color: #5865f2; background: #383d4c; }
+    #pdg-grid-sort-dir .pdg-sort-dir-arrow { font-size: 13px; }
 
     #pdg-grid {
         max-width: 1600px;
@@ -781,6 +831,20 @@
             </div>
             <div id="pdg-gallery-body">
                 <div id="pdg-loading">Loading files&hellip;</div>
+                <div id="pdg-grid-sort-bar" style="display:none">
+                    <label for="pdg-grid-sort-select">Sort by</label>
+                    <select id="pdg-grid-sort-select">
+                        <option value="name">Name</option>
+                        <option value="mime_type">Type</option>
+                        <option value="size">Size</option>
+                        <option value="date_upload">Uploaded</option>
+                        <option value="views">Views</option>
+                    </select>
+                    <button id="pdg-grid-sort-dir" type="button">
+                        <span class="pdg-sort-dir-label">A &rarr; Z</span>
+                        <span class="pdg-sort-dir-arrow">&#9650;</span>
+                    </button>
+                </div>
                 <div id="pdg-grid" style="display:none"></div>
                 <div id="pdg-table-wrap" style="display:none">
                     <table id="pdg-table">
@@ -813,11 +877,44 @@
                 if (col === 'thumb' || col === 'links') return;
                 if (sortState.col === col) sortState.asc = !sortState.asc;
                 else sortState = { col, asc: true };
-                renderTable();
+                onSortChanged();
             });
         });
 
+        root.querySelector('#pdg-grid-sort-select').addEventListener('change', (e) => {
+            sortState.col = e.target.value;
+            onSortChanged();
+        });
+        root.querySelector('#pdg-grid-sort-dir').addEventListener('click', () => {
+            sortState.asc = !sortState.asc;
+            onSortChanged();
+        });
+
         return root;
+    }
+
+    // Re-renders whichever mode is currently visible and keeps the grid sort bar
+    // and table header arrows in sync with the shared sortState.
+    function onSortChanged() {
+        syncSortControls();
+        if (currentMode === 'table') renderTable();
+        else renderGrid(listData);
+    }
+
+    function syncSortControls() {
+        const select = galleryEl.querySelector('#pdg-grid-sort-select');
+        if (select) select.value = sortState.col;
+
+        const dirBtn = galleryEl.querySelector('#pdg-grid-sort-dir');
+        if (dirBtn) {
+            const labels = SORT_DIR_LABELS[sortState.col] || { asc: 'Ascending', desc: 'Descending' };
+            dirBtn.querySelector('.pdg-sort-dir-label').textContent = sortState.asc ? labels.asc : labels.desc;
+            dirBtn.querySelector('.pdg-sort-dir-arrow').innerHTML = sortState.asc ? '&#9650;' : '&#9660;';
+        }
+
+        galleryEl.querySelectorAll('#pdg-table th[data-col] .pdg-sort-arrow').forEach((el) => (el.textContent = ''));
+        const activeTh = galleryEl.querySelector(`#pdg-table th[data-col="${sortState.col}"] .pdg-sort-arrow`);
+        if (activeTh) activeTh.textContent = sortState.asc ? '\u25B2' : '\u25BC';
     }
 
     function setMode(mode) {
@@ -826,15 +923,19 @@
         galleryEl.querySelectorAll('#pdg-mode-switch button').forEach((b) => {
             b.classList.toggle('pdg-active', b.dataset.mode === mode);
         });
+        galleryEl.querySelector('#pdg-grid-sort-bar').style.display = mode === 'grid' ? 'flex' : 'none';
         galleryEl.querySelector('#pdg-grid').style.display = mode === 'grid' ? 'grid' : 'none';
         galleryEl.querySelector('#pdg-table-wrap').style.display = mode === 'table' ? 'block' : 'none';
-        if (mode === 'table') renderTable();
+        if (mode === 'grid') renderGrid(listData);
+        else renderTable();
     }
 
     function renderGrid(data) {
+        if (!data) return;
         const grid = galleryEl.querySelector('#pdg-grid');
         grid.innerHTML = '';
-        data.files.forEach((file, idx) => {
+        sortedFiles().forEach((file) => {
+            const idx = data.files.indexOf(file);
             const card = document.createElement('a');
             card.className = 'pdg-card';
             card.dataset.index = idx;
@@ -886,9 +987,7 @@
         tbody.innerHTML = '';
         activeBypassProxy = pickBypassProxy();
 
-        galleryEl.querySelectorAll('#pdg-table th[data-col] .pdg-sort-arrow').forEach((el) => (el.textContent = ''));
-        const activeTh = galleryEl.querySelector(`#pdg-table th[data-col="${sortState.col}"] .pdg-sort-arrow`);
-        if (activeTh) activeTh.textContent = sortState.asc ? '\u25B2' : '\u25BC';
+        syncSortControls();
 
         sortedFiles().forEach((file) => {
             const realIdx = listData.files.indexOf(file);
@@ -988,7 +1087,7 @@
         galleryEl.querySelector('#pdg-gallery-title').textContent = data.title || 'Album';
         galleryEl.querySelector('#pdg-gallery-sub').textContent =
             `${data.file_count ?? data.files.length} files`;
-        renderGrid(data);
+        syncSortControls();
         setMode(currentMode);
         galleryEl.querySelector('#pdg-loading').style.display = 'none';
     }

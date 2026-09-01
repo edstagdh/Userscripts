@@ -4,6 +4,10 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v1.4
+- Fixed: the page could stall with no visible UI changes when many preview images loaded at once. Topic-page preview fetches (used to pull the preview image out of each topic) are now routed through a small request queue that caps how many run at the same time, staggers new ones as slots free up, and applies a timeout so a slow or rate-limited request can no longer hang forever and jam every other pending preview.
+- Added new Performance settings: Max Concurrent Fetches, Fetch Stagger (ms), and Fetch Timeout (ms), so the throttling behavior can be tuned from the settings panel without editing the script.
+
 ## v1.3
 - Fixed: manually opening "Show Changelog" from the GM menu now shows the changelog entry for the version you're actually running, instead of always showing the latest entry from GitHub.
 - Added an "update available" notice in the changelog popup when a newer version exists in the remote CHANGELOG.md than the one currently installed.

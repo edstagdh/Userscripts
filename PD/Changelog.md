@@ -4,6 +4,13 @@ Format: each version is a `## v<version> - <date>` heading followed by a bullet 
 of changes. The userscript parses this file directly, so keep that structure — one
 `##` heading per version (newest first), one `-` bullet per change entry.
 
+## v1.8 - 2026-08-12
+- Grid sort direction button now shows column-specific labels instead of generic Ascending/Descending: A → Z / Z → A for Name and Type, Smallest / Biggest for Size, Oldest / Newest for Uploaded, Least Viewed / Most Viewed for Views.
+
+## v1.7 - 2026-08-12
+- Added a sort bar above Grid view with the same sortable columns as Table view (Name, Type, Size, Uploaded, Views) plus an Ascending/Descending toggle.
+- Grid and Table sorting now share one state, so sorting in either view keeps the other in sync.
+
 ## v1.6 - 2026-07-26
 - Changelog popup now shows the current version in the subtitle and includes a "View on GitHub" link, matching the structure used across the other userscripts.
 - Renamed the Tampermonkey menu command to "Show Changelog" for consistency.
