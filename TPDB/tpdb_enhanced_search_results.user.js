@@ -1,927 +1,789 @@
 // ==UserScript==
 // @name         ThePornDB - Enhanced Search Results
-// @namespace    https://github.com/edstagdh/Userscripts
-// @version      2.2
-// @description  Table/grid toggle with lazy-loaded scene images, resizable columns, hide images panic button, hover preview in table view, several custom action buttons - REQUIRES API KEY.
+// @namespace    http://tampermonkey.net/
+// @version      3.0
+// @description  Table/grid toggle with lazy-loaded scene images, resizable columns, hide-images panic button, hover preview, custom action buttons, Tampermonkey settings menu & changelog popup - REQUIRES API KEY (set via the Tampermonkey menu).
 // @author       edstagdh
 // @match        https://theporndb.net/*
 // @icon         https://theporndb.net/favicon-16x16.png
+// @noframes
 // @grant        GM_addStyle
 // @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
+// @grant        GM_info
 // @connect      api.theporndb.net
+// @connect      raw.githubusercontent.com
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.user.js
 // ==/UserScript==
 
-// CHANGELOG
-// v2.2:
-// -updated script namespace(no functionality change)
-// v2.1:
-// -updated script with install/update url
-// -updated description.
-// -added configuration for filename copy button mode.
-// v2.0:
-// -big overhaul
-// v1.8:
-// -added show site parents hierarchy button(requires API key configured - "API_AUTH").
-// -added collect scene button(requires API key configured - "API_AUTH").
-// -added copy scene UUID button(requires API key configured - "API_AUTH").
-// -fixed hover on scene image for larger preview.
-// -fixed table view button.
-// -fixed custom hide images button.
-// -fixed custom table view button
-
-
 (function () {
-    "use strict";
+    'use strict';
 
-    // --------------------
-    // CONFIG
-    // --------------------
-    const API_URL= "https://api.theporndb.net/";
-    const API_AUTH= "";
-    const API_SITES_URL= "https://api.theporndb.net/sites/";
-    const API_Collections_URL= "https://api.theporndb.net/user/collection";
-    // --------------------
-    // FILENAME MODE
-    // --------------------
-    // "names"    → performers names after the date
-    // "title"     → scene title after the date
-    // "both"     → starts with the names and then title, both after the date
-    const FILENAME_Mode = "names"
-    // --------------------
-    // FILENAME PERFORMERS MODE
-    // --------------------
-    // "Female", "Male", or both → ["Female", "Male"] means all performers
-    const FILENAME_Genders = ["Female"];
+    /* =====================================================================
+     * 1. CONSTANTS & SETTINGS
+     * ===================================================================== */
+    const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.0';
+    const API_BASE = 'https://api.theporndb.net';
+    const SITE_ORIGIN = 'https://theporndb.net';
+    const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/TPDB/TPDB_Changelog.md';
 
-    /* ---------- CSS ---------- */
+    const GRID_SEL = 'div.grid.grid-cols-scene-card';
+    const CARD_SEL = 'div.relative.group';
+    const SCENE_CACHE_TTL_MS = 60_000;
+    const MAX_SITE_DEPTH = 10;
+
+    const KEYS = {
+        apiKey: 'tpdb_api_key',
+        timeoutMs: 'tpdb_api_timeout_ms',
+        filenameMode: 'tpdb_filename_mode',
+        filenameGenders: 'tpdb_filename_genders',
+        debug: 'tpdb_debug',
+        lastVersion: 'tpdb_last_version',
+    };
+
+    const DEFAULTS = {
+        apiKey: '',
+        timeoutMs: 30000,                       // per-request timeout for TPDB API calls
+        filenameMode: 'names',                  // "names" | "title" | "both"
+        filenameGenders: ['Female', 'Non Binary'], // [] = all performers
+        debug: false,
+    };
+
+    const Settings = {
+        get: (name) => GM_getValue(KEYS[name], DEFAULTS[name]),
+        set: (name, value) => GM_setValue(KEYS[name], value),
+    };
+
+    const log = (...args) => { if (Settings.get('debug')) console.log('[TPDB+]', ...args); };
+
+    /* =====================================================================
+     * 2. SMALL UTILITIES
+     * ===================================================================== */
+    function ce(tag, className) {
+        const el = document.createElement(tag);
+        if (className) el.className = className;
+        return el;
+    }
+
+    function esc(str) {
+        const d = document.createElement('div');
+        d.textContent = String(str ?? '');
+        return d.innerHTML;
+    }
+
+    function slugFromUrl(url) {
+        const parts = new URL(url, SITE_ORIGIN).pathname.split('/').filter(Boolean);
+        return parts[parts.length - 1];
+    }
+
+    // Accepts "2024-05-12", "2024.05.12" or anything Date can parse -> "YYYY.MM.DD"
+    function formatDate(raw) {
+        if (!raw) return '';
+        const iso = raw.trim().match(/^(\d{4})[-.](\d{2})[-.](\d{2})/);
+        if (iso) return `${iso[1]}.${iso[2]}.${iso[3]}`;
+        const d = new Date(raw);
+        if (isNaN(d)) return raw;
+        return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    async function copyText(text) {
+        if (typeof GM_setClipboard === 'function') {
+            GM_setClipboard(text, 'text');
+            return;
+        }
+        await navigator.clipboard.writeText(text);
+    }
+
+    function toast(message, duration = 5000, isError = false) {
+        let container = document.getElementById('tpdb-toast-container');
+        if (!container) {
+            container = ce('div');
+            container.id = 'tpdb-toast-container';
+            document.body.appendChild(container);
+        }
+        const el = ce('div', 'tpdb-toast' + (isError ? ' tpdb-toast-error' : ''));
+        el.textContent = message;
+        container.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('show'));
+        setTimeout(() => {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 300);
+        }, duration);
+    }
+
+    /* =====================================================================
+     * 3. API LAYER (GM_xmlhttpRequest + configurable timeout)
+     * ===================================================================== */
+    function getApiKey(promptIfMissing = true) {
+        let key = String(Settings.get('apiKey') || '').trim();
+        if (!key && promptIfMissing) {
+            key = (window.prompt('Enter your ThePornDB API key (saved locally for next time):', '') || '').trim();
+            if (key) Settings.set('apiKey', key);
+        }
+        return key;
+    }
+
+    function apiRequest(path, method = 'GET') {
+        return new Promise((resolve, reject) => {
+            const key = getApiKey();
+            if (!key) return reject(new Error('No API key set (use the Tampermonkey menu → Set API key)'));
+
+            const timeout = Number(Settings.get('timeoutMs')) || DEFAULTS.timeoutMs;
+            log(method, path, `(timeout ${timeout}ms)`);
+
+            GM_xmlhttpRequest({
+                method,
+                url: API_BASE + path,
+                timeout,
+                headers: { accept: 'application/json', Authorization: `Bearer ${key}` },
+                onload: (res) => {
+                    log('status', res.status, path);
+                    if (res.status < 200 || res.status >= 300) {
+                        return reject(new Error(`API request failed: HTTP ${res.status}`));
+                    }
+                    if (!res.responseText) return resolve(null);
+                    try { resolve(JSON.parse(res.responseText)); }
+                    catch (e) { method === 'GET' ? reject(new Error('Invalid JSON in API response')) : resolve(null); }
+                },
+                onerror: () => reject(new Error('Network error contacting the TPDB API')),
+                ontimeout: () => reject(new Error(`API request timed out after ${timeout / 1000}s`)),
+            });
+        });
+    }
+
+    // Several buttons hit the same scene endpoint — share one request per slug for a short while.
+    const sceneCache = new Map();
+    function fetchScene(slug) {
+        const hit = sceneCache.get(slug);
+        if (hit && Date.now() - hit.t < SCENE_CACHE_TTL_MS) return hit.p;
+
+        const p = apiRequest(`/scenes/${encodeURIComponent(slug)}`).then((json) => {
+            if (!json?.data) throw new Error('Invalid API response (missing data)');
+            return json.data;
+        });
+        sceneCache.set(slug, { t: Date.now(), p });
+        p.catch(() => sceneCache.delete(slug));
+        return p;
+    }
+
+    /* =====================================================================
+     * 4. SCENE ACTIONS
+     * ===================================================================== */
+    async function getSiteHierarchy(scene) {
+        let uuid = scene?.site?.uuid;
+        if (!uuid) throw new Error('Scene has no site UUID');
+
+        const names = [];
+        const seen = new Set();
+        while (uuid && !seen.has(uuid) && names.length < MAX_SITE_DEPTH) {
+            seen.add(uuid);
+            const json = await apiRequest(`/sites/${encodeURIComponent(uuid)}`);
+            const site = json?.data;
+            if (!site) throw new Error('Site response missing data');
+            names.push(site.name);
+            uuid = site.parent?.uuid;
+        }
+        return names.reverse(); // top-level parent first
+    }
+
+    function normalizeStudio(str) {
+        // mirrors Python sanitize_site_filename_part()
+        return str
+            .replace(/:/g, '-')
+            .replace(/\./g, ' ')
+            .replace(/\//g, '-')
+            .replace(/[!@#$%^&*()_+='’‘\s]/g, '');
+    }
+
+    function normalizeSegment(str) {
+        return str.replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '.');
+    }
+
+    function buildFilename(scene) {
+        const mode = Settings.get('filenameMode');
+        const genders = Array.isArray(Settings.get('filenameGenders')) ? Settings.get('filenameGenders') : [];
+
+        if (!scene.date) throw new Error('Missing date');
+        const [y, m, d] = scene.date.split('-');
+        const studio = normalizeStudio(scene?.site?.name || 'Unknown');
+        const date = `${y.slice(2)}.${m}.${d}`;
+
+        const all = Array.isArray(scene.performers) ? scene.performers : [];
+        const filtered = genders.length ? all.filter((p) => genders.includes(p?.parent?.extras?.gender)) : all;
+        const performersStr = filtered.length
+            ? filtered.map((p) => normalizeSegment(p?.parent?.name || 'Unknown')).join('.and.')
+            : null;
+        const titleStr = scene.title ? normalizeSegment(scene.title) : null;
+
+        let suffix;
+        if (mode === 'title') {
+            if (!titleStr) throw new Error('Missing title');
+            suffix = titleStr;
+        } else if (mode === 'both') {
+            if (!performersStr) throw new Error('No matching performers found');
+            if (!titleStr) throw new Error('Missing title');
+            suffix = `${performersStr}.${titleStr}`;
+        } else {
+            if (!performersStr) throw new Error('No matching performers found');
+            suffix = performersStr;
+        }
+
+        let filename = [studio, date, suffix].join('.');
+        let warning = null;
+
+        if (filename.length > 250) {
+            if (mode !== 'names') {
+                if (!performersStr) throw new Error('No matching performers found (fallback)');
+                const original = filename.length;
+                filename = [studio, date, performersStr].join('.');
+                warning = `⚠️ Filename too long (${original} chars).\nFalling back to "names" mode.`;
+            } else {
+                warning = `⚠️ Filename is ${filename.length} chars (exceeds 250).\nCopied as-is — consider shortening manually.`;
+            }
+        }
+        return { filename, warning };
+    }
+
+    // Each action: icon, tooltip, and an async run(slug) that throws on failure.
+    const ACTIONS = [
+        {
+            icon: '⧉', title: 'Copy UUID',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                if (!s.id) throw new Error('Response missing data.id');
+                await copyText(s.id);
+                toast(`Copied scene ID: ${s.id}`);
+            },
+        },
+        {
+            icon: '🌐', title: 'Copy Scene URL',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                if (!s.url) throw new Error('Response missing data.url');
+                await copyText(s.url);
+                toast(`Copied scene URL: ${s.url}`);
+            },
+        },
+        {
+            icon: '🆔', title: 'Show External ID',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                if (!s.external_id) throw new Error('Response missing data.external_id');
+                toast(`Scene External ID: ${s.external_id}`);
+            },
+        },
+        {
+            icon: '👥', title: 'Show Performers',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                if (!Array.isArray(s.performers) || !s.performers.length) throw new Error('No performers found in response');
+                const genderMap = { Female: 'F', Male: 'M' };
+                const lines = s.performers.map((p, i) => {
+                    const parentName = p?.parent?.name || 'Unknown';
+                    const sceneName = p?.name || 'Unknown';
+                    const g = genderMap[p?.parent?.extras?.gender] || 'N/A';
+                    const display = parentName === sceneName ? sceneName : `${sceneName} (${parentName})`;
+                    return `${i + 1}. [${g}] ${display}`;
+                });
+                toast(`Performers:\n${lines.join('\n')}`);
+            },
+        },
+        {
+            icon: '🌳', title: 'Show Site Parents',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                const names = await getSiteHierarchy(s);
+                toast(`🌳 Site hierarchy:\n${names.map((n, i) => `${i}: ${n}`).join('\n')}`, 8000);
+            },
+        },
+        {
+            icon: '🔗', title: 'Open Scene URL (background tab)',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                if (!s.url) throw new Error('Response missing data.url');
+                if (typeof GM_openInTab === 'function') GM_openInTab(s.url, { active: false, insert: true });
+                else window.open(s.url, '_blank', 'noopener,noreferrer');
+                toast('Opened scene URL');
+            },
+        },
+        {
+            icon: '★', title: 'Collect / Uncollect Scene',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                if (!s._id) throw new Error('Scene JSON missing data._id');
+
+                const path = `/user/collection?scene_id=${encodeURIComponent(s._id)}&type=Scene`;
+                const collected = (await apiRequest(path))?.value === true; // never cached
+
+                if (collected && !confirm('Scene is already collected.\n\nRemove from collection?')) {
+                    toast('Kept in collection');
+                    return;
+                }
+                await apiRequest(path, 'POST');
+                toast(`${slug} ${collected ? 'Removed from Collection' : 'Collected Successfully'}`, 10000);
+            },
+        },
+        {
+            icon: '🗎', title: 'Copy Filename',
+            run: async (slug) => {
+                const s = await fetchScene(slug);
+                const { filename, warning } = buildFilename(s);
+                await copyText(filename);
+                log('Copied filename:', filename);
+                toast(warning ? `${warning}\n\nCopied:\n${filename}` : `Copied filename:\n${filename}`, warning ? 8000 : 5000);
+            },
+        },
+    ];
+
+    async function runAction(action, btn, href) {
+        if (btn.classList.contains('busy')) return;
+        btn.classList.add('busy');
+        try {
+            await action.run(slugFromUrl(href));
+        } catch (err) {
+            console.error(`[TPDB+] "${action.title}" failed:`, err);
+            toast(`${action.title} failed: ${err.message}`, 6000, true);
+        } finally {
+            btn.classList.remove('busy');
+        }
+    }
+
+    /* =====================================================================
+     * 5. CHANGELOG / "WHAT'S NEW"
+     * ===================================================================== */
+    let changelogCache = null;
+    let changelogModalEl = null;
+
+    function parseChangelogMarkdown(md) {
+        const entries = [];
+        let current = null;
+        md.split(/\r?\n/).forEach((line) => {
+            const header = line.match(/^##\s*v?([0-9][0-9.]*)\s*(?:-\s*(.+))?\s*$/i);
+            if (header) {
+                current = { version: header[1], date: (header[2] || '').trim(), changes: [] };
+                entries.push(current);
+                return;
+            }
+            const item = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+            if (item && current) current.changes.push(item[1]);
+        });
+        return entries.filter((e) => e.changes.length);
+    }
+
+    const findVersionIndex = (entries, version) => entries.findIndex((e) => e.version === version);
+
+    function fetchChangelog(callback) {
+        if (changelogCache) return callback(changelogCache, null);
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: CHANGELOG_URL,
+            timeout: 10000,
+            onload: (res) => {
+                if (res.status < 200 || res.status >= 300) return callback(null, 'HTTP ' + res.status);
+                try {
+                    changelogCache = parseChangelogMarkdown(res.responseText);
+                    callback(changelogCache, null);
+                } catch (e) {
+                    callback(null, 'Parse error: ' + e.message);
+                }
+            },
+            onerror: () => callback(null, 'Network error fetching changelog'),
+            ontimeout: () => callback(null, 'Timed out fetching changelog'),
+        });
+    }
+
+    function buildChangelogModal() {
+        const modal = ce('div', 'tpdb_cl_modal tpdb_cl_hidden');
+        modal.innerHTML = `
+            <div class="tpdb_cl_box">
+                <div class="tpdb_cl_header">
+                    <div>
+                        <h2>📜 What's New</h2>
+                        <span class="tpdb_cl_subtitle">ThePornDB Enhanced Search Results &mdash; currently v${esc(SCRIPT_VERSION)}</span>
+                    </div>
+                    <button type="button" class="tpdb_cl_close" title="Close">✕</button>
+                </div>
+                <div class="tpdb_cl_body"></div>
+                <div class="tpdb_cl_footer">
+                    <a href="https://github.com/edstagdh/Userscripts" target="_blank" rel="noopener noreferrer">🔗 View on GitHub</a>
+                    <button type="button" class="tpdb_cl_btn">Got it!</button>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        const close = () => modal.classList.add('tpdb_cl_hidden');
+        modal.querySelector('.tpdb_cl_close').addEventListener('click', close);
+        modal.querySelector('.tpdb_cl_btn').addEventListener('click', close);
+        modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+        return modal;
+    }
+
+    function renderChangelogBody(versions, errorMsg, updateVersion) {
+        const body = changelogModalEl.querySelector('.tpdb_cl_body');
+        let html = '';
+        if (updateVersion) {
+            html += `<div class="tpdb_cl_update">🔔 A newer version (v${esc(updateVersion)}) is available on GitHub — you're on v${esc(SCRIPT_VERSION)}.</div>`;
+        }
+        if (errorMsg) {
+            html += `<div class="tpdb_cl_error">Couldn't load the changelog (${esc(errorMsg)}). Check the GitHub repo for the latest version history.</div>`;
+        } else if (!versions || !versions.length) {
+            html += '<div class="tpdb_cl_error">No changelog entries found.</div>';
+        } else {
+            html += versions.map((v) => `
+                <div class="tpdb_cl_version">
+                    <div class="tpdb_cl_version_title">
+                        <span class="tpdb_cl_badge">v${esc(v.version)}</span>
+                        ${v.date ? `<span class="tpdb_cl_date">${esc(v.date)}</span>` : ''}
+                    </div>
+                    <ul>${v.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+                </div>`).join('');
+        }
+        body.innerHTML = html;
+    }
+
+    // Manual (menu) — shows the entry for the running version
+    function showChangelogModal() {
+        if (!changelogModalEl) changelogModalEl = buildChangelogModal();
+        changelogModalEl.classList.remove('tpdb_cl_hidden');
+        changelogModalEl.querySelector('.tpdb_cl_body').innerHTML = '<div class="tpdb_cl_loading">Loading changelog…</div>';
+
+        fetchChangelog((entries, err) => {
+            if (err) return renderChangelogBody(null, err, null);
+            const idx = findVersionIndex(entries, SCRIPT_VERSION);
+            if (idx === -1) return renderChangelogBody(entries.length ? [entries[0]] : [], null, null);
+            renderChangelogBody([entries[idx]], null, idx > 0 ? entries[0].version : null);
+        });
+    }
+
+    // Automatic — one-time popup after a version bump
+    function checkVersionUpdate() {
+        const lastVersion = GM_getValue(KEYS.lastVersion, null);
+        if (lastVersion === SCRIPT_VERSION) return;
+        GM_setValue(KEYS.lastVersion, SCRIPT_VERSION);
+
+        fetchChangelog((entries, err) => {
+            if (err) return; // stay quiet; the menu command still works
+            const idx = findVersionIndex(entries, SCRIPT_VERSION);
+            // never show entries newer than the running version
+            const available = idx === -1 ? entries : entries.slice(idx);
+
+            let toShow = [];
+            if (!lastVersion) {
+                toShow = available.length ? [available[0]] : [];
+            } else {
+                for (const e of available) {
+                    if (e.version === lastVersion) break;
+                    toShow.push(e);
+                }
+                if (!toShow.length && available.length) toShow = [available[0]];
+            }
+            if (!toShow.length) return;
+
+            if (!changelogModalEl) changelogModalEl = buildChangelogModal();
+            changelogModalEl.classList.remove('tpdb_cl_hidden');
+            renderChangelogBody(toShow, null, idx > 0 ? entries[0].version : null);
+        });
+    }
+
+    /* =====================================================================
+     * 6. TAMPERMONKEY MENU
+     * ===================================================================== */
+    function registerMenu() {
+        GM_registerMenuCommand('Set TPDB API key', () => {
+            const key = window.prompt('ThePornDB API key:', Settings.get('apiKey'));
+            if (key === null) return;
+            Settings.set('apiKey', key.trim());
+            sceneCache.clear();
+            toast(key.trim() ? 'API key saved' : 'API key cleared');
+        });
+
+        GM_registerMenuCommand('Set API request timeout (seconds)', () => {
+            const cur = Settings.get('timeoutMs') / 1000;
+            const input = window.prompt('TPDB API request timeout in seconds (1–120):', String(cur));
+            if (input === null) return;
+            const secs = Number(input);
+            if (!isFinite(secs) || secs < 1 || secs > 120) {
+                toast('Invalid timeout — enter a number between 1 and 120', 5000, true);
+                return;
+            }
+            Settings.set('timeoutMs', Math.round(secs * 1000));
+            toast(`API timeout set to ${secs}s`);
+        });
+
+        GM_registerMenuCommand('Set filename mode (names / title / both)', () => {
+            const input = window.prompt('Filename mode:\n  names → performers after the date\n  title → scene title after the date\n  both  → performers, then title', Settings.get('filenameMode'));
+            if (input === null) return;
+            const mode = input.trim().toLowerCase();
+            if (!['names', 'title', 'both'].includes(mode)) {
+                toast('Invalid mode — use names, title or both', 5000, true);
+                return;
+            }
+            Settings.set('filenameMode', mode);
+            toast(`Filename mode set to "${mode}"`);
+        });
+
+        GM_registerMenuCommand('Set filename performer genders', () => {
+            const cur = (Settings.get('filenameGenders') || []).join(', ');
+            const input = window.prompt('Genders to include in filenames (comma separated, e.g. Female, Male, Non Binary).\nLeave empty to include all performers:', cur);
+            if (input === null) return;
+            const list = input.split(',').map((s) => s.trim()).filter(Boolean);
+            Settings.set('filenameGenders', list);
+            toast(list.length ? `Filename genders: ${list.join(', ')}` : 'Filename genders: all performers');
+        });
+
+        GM_registerMenuCommand("Show changelog / what's new", showChangelogModal);
+
+        GM_registerMenuCommand('Toggle debug logging', () => {
+            const next = !Settings.get('debug');
+            Settings.set('debug', next);
+            toast(`Debug logging ${next ? 'enabled' : 'disabled'}`);
+        });
+    }
+
+    /* =====================================================================
+     * 7. STYLES
+     * ===================================================================== */
     GM_addStyle(`
+        /* --- Titles / layout --- */
         h2.p-3.text-xl a {
-            font-weight: bold !important;
-            color: #fff !important;
-            font-size: 1em !important;
+            font-weight: bold !important; color: #fff !important; font-size: 1em !important;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
             font-family: "Segoe UI","Arial Black",sans-serif !important;
         }
-        h2.p-3.text-xl a:hover {
-            color: #FF4757 !important;
-            text-decoration: underline !important;
+        h2.p-3.text-xl a:hover { color: #FF4757 !important; text-decoration: underline !important; }
+        h2.p-3.text-xl.truncate, h2.p-3.text-xl.truncate a,
+        div.flex.truncate, div.flex.truncate span {
+            white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+            max-width: none !important; display: block !important;
         }
-        h2.p-3.text-xl.truncate,
-        h2.p-3.text-xl.truncate a,
-        div.flex.truncate,
-        div.flex.truncate span {
-            white-space: normal !important;
-            overflow: visible !important;
-            text-overflow: clip !important;
-            max-width: none !important;
-            display: block !important;
+        ${GRID_SEL} div.flex.truncate { display: inline-flex !important; align-items: center !important; gap: 4px !important; }
+        ${GRID_SEL} div.flex.truncate span { display: inline !important; }
+        ${GRID_SEL} div.p-3.border-t a span { font-weight: bold !important; font-size: 16px !important; }
+
+        /* --- Grid images: contain instead of cover --- */
+        ${GRID_SEL} img[style*="object-fit"] {
+            object-fit: contain !important; background-color: #000;
+            height: 200px !important; width: 100% !important; display: block; margin: 0 auto;
         }
-        #tpdb-table-view table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 18px;
-            table-layout: fixed;
-        }
-        #tpdb-table-view th,
-        #tpdb-table-view td {
-            padding: 6px 8px;
-            border-bottom: 1px solid #ccc;
-            word-wrap: break-word;
-            white-space: normal;
-            vertical-align: top;
-            position: relative;
-        }
-        #tpdb-table-view th {
-            background: #333;
-            color: #fff;
-            text-align: left;
-            user-select: none;
-            font-weight: bold !important;
-        }
-        .col-resizer {
-            position: absolute;
-            top: 0;
-            right: 0;
-            width: 5px;
-            height: 100%;
-            cursor: col-resize;
-            user-select: none;
-        }
-        .tpdb-thumb {
-            width: 200px;
-            transition: opacity 0.25s ease-in-out;
-            cursor: zoom-in;
-        }
+
+        /* --- Toolbar --- */
+        .tpdb-toolbar { margin: 10px 0; }
         .tpdb-toolbar button {
-            margin-right: 8px;
-            padding: 6px 12px;
-            background: #d9534f;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
+            margin-right: 8px; padding: 6px 12px; background: #d9534f; color: #fff;
+            border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
         }
-        div.grid.grid-cols-scene-card div.flex.truncate {
-            display: inline-flex !important;
-            align-items: center !important;
-            gap: 4px !important;
-        }
-        div.grid.grid-cols-scene-card div.flex.truncate span {
-            display: inline !important;
-        }
-            /* Make performer names bold and larger */
-        div.grid.grid-cols-scene-card div.p-3.border-t a span {
-            font-weight: bold !important;
-            font-size: 16px !important; /* adjust size as needed */
-        }
+        .tpdb-toolbar button.is-on { background: #0275d8; }
+        .tpdb-toolbar button.tpdb-table-btn { background: #5cb85c; }
+        .tpdb-toolbar button.tpdb-table-btn.is-on { background: #f0ad4e; }
+
+        /* --- Action buttons --- */
+        .tpdb-btn-container { display: flex; flex-wrap: wrap; margin-left: 6px; gap: 5px; }
         .tpdb-copy-btn {
-            width: 30px;
-            height: 30px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            margin-left: 6px;
-            border: 1px solid #888;
-            border-radius: 3px;
-            background: #222;
-            color: #fff;
-            font-size: 30px;
-            cursor: pointer;
-            user-select: none;
+            width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+            border: 1px solid #888; border-radius: 3px; background: #222; color: #fff;
+            font-size: 30px; cursor: pointer; user-select: none;
         }
+        .tpdb-copy-btn:hover { background: #FF4757; }
+        .tpdb-copy-btn.busy { opacity: 0.4; pointer-events: none; }
 
-        .tpdb-copy-btn:hover {
-            background: #FF4757;
-        }
-        /* === Hide Images Toggle === */
-        body.tpdb-hide-images img {
-            display: none !important;
-        }
+        /* --- Hide images (panic) --- */
+        body.tpdb-hide-images img { display: none !important; }
+        body.tpdb-hide-images div.relative { min-height: 3rem !important; }
 
-        /* Keep layout compact when images are hidden */
-        body.tpdb-hide-images div.relative {
-            min-height: 3rem !important;
+        /* --- Table view --- */
+        #tpdb-table-view table { width: 100%; border-collapse: collapse; font-size: 18px; table-layout: fixed; }
+        #tpdb-table-view th, #tpdb-table-view td {
+            padding: 6px 8px; border-bottom: 1px solid #ccc; word-wrap: break-word;
+            white-space: normal; vertical-align: top; position: relative;
         }
+        #tpdb-table-view th { background: #333; color: #fff; text-align: left; user-select: none; font-weight: bold !important; }
+        .col-resizer { position: absolute; top: 0; right: 0; width: 5px; height: 100%; cursor: col-resize; user-select: none; }
+        .tpdb-thumb { width: 200px; transition: opacity 0.25s ease-in-out; cursor: zoom-in; }
+
+        /* --- Hover preview --- */
+        #tpdb-preview-box {
+            position: fixed; pointer-events: none; z-index: 9999; display: none;
+            border: 2px solid #333; background: #fff; padding: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        #tpdb-preview-box img { max-width: 900px; max-height: 700px; display: block; }
+
+        /* --- Toasts --- */
+        #tpdb-toast-container {
+            position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex;
+            flex-direction: column; gap: 10px; align-items: flex-end; pointer-events: none;
+        }
+        .tpdb-toast {
+            background: #1a1a1a; color: #ffa500; padding: 16px 20px; border-radius: 10px;
+            font-size: 16px; font-weight: 700; line-height: 1.4; min-width: 280px; max-width: 1000px;
+            border: 2px solid #ffa500; box-shadow: 0 6px 18px rgba(255,165,0,0.35);
+            white-space: pre-line; word-break: break-word; overflow-wrap: break-word;
+            opacity: 0; transform: translateY(10px); transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        .tpdb-toast.show { opacity: 1; transform: translateY(0); }
+        .tpdb-toast-error { color: #ff6b6b; border-color: #ff6b6b; box-shadow: 0 6px 18px rgba(255,107,107,0.35); }
+
+        /* --- Changelog modal --- */
+        .tpdb_cl_modal {
+            position: fixed; inset: 0; z-index: 10001; background: rgba(0,0,0,0.7);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .tpdb_cl_hidden { display: none !important; }
+        .tpdb_cl_box {
+            background: #1e2327; color: #e5e7eb; width: min(640px, 92vw); max-height: 80vh;
+            display: flex; flex-direction: column; border-radius: 10px; border: 1px solid #3a4550;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.6); font-family: "Segoe UI", Arial, sans-serif;
+        }
+        .tpdb_cl_header { display: flex; justify-content: space-between; align-items: flex-start; padding: 16px 20px; border-bottom: 1px solid #3a4550; }
+        .tpdb_cl_header h2 { margin: 0; font-size: 20px; color: #fff; }
+        .tpdb_cl_subtitle { font-size: 12px; color: #9ca3af; }
+        .tpdb_cl_close { background: none; border: none; color: #9ca3af; font-size: 18px; cursor: pointer; }
+        .tpdb_cl_close:hover { color: #fff; }
+        .tpdb_cl_body { padding: 16px 20px; overflow-y: auto; }
+        .tpdb_cl_version + .tpdb_cl_version { margin-top: 18px; }
+        .tpdb_cl_version_title { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .tpdb_cl_badge { background: #7e22ce; color: #fff; padding: 2px 10px; border-radius: 12px; font-weight: 700; font-size: 13px; }
+        .tpdb_cl_date { color: #9ca3af; font-size: 12px; }
+        .tpdb_cl_version ul { margin: 0; padding-left: 20px; }
+        .tpdb_cl_version li { margin: 4px 0; font-size: 14px; line-height: 1.4; }
+        .tpdb_cl_update { background: #3b2f0b; border: 1px solid #f0ad4e; color: #fcd34d; padding: 8px 12px; border-radius: 6px; margin-bottom: 14px; font-size: 13px; }
+        .tpdb_cl_error, .tpdb_cl_loading { color: #9ca3af; font-size: 14px; }
+        .tpdb_cl_error { color: #ff6b6b; }
+        .tpdb_cl_footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-top: 1px solid #3a4550; }
+        .tpdb_cl_footer a { color: #60a5fa; font-size: 13px; text-decoration: none; }
+        .tpdb_cl_btn { background: #7e22ce; color: #fff; border: none; border-radius: 6px; padding: 6px 16px; cursor: pointer; font-size: 14px; }
+        .tpdb_cl_btn:hover { background: #9333ea; }
     `);
 
-    /* ---------- Inline Untruncate ---------- */
-    function forceInlineUntruncate() {
-        document.querySelectorAll('h2.p-3.text-xl.truncate').forEach(h2 => {
+    /* =====================================================================
+     * 8. GRID ENHANCEMENTS (all idempotent — safe to run on every DOM change)
+     * ===================================================================== */
+    function untruncate() {
+        const apply = (el) => {
+            el.classList.remove('truncate');
+            Object.assign(el.style, { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', display: 'inline-flex' });
+        };
+        document.querySelectorAll('h2.p-3.text-xl.truncate').forEach((h2) => {
+            apply(h2);
             const a = h2.querySelector('a');
-            h2.classList.remove('truncate');
-            Object.assign(h2.style, { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', display: 'inline-flex' });
-            if (a) {
-                a.classList.remove('truncate');
-                Object.assign(a.style, { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', display: 'inline-flex' });
-            }
+            if (a) apply(a);
         });
-        document.querySelectorAll('div.flex.truncate').forEach(div => {
-            div.classList.remove('truncate');
-            Object.assign(div.style, { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', maxWidth: 'none', display: 'inline-flex' });
-        });
+        document.querySelectorAll('div.flex.truncate').forEach(apply);
     }
 
     function formatGridDates() {
-        document.querySelectorAll(
-            "div.absolute div.flex:not(.place-items-center)"
-        ).forEach(el => {
-            if (el.__dateFormatted) return; // prevent reprocessing
+        document.querySelectorAll('div.absolute div.flex:not(.place-items-center)').forEach((el) => {
+            if (el.__dateFormatted) return;
             el.__dateFormatted = true;
-
-            const raw = el.textContent.trim();
-            if (!raw) return;
-
-            const d = new Date(raw);
-            if (isNaN(d)) return;
-
-            const yy = String(d.getFullYear());
-            const mm = String(d.getMonth() + 1).padStart(2, "0");
-            const dd = String(d.getDate()).padStart(2, "0");
-
-            el.textContent = `${yy}.${mm}.${dd}`;
+            const formatted = formatDate(el.textContent);
+            if (formatted && formatted !== el.textContent.trim()) el.textContent = formatted;
         });
     }
-    const inlineInterval = setInterval(forceInlineUntruncate, 500);
-    setTimeout(() => clearInterval(inlineInterval), 10000);
-    new MutationObserver(forceInlineUntruncate).observe(document.body, { childList: true, subtree: true });
 
-    /* ---------- Wait for Lazy-Loaded Scenes ---------- */
-    async function waitForAllScenes(grid) {
+    function unwrapGridImageLinks() {
+        document.querySelectorAll(`${GRID_SEL} img[style*="object-fit"]`).forEach((img) => {
+            const link = img.closest('a');
+            if (link && link.parentNode) link.parentNode.replaceChild(img, link);
+        });
+    }
+
+    function addActionButtons() {
+        document.querySelectorAll(CARD_SEL).forEach((card) => {
+            if (card.__tpdbButtons) return;
+            const titleLink = card.querySelector('h2 a');
+            if (!titleLink) return;
+            card.__tpdbButtons = true;
+
+            const container = ce('div', 'tpdb-btn-container');
+            ACTIONS.forEach((action) => {
+                const btn = ce('div', 'tpdb-copy-btn');
+                btn.title = action.title;
+                btn.textContent = action.icon;
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    runAction(action, btn, titleLink.href);
+                });
+                container.appendChild(btn);
+            });
+
+            titleLink.parentElement.style.display = 'inline-flex';
+            titleLink.parentElement.style.alignItems = 'center';
+            titleLink.after(container);
+        });
+    }
+
+    /* =====================================================================
+     * 9. TOOLBAR, TABLE VIEW & HOVER PREVIEW
+     * ===================================================================== */
+    function waitForAllScenes(grid, maxTicks = 200) {
         return new Promise((resolve) => {
-            let lastCount = 0;
-            let stableTicks = 0;
-
-            const interval = setInterval(() => {
-                const items = grid.querySelectorAll("div.relative.group");
-
-                // Scroll the window to bottom to trigger lazy load
-                window.scrollTo(0, document.body.scrollHeight);
-
-                if (items.length === lastCount) {
-                    stableTicks++;
-                    // wait 3 stable ticks (~900ms) to be sure no more load
-                    if (stableTicks >= 3) {
-                        clearInterval(interval);
-                        // Scroll back to top
-                        window.scrollTo(0, 0);
-                        resolve();
-                    }
-                } else {
-                    stableTicks = 0;
-                    lastCount = items.length;
+            let lastCount = 0, stable = 0, ticks = 0;
+            const timer = setInterval(() => {
+                const count = grid.querySelectorAll(CARD_SEL).length;
+                window.scrollTo(0, document.body.scrollHeight); // trigger lazy loading
+                stable = count === lastCount ? stable + 1 : 0;
+                lastCount = count;
+                if (stable >= 3 || ++ticks >= maxTicks) {
+                    clearInterval(timer);
+                    window.scrollTo(0, 0);
+                    resolve();
                 }
             }, 300);
         });
     }
 
+    const TABLE_COLUMNS = [
+        ['Thumbnail', 100], ['Title', 260], ['Date (YYYY.MM.DD)', 80],
+        ['Duration', 50], ['Site', 70], ['Performers', 150],
+    ];
 
-    function showToast(message, duration = 5000) {
-        const toast = document.createElement("div");
-
-        toast.style.whiteSpace = "pre-line";
-        toast.style.position = "fixed";
-        toast.style.bottom = "20px";
-        toast.style.right = "20px";
-
-        // Bigger, more visible container
-        toast.style.background = "#1a1a1a";
-        toast.style.color = "#ffa500"; // orange text
-        toast.style.padding = "16px 20px";
-        toast.style.borderRadius = "10px";
-        toast.style.fontSize = "16px";
-        toast.style.fontWeight = "700"; // bold
-        toast.style.lineHeight = "1.4";
-        toast.style.minWidth = "280px";
-        toast.style.maxWidth = "1000px";
-
-        // Make it stand out more
-        toast.style.border = "2px solid #ffa500";
-        toast.style.boxShadow = "0 6px 18px rgba(255,165,0,0.35)";
-
-        toast.style.zIndex = "10000";
-        toast.style.opacity = "0";
-        toast.style.transition = "opacity 0.25s ease, transform 0.25s ease";
-        toast.style.transform = "translateY(10px)";
-
-        // Make sure we word wrap
-        toast.style.whiteSpace = "pre-line";
-        toast.style.wordBreak = "break-word";      // ← add this
-        toast.style.overflowWrap = "break-word";   // ← add this
-
-        document.body.appendChild(toast);
-
-        // stack above existing toasts (adjust spacing for bigger size)
-        const existing = document.querySelectorAll(".tpdb-toast");
-        toast.style.bottom = `${20 + existing.length * 80}px`;
-        toast.className = "tpdb-toast";
-
-        toast.textContent = message;
-
-        requestAnimationFrame(() => {
-            toast.style.opacity = "1";
-            toast.style.transform = "translateY(0)";
-        });
-
-        setTimeout(() => {
-            toast.style.opacity = "0";
-            toast.style.transform = "translateY(10px)";
-            setTimeout(() => toast.remove(), 300);
-        }, duration);
+    function getPerformersHTML(card) {
+        return [...card.querySelectorAll('div.p-3.border-t a')].map((a) => {
+            const cs = window.getComputedStyle(a);
+            const svg = a.querySelector('svg')?.outerHTML || '';
+            const name = a.querySelector('span:last-child')?.textContent.trim() || a.textContent.trim();
+            return `<a href="${esc(a.href)}" target="_blank" style="background:${cs.backgroundColor};color:${cs.color};padding:2px 6px;border-radius:3px;display:inline-flex;align-items:center;font-size:16px;font-weight:bold;margin:0 2px 2px 0;white-space:nowrap;">${svg}<span style="margin-left:2px;">${esc(name)}</span></a>`;
+        }).join('');
     }
 
-
-    async function showSceneSiteParents(sceneJson) {
-
-        const sites = [];
-
-        try {
-            let siteUuid = sceneJson?.data?.site?.uuid;
-
-            if (!siteUuid) {
-                throw new Error("Scene JSON missing data.site.uuid");
-            }
-
-            let level = 0;
-
-            while (siteUuid) {
-                const requestUrl = `${API_SITES_URL.replace(/\/$/, "")}/${encodeURIComponent(siteUuid)}`;
-
-                const response = await fetch(requestUrl, {
-                    method: "GET",
-                    headers: {
-                        "accept": "application/json",
-                        "Authorization": `Bearer ${API_AUTH}`
-                }
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Site API request failed: ${response.status}`);
-                }
-
-                const json = await response.json();
-                const site = json?.data;
-
-                if (!site) {
-                    throw new Error("Site response missing data");
-                }
-
-                sites.push(site.name);
-
-                // move up using embedded parent object
-                if (site.parent && site.parent.uuid) {
-                    siteUuid = site.parent.uuid;
-                    level++;
-                } else {
-                    // top-level site reached
-                    break;
-                }
-            }
-
-            // reverse so top parent is first
-            const ordered = sites.reverse();
-
-            // add numbering (0 = top parent)
-            const formatted = ordered.map((name, index) => `${index}: ${name}`);
-
-            showToast(`🌳 Site hierarchy:\n${formatted.join("\n")}`, 8000);
-
-        } catch (err) {
-            console.error("Site parent traversal failed:", err);
-            alert("Failed to resolve site parents — check console");
-        }
-    }
-
-    function copySlugFromUrl(url) {
-        try {
-            const u = new URL(url);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
-
-            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            fetch(requestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            }
-            })
-                .then(response => {
-                console.log("API status:", response.status);
-                console.log("API headers:", [...response.headers.entries()]);
-                return response.text().then(text => {
-                    console.log("API raw response:", text);
-                    if (!response.ok) {
-                        throw new Error(`API request failed: ${response.status}`);
-                    }
-                    return JSON.parse(text);
-                });
-            })
-                .then(json => {
-                const id = json?.data?.id;
-                if (!id) {
-                    throw new Error("Response missing data.id");
-                }
-                return navigator.clipboard.writeText(id).then(() => id);
-            })
-                .then(id => {
-                console.log("Copied scene ID:", id);
-                showToast(`Copied scene ID: ${id}`, 5000);
-            })
-
-                .catch(err => {
-                console.error("Copy scene ID failed:", err);
-                alert("Failed to copy scene ID — check console");
-            });
-
-        } catch (err) {
-            console.error("Copy setup failed:", err);
-        }
-    }
-
-    function copy_scene_url(url) {
-        try {
-            const u = new URL(url);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
-
-            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            fetch(requestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            }
-            })
-                .then(response => {
-                console.log("API status:", response.status);
-                console.log("API headers:", [...response.headers.entries()]);
-                return response.text().then(text => {
-                    console.log("API raw response:", text);
-                    if (!response.ok) {
-                        throw new Error(`API request failed: ${response.status}`);
-                    }
-                    return JSON.parse(text);
-                });
-            })
-                .then(json => {
-                const scene_url = json?.data?.url;
-                if (!scene_url) {
-                    throw new Error("Response missing data.url");
-                }
-                return navigator.clipboard.writeText(scene_url).then(() => scene_url);
-            })
-                .then(scene_url => {
-                console.log("Copied scene URL:", scene_url);
-                showToast(`Copied scene URL: ${scene_url}`, 5000);
-            })
-
-                .catch(err => {
-                console.error("Copy scene URL failed:", err);
-                alert("Failed to copy scene URL — check console");
-            });
-
-        } catch (err) {
-            console.error("Copy setup failed:", err);
-        }
-    }
-
-    function open_scene_url(url) {
-        try {
-            const u = new URL(url);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
-
-            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            fetch(requestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            }
-            })
-                .then(response => {
-                console.log("API status:", response.status);
-                console.log("API headers:", [...response.headers.entries()]);
-                return response.text().then(text => {
-                    console.log("API raw response:", text);
-                    if (!response.ok) {
-                        throw new Error(`API request failed: ${response.status}`);
-                    }
-                    return JSON.parse(text);
-                });
-            })
-                .then(json => {
-                const sceneUrl = json?.data?.url;
-                if (!sceneUrl) {
-                    throw new Error("Response missing data.url");
-                }
-
-                // Open in true background tab (userscript only)
-                if (typeof GM_openInTab === "function") {
-                    GM_openInTab(sceneUrl, { active: false, insert: true });
-                } else {
-                    // fallback
-                    window.open(sceneUrl, "_blank", "noopener,noreferrer");
-                }
-
-                console.log("Opened scene URL:", sceneUrl);
-                showToast(`Opened scene URL`, 5000);
-            })
-                .catch(err => {
-                console.error("Open scene URL failed:", err);
-                alert("Failed to open scene URL — check console");
-            });
-
-        } catch (err) {
-            console.error("Setup failed:", err);
-        }
-    }
-    function showPerformers(url) {
-        try {
-            const u = new URL(url);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
-
-            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            fetch(requestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-				}
-            })
-                .then(response => {
-                console.log("API status:", response.status);
-                console.log("API headers:", [...response.headers.entries()]);
-                return response.text().then(text => {
-                    console.log("API raw response:", text);
-                    if (!response.ok) {
-                        throw new Error(`API request failed: ${response.status}`);
-                    }
-                    return JSON.parse(text);
-                });
-            })
-                .then(json => {
-                const performers = json?.data?.performers;
-                if (!Array.isArray(performers) || performers.length === 0) {
-                    throw new Error("No performers found in response");
-                }
-
-                const formatted = performers.map((p, index) => {
-                    const parentName = p?.parent?.name || "Unknown";
-                    const sceneName = p?.name || "Unknown";
-
-                    const rawGender = p?.parent?.extras?.gender;
-
-                    let gender;
-                    if (rawGender === "Female") {
-                        gender = "F";
-                    } else if (rawGender === "Male") {
-                        gender = "M";
-                    } else {
-                        gender = "N/A";
-                    }
-
-                    // check if names match (strict or normalized)
-                    const namesMatch = parentName === sceneName;
-
-                    const displayName = namesMatch
-                    ? sceneName
-                    : `${sceneName} (${parentName})`;
-
-                    return `${index + 1}. [${gender}] ${displayName}`;
-                });
-
-                return formatted;
-            })
-                .then(list => {
-                console.log("Performers:");
-                list.forEach(p => console.log(p));
-                showToast(`Performers:\n${list.join("\n")}`, 5000);
-            })
-                .catch(err => {
-                console.error("Fetch performers failed:", err);
-                alert("Failed to get performers — check console");
-            });
-
-        } catch (err) {
-            console.error("Setup failed:", err);
-        }
-    }
-    function generate_filename(url) {
-        try {
-            const u = new URL(url);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
-
-            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            fetch(requestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-                }
-            })
-                .then(response => response.json())
-                .then(json => {
-                    const data = json?.data;
-                    if (!data) throw new Error("Invalid API response");
-
-                    // --------------------------
-                    // NORMALIZE HELPERS
-                    // --------------------------
-
-                    // Mirrors Python sanitize_site_filename_part():
-                    //   replace : → -   . → (space)   / → -
-                    //   then strip  ! @ # $ % ^ & * ( ) _ + = ' ' and spaces
-                    function normalizeStudio(str) {
-                        return str
-                            .replace(/:/g, "-")
-                            .replace(/\./g, " ")
-                            .replace(/\//g, "-")
-                            .replace(/[!@#$%^&*()_+='''\s]/g, "");
-                    }
-
-                    // For performer names and title: strip non-alphanumeric, collapse spaces to dots
-                    function normalizeSegment(str) {
-                        return str
-                            .replace(/[^a-zA-Z0-9\s]/g, "")
-                            .trim()
-                            .replace(/\s+/g, ".");
-                    }
-
-                    // --------------------------
-                    // STUDIO NAME
-                    // --------------------------
-                    let studio = normalizeStudio(data?.site?.name || "Unknown");
-
-                    // --------------------------
-                    // DATE → YY.MM.DD
-                    // --------------------------
-                    let date = data?.date;
-                    if (!date) throw new Error("Missing date");
-
-                    const [year, month, day] = date.split("-");
-                    const shortYear = year.slice(2);
-                    const formattedDate = `${shortYear}.${month}.${day}`;
-
-                    // --------------------------
-                    // PERFORMERS (filtered by FILENAME_Genders)
-                    // --------------------------
-                    const performers = Array.isArray(data?.performers) ? data.performers : [];
-
-                    const filteredPerformers = FILENAME_Genders.length > 0
-                        ? performers.filter(p => FILENAME_Genders.includes(p?.parent?.extras?.gender))
-                        : performers;
-
-                    let performersString = null;
-                    if (filteredPerformers.length > 0) {
-                        performersString = filteredPerformers
-                            .map(p => normalizeSegment(p?.parent?.name || "Unknown"))
-                            .join(".and.");
-                    }
-
-                    // --------------------------
-                    // TITLE
-                    // --------------------------
-                    let title = data?.title;
-                    let titleString = null;
-                    if (title) {
-                        titleString = normalizeSegment(title);
-                    }
-
-                    // --------------------------
-                    // BUILD FILENAME BY MODE
-                    // --------------------------
-                    let suffix;
-
-                    if (FILENAME_Mode === "title") {
-                        if (!titleString) throw new Error("Missing title");
-                        suffix = titleString;
-
-                    } else if (FILENAME_Mode === "both") {
-                        if (!performersString) throw new Error("No matching performers found");
-                        if (!titleString) throw new Error("Missing title");
-                        suffix = `${performersString}.${titleString}`;
-
-                    } else {
-                        // default: "names"
-                        if (!performersString) throw new Error("No matching performers found");
-                        suffix = performersString;
-                    }
-
-                    const filename = [studio, formattedDate, suffix].join(".");
-
-                    // --------------------------
-                    // FILENAME LENGTH GUARD
-                    // --------------------------
-                    let finalFilename = filename;
-                    let warned = false;
-
-                    if (filename.length > 250) {
-                        if (FILENAME_Mode !== "names") {
-                            if (!performersString) throw new Error("No matching performers found (fallback)");
-                            finalFilename = [studio, formattedDate, performersString].join(".");
-                            showToast(
-                                `⚠️ Filename too long (${filename.length} chars).\nFalling back to "names" mode.\n\nCopied:\n${finalFilename}`,
-                                8000
-                            );
-                            warned = true;
-                        } else {
-                            showToast(
-                                `⚠️ Filename is ${filename.length} chars (exceeds 250).\nCopied as-is — consider shortening manually.\n\nCopied:\n${finalFilename}`,
-                                8000
-                            );
-                            warned = true;
-                        }
-                    }
-
-                    return navigator.clipboard.writeText(finalFilename).then(() => ({ finalFilename, warned }));
-                })
-                .then(({ finalFilename, warned }) => {
-                    console.log("Copied filename:", finalFilename);
-                    if (!warned) {
-                        showToast(`Copied filename:\n${finalFilename}`, 5000);
-                    }
-                })
-                .catch(err => {
-                    console.error("Failed to generate filename:", err);
-                    alert("Failed to generate filename — check console");
-                });
-
-        } catch (err) {
-            console.error("Setup failed:", err);
-        }
-    }
-    function showExternalStudioID(url) {
-        try {
-            const u = new URL(url);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
-
-            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            fetch(requestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            }
-            })
-                .then(response => {
-                console.log("API status:", response.status);
-                console.log("API headers:", [...response.headers.entries()]);
-                return response.text().then(text => {
-                    console.log("API raw response:", text);
-                    if (!response.ok) {
-                        throw new Error(`API request failed: ${response.status}`);
-                    }
-                    return JSON.parse(text);
-                });
-            })
-                .then(json => {
-                const e_id = json?.data?.external_id;
-                if (!e_id) {
-                    throw new Error("Response missing data.external_id");
-                }
-                return e_id;
-            })
-                .then(e_id => {
-                console.log("Scene External ID:", e_id);
-                showToast(`Scene External ID: ${e_id}`, 5000);
-            })
-
-                .catch(err => {
-                console.error("Fetch scene External ID failed:", err);
-                alert("Failed to get scene External ID — check console");
-            });
-
-        } catch (err) {
-            console.error("Setup failed:", err);
-        }
-    }
-    /* ---------- Toolbar ---------- */
-    async function initToolbar() {
-        if (document.getElementById("tpdb-toolbar")) return;
-        const grid = document.querySelector("div.grid.grid-cols-scene-card");
-        if (!grid || !grid.parentNode) return;
-
-        const toolbar = document.createElement("div");
-        toolbar.id = "tpdb-toolbar";
-        toolbar.className = "tpdb-toolbar";
-        toolbar.style.margin = "10px 0";
-
-        /* Hide Images Button */
-        const hideBtn = document.createElement("button");
-        hideBtn.textContent = "Hide Images";
-        let imagesHidden = false;
-
-        hideBtn.addEventListener("click", () => {
-            imagesHidden = !imagesHidden;
-
-            document.body.classList.toggle("tpdb-hide-images", imagesHidden);
-
-            hideBtn.textContent = imagesHidden ? "Show Images" : "Hide Images";
-            hideBtn.style.background = imagesHidden ? "#0275d8" : "#d9534f";
-        });
-
-
-        /* Table View Button */
-        const tableBtn = document.createElement("button");
-        tableBtn.textContent = "Table View";
-        let tableActive = false;
-        let tableWrapper = null;
-        let tableLoading = false;
-
-        tableBtn.addEventListener("click", async () => {
-            if (tableLoading) return;
-
-            tableActive = !tableActive;
-
-            if (tableActive) {
-                // ENTER TABLE MODE
-                tableBtn.textContent = "Grid View";
-                tableBtn.style.background = "#f0ad4e";
-                grid.style.display = "none";
-
-                tableLoading = true;
-                await waitForAllScenes(grid);
-
-                if (!tableWrapper) {
-                    tableWrapper = buildTable(grid);
-                    grid.parentNode.insertBefore(tableWrapper, grid);
-                }
-                tableWrapper.style.display = "";
-                initThumbnailPreview(tableWrapper);
-                tableLoading = false;
-
-            } else {
-                // RETURN TO GRID MODE
-                tableBtn.textContent = "Table View";
-                tableBtn.style.background = "#5cb85c";
-
-                if (tableWrapper) tableWrapper.style.display = "none";
-                grid.style.display = "";
-            }
-        });
-
-        toolbar.append(hideBtn, tableBtn);
-        grid.parentNode.insertBefore(toolbar, grid);
-
-        // Hook into table mode toggle
-        const originalTableClick = tableBtn.onclick;
-        tableBtn.onclick = (e) => {
-            tableBtn.dispatchEvent(new Event("click-original"));
-        };
-        tableBtn.addEventListener("click-original", async () => {
-            // run previous logic
-            originalTableClick?.();
-        });
-
-    }
-
-    /* ---------- Build Table ---------- */
     function buildTable(grid) {
-        const wrapper = document.createElement("div");
-        wrapper.id = "tpdb-table-view";
+        const wrapper = ce('div');
+        wrapper.id = 'tpdb-table-view';
 
-        const table = document.createElement("table");
+        const table = ce('table');
         table.innerHTML = `
-        <thead>
-            <tr>
-                <th style="width:100px;">Thumbnail<div class="col-resizer"></div></th>
-                <th style="width:260px;">Title<div class="col-resizer"></div></th>
-                <th style="width:80px;">Date (YYYY.MM.DD)<div class="col-resizer"></div></th>
-                <th style="width:50px;">Duration<div class="col-resizer"></div></th>
-                <th style="width:70px;">Site<div class="col-resizer"></div></th>
-                <th style="width:150px;">Performers<div class="col-resizer"></div></th>
-            </tr>
-        </thead>
-        <tbody></tbody>
-    `;
-        const tbody = table.querySelector("tbody");
+            <thead><tr>${TABLE_COLUMNS.map(([label, w]) => `<th style="width:${w}px;">${label}<div class="col-resizer"></div></th>`).join('')}</tr></thead>
+            <tbody></tbody>`;
+        const tbody = table.querySelector('tbody');
 
-        grid.querySelectorAll("div.relative.group").forEach(card => {
-            const titleLink = card.querySelector("h2 a");
-            const thumb = card.querySelector("img");
-            const thumbsrc = thumb.src
-            const largethumbSrc = thumbsrc.replace(/-small(\.[a-zA-Z0-9]+)$/, '-large$1');
+        grid.querySelectorAll(CARD_SEL).forEach((card) => {
+            const titleLink = card.querySelector('h2 a');
+            const thumb = card.querySelector('img');
+            const largeSrc = thumb ? thumb.src.replace(/-small(\.[a-zA-Z0-9]+)$/, '-large$1') : '';
 
-            // Date = first .flex inside the bottom overlay
-            const rawDate = card.querySelector("div.absolute div.flex:not(.place-items-center)")?.textContent?.trim() || "";
+            const rawDate = card.querySelector('div.absolute div.flex:not(.place-items-center)')?.textContent?.trim() || '';
+            const duration = card.querySelector('div.flex.place-items-center')?.childNodes[0]?.textContent?.trim() || '';
 
-            // Duration = time inside place-items-center
-            const duration = card.querySelector("div.flex.place-items-center")?.childNodes[0]?.textContent?.trim() || "";
-
-            // Site link and name
-            const siteAnchor = card.querySelector("div.grid.justify-end.items-center a");
-            let siteHTML = "";
+            let siteHTML = '';
+            const siteAnchor = card.querySelector('div.grid.justify-end.items-center a');
             if (siteAnchor) {
-                const siteName = siteAnchor.textContent.trim();
-                let siteHref = siteAnchor.getAttribute("href");
-                if (siteHref && !siteHref.startsWith("http")) {
-                    siteHref = "https://theporndb.net" + siteHref; // make sure relative links are full URLs
-                }
-                siteHTML = `<a href="${siteHref}" target="_blank" style="
-                color: #1E90FF;
-                text-decoration: none;
-                font-weight: bold;
-            ">${siteName}</a>`;
+                let href = siteAnchor.getAttribute('href') || '';
+                if (href && !href.startsWith('http')) href = SITE_ORIGIN + href;
+                siteHTML = `<a href="${esc(href)}" target="_blank" style="color:#1E90FF;text-decoration:none;font-weight:bold;">${esc(siteAnchor.textContent.trim())}</a>`;
             }
 
-            // Performers
-            const performerLinks = getPerformersHTML(card);
-
-            // --- Convert date to YYYY.MM.DD ---
-            let formattedDate = rawDate;
-            if (rawDate) {
-                const d = new Date(rawDate);
-                if (!isNaN(d)) {
-                    const y = d.getFullYear();
-                    const m = String(d.getMonth() + 1).padStart(2, "0");
-                    const day = String(d.getDate()).padStart(2, "0");
-                    formattedDate = `${y}.${m}.${day}`;
-                }
-            }
-
-            const row = document.createElement("tr");
+            const row = ce('tr');
             row.innerHTML = `
-            <td>${thumb ? `<img src="${largethumbSrc}" class="tpdb-thumb">` : ""}</td>
-            <td>${titleLink ? `<a href="${titleLink.href}" target="_blank">${titleLink.textContent.trim()}</a>` : ""}</td>
-            <td>${formattedDate}</td>
-            <td>${duration}</td>
-            <td>${siteHTML}</td>
-            <td>${performerLinks}</td>
-        `;
+                <td>${thumb ? `<img src="${esc(largeSrc)}" class="tpdb-thumb">` : ''}</td>
+                <td>${titleLink ? `<a href="${esc(titleLink.href)}" target="_blank">${esc(titleLink.textContent.trim())}</a>` : ''}</td>
+                <td>${esc(formatDate(rawDate))}</td>
+                <td>${esc(duration)}</td>
+                <td>${siteHTML}</td>
+                <td>${getPerformersHTML(card)}</td>`;
             tbody.appendChild(row);
         });
 
@@ -930,506 +792,140 @@
         return wrapper;
     }
 
-    /* ---------- Performer HTML ---------- */
-    function getPerformersHTML(card) {
-        return [...card.querySelectorAll("div.p-3.border-t a")].map((a) => {
-            const bg = window.getComputedStyle(a).backgroundColor;
-            const color = window.getComputedStyle(a).color;
-            const svg = a.querySelector("svg")?.outerHTML || "";
-            const name = a.querySelector("span:last-child")?.textContent.trim() || a.textContent.trim();
-            return `<a href="${a.href}" target="_blank" style="
-                    background:${bg};
-                    color:${color};
-                    padding:2px 6px;
-                    border-radius:3px;
-                    display:inline-flex;
-                    align-items:center;
-                    font-size:16px;
-                    font-weight: bold;
-                    margin:0 2px 2px 0;
-                    white-space:nowrap;
-                ">${svg}<span style="margin-left:2px;">${name}</span></a>`;
-        }).join("");
-    }
-
-    /* ---------- Column Resizing ---------- */
     function makeColumnsResizable(table) {
-        const ths = table.querySelectorAll("th");
-        ths.forEach(th => {
-            const resizer = th.querySelector(".col-resizer");
+        table.querySelectorAll('th').forEach((th) => {
+            const resizer = th.querySelector('.col-resizer');
             if (!resizer) return;
-            resizer.addEventListener("mousedown", initDrag);
-
-            function initDrag(e) {
+            resizer.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 const startX = e.pageX;
                 const startWidth = th.offsetWidth;
-                function doDrag(e) {
-                    th.style.width = startWidth + (e.pageX - startX) + "px";
-                }
-                function stopDrag() {
-                    document.removeEventListener("mousemove", doDrag);
-                    document.removeEventListener("mouseup", stopDrag);
-                }
-                document.addEventListener("mousemove", doDrag);
-                document.addEventListener("mouseup", stopDrag);
-            }
-        });
-    }
-
-    /* ---------- Thumbnail Hover Preview (only in table view) ---------- */
-    function initThumbnailPreview(tableWrapper) {
-        if (tableWrapper.__previewInit) return;
-        tableWrapper.__previewInit = true;
-
-        const previewBox = document.createElement('div');
-        previewBox.style.position = 'fixed';
-        previewBox.style.pointerEvents = 'none';
-        previewBox.style.zIndex = '9999';
-        previewBox.style.display = 'none';
-        previewBox.style.border = '2px solid #333';
-        previewBox.style.background = '#fff';
-        previewBox.style.padding = '5px';
-        previewBox.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
-        document.body.appendChild(previewBox);
-
-        const previewImg = document.createElement('img');
-        previewImg.style.maxWidth = '800px';
-        previewImg.style.maxHeight = '800px';
-        previewBox.appendChild(previewImg);
-
-        function showPreview(imgSrc, x, y) {
-            previewImg.src = imgSrc;
-            previewBox.style.display = 'block';
-
-            movePreview(x, y);
-        }
-
-        function hidePreview() {
-            previewBox.style.display = 'none';
-            previewImg.src = '';
-        }
-
-        function movePreview(x, y) {
-            const padding = 20;
-            const previewWidth = previewBox.offsetWidth || 600;
-            const previewHeight = previewBox.offsetHeight || 600;
-
-            let posX = x + padding;
-            let posY = y + padding;
-
-            if ((posX + previewWidth) > window.innerWidth) {
-                posX = x - previewWidth - padding;
-            }
-            if ((posY + previewHeight) > window.innerHeight) {
-                posY = y - previewHeight - padding;
-            }
-
-            posX = Math.max(padding, posX);
-            posY = Math.max(padding, posY);
-
-            previewBox.style.left = `${posX}px`;
-            previewBox.style.top = `${posY}px`;
-        }
-
-        tableWrapper.querySelectorAll('.tpdb-thumb').forEach(img => {
-            img.addEventListener('mouseenter', function (e) {
-                showPreview(img.src, e.clientX, e.clientY);
-            });
-            img.addEventListener('mousemove', function (e) {
-                movePreview(e.clientX, e.clientY);
-            });
-            img.addEventListener('mouseleave', function () {
-                hidePreview();
+                const onMove = (ev) => { th.style.width = startWidth + (ev.pageX - startX) + 'px'; };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
             });
         });
     }
 
-    /* ---------- Init ---------- */
-    const observer = new MutationObserver(initToolbar);
-    observer.observe(document.body, { childList: true, subtree: true });
-    initToolbar();
+    function initToolbar() {
+        if (document.getElementById('tpdb-toolbar')) return;
+        const grid = document.querySelector(GRID_SEL);
+        if (!grid || !grid.parentNode) return;
 
-    /* ---------- Force object-fit: contain in grid view ---------- */
-    function fixGridImageFit() {
-        document.querySelectorAll('div.grid.grid-cols-scene-card img[style*="object-fit"]').forEach(img => {
-            if (img.style.objectFit === "cover") {
-                img.style.objectFit = "contain";
-                img.style.maxHeight = "200px";
-                img.style.backgroundColor = "#000"; // optional: black background for aspect difference
-            }
+        const toolbar = ce('div', 'tpdb-toolbar');
+        toolbar.id = 'tpdb-toolbar';
+
+        // Hide images (panic) button
+        const hideBtn = ce('button');
+        hideBtn.textContent = 'Hide Images';
+        hideBtn.addEventListener('click', () => {
+            const hidden = document.body.classList.toggle('tpdb-hide-images');
+            hideBtn.textContent = hidden ? 'Show Images' : 'Hide Images';
+            hideBtn.classList.toggle('is-on', hidden);
         });
-    }
 
-    // Run on page load and whenever new elements are added
-    const imgObserver = new MutationObserver(fixGridImageFit);
-    imgObserver.observe(document.body, { childList: true, subtree: true });
+        // Table / grid toggle
+        const tableBtn = ce('button', 'tpdb-table-btn');
+        tableBtn.textContent = 'Table View';
+        let tableActive = false, tableLoading = false, tableWrapper = null;
 
-    // Initial run
-    fixGridImageFit();
+        tableBtn.addEventListener('click', async () => {
+            if (tableLoading) return;
+            const currentGrid = document.querySelector(GRID_SEL);
+            if (!currentGrid) return;
 
-    async function fetchSceneAndShowSiteParents(sceneUrl) {
-        try {
-            const u = new URL(sceneUrl);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
+            tableActive = !tableActive;
+            tableBtn.textContent = tableActive ? 'Grid View' : 'Table View';
+            tableBtn.classList.toggle('is-on', tableActive);
 
-            const requestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            const response = await fetch(requestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            }
-            });
-
-            if (!response.ok) {
-                throw new Error(`Scene API request failed: ${response.status}`);
-            }
-
-            const sceneJson = await response.json();
-
-            await showSceneSiteParents(sceneJson);
-
-        } catch (err) {
-            console.error("Fetch scene / site parents failed:", err);
-            alert("Failed to fetch scene or site parents — check console");
-        }
-    }
-
-    async function collectSceneFromUrl(sceneUrl) {
-        try {
-            const u = new URL(sceneUrl);
-            const parts = u.pathname.split("/").filter(Boolean);
-            const slug = parts[parts.length - 1];
-
-            // ---- Step 1: Fetch Scene JSON ----
-            const sceneRequestUrl = `${API_URL.replace(/\/$/, "")}/scenes/${encodeURIComponent(slug)}`;
-
-            const sceneResponse = await fetch(sceneRequestUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            }
-            });
-
-            if (!sceneResponse.ok) {
-                throw new Error(`Scene API request failed: ${sceneResponse.status}`);
-            }
-
-            const sceneJson = await sceneResponse.json();
-            const sceneId = sceneJson?.data?._id;
-
-            if (!sceneId) {
-                throw new Error("Scene JSON missing data._id");
-            }
-
-            // ---- Step 2: Check Collection Status (GET) ----
-            const collectionUrl = `${API_Collections_URL}?scene_id=${encodeURIComponent(sceneId)}&type=Scene`;
-
-            const checkResponse = await fetch(collectionUrl, {
-                method: "GET",
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            }
-            });
-
-            if (!checkResponse.ok) {
-                throw new Error(`Collection check failed: ${checkResponse.status}`);
-            }
-
-            const checkJson = await checkResponse.json();
-            const isCollected = checkJson?.value === true;
-
-            // ---- Step 3: Decide What To Do ----
-            let shouldToggle = false;
-
-            if (isCollected) {
-                const remove = confirm("Scene is already collected.\n\nRemove from collection?");
-                if (remove) {
-                    shouldToggle = true;
-                } else {
-                    showToast("Kept in collection", 5000);
-                    return; // stop here
+            if (tableActive) {
+                currentGrid.style.display = 'none';
+                tableLoading = true;
+                try {
+                    await waitForAllScenes(currentGrid);
+                    tableWrapper?.remove();
+                    tableWrapper = buildTable(currentGrid); // rebuilt each time so it's never stale
+                    currentGrid.parentNode.insertBefore(tableWrapper, currentGrid);
+                } finally {
+                    tableLoading = false;
                 }
             } else {
-                shouldToggle = true;
+                tableWrapper?.remove();
+                tableWrapper = null;
+                currentGrid.style.display = '';
             }
+        });
 
-            if (!shouldToggle) return;
-
-            // ---- Step 4: Toggle Collection (POST) ----
-            GM_xmlhttpRequest({
-                method: "POST",
-                url: collectionUrl,
-                headers: {
-                    "accept": "application/json",
-                    "Authorization": `Bearer ${API_AUTH}`
-            },
-                onload: function (response) {
-                    if (response.status >= 200 && response.status < 300) {
-                        showToast(
-                            isCollected
-                            ? `${encodeURIComponent(slug)} Removed from Collection`
-                        : `${encodeURIComponent(slug)} Collected Successfully`,
-                            10000
-                        );
-                    } else {
-                        console.error(`${encodeURIComponent(slug)} Collection POST failed:`, response);
-                        showToast(`${encodeURIComponent(slug)} Collection failed — check console`, 5000);
-                    }
-                },
-                onerror: function (err) {
-                    console.error(`${encodeURIComponent(slug)} Collection request error:`, err);
-                    showToast(`${encodeURIComponent(slug)} Collection request failed`, 5000);
-                }
-            });
-
-        } catch (err) {
-            console.error(`Collect scene failed:`, err);
-            showToast(`Failed to collect scene — check console`, 5000);
-        }
+        toolbar.append(hideBtn, tableBtn);
+        grid.parentNode.insertBefore(toolbar, grid);
     }
 
+    // One delegated hover-preview for both grid images and table thumbnails
+    function initHoverPreview() {
+        const box = ce('div');
+        box.id = 'tpdb-preview-box';
+        const img = ce('img');
+        box.appendChild(img);
+        document.body.appendChild(box);
 
+        const isTarget = (el) => el instanceof HTMLImageElement &&
+            (el.classList.contains('tpdb-thumb') || !!el.closest(GRID_SEL));
 
-    function addCopyButtonsToGrid() {
-        document.querySelectorAll('div.relative.group').forEach(card => {
-            if (card.__copyBtnAdded) return;
-            card.__copyBtnAdded = true;
+        const move = (x, y) => {
+            const pad = 20;
+            const w = box.offsetWidth || 600;
+            const h = box.offsetHeight || 600;
+            let px = x + pad, py = y + pad;
+            if (px + w > window.innerWidth) px = x - w - pad;
+            if (py + h > window.innerHeight) py = y - h - pad;
+            box.style.left = Math.max(pad, px) + 'px';
+            box.style.top = Math.max(pad, py) + 'px';
+        };
 
-            const titleLink = card.querySelector('h2 a');
-            if (!titleLink) return;
-
-            // container so buttons can stack vertically
-            const btnContainer = document.createElement("div");
-            btnContainer.style.display = "flex-end";
-            btnContainer.style.flexDirection = "column";
-            btnContainer.style.marginLeft = "6px";
-            btnContainer.style.gap = "5px"; // adds 4px space between each button
-
-            // ---- Button 1: Copy Scene URL ----
-            const copy_scene_url_button = document.createElement("div");
-            copy_scene_url_button.className = "tpdb-copy-btn";
-            copy_scene_url_button.title = "Copy Scene URL";
-            copy_scene_url_button.textContent = "🌐";
-
-            copy_scene_url_button.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                copy_scene_url(titleLink.href);
-            });
-
-            // ---- Button 2: Copy slug / scene ID ----
-            const copyBtn = document.createElement("div");
-            copyBtn.className = "tpdb-copy-btn";
-            copyBtn.title = "Copy UUID";
-            copyBtn.textContent = "⧉";
-
-            copyBtn.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                copySlugFromUrl(titleLink.href);
-            });
-            // ---- Button 3: Open Scene URL ----
-            const open_url_btn = document.createElement("div");
-            open_url_btn.className = "tpdb-copy-btn";
-            open_url_btn.title = "Open Scene URL";
-            open_url_btn.textContent = "🔗";
-
-            open_url_btn.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                open_scene_url(titleLink.href);
-            });
-
-            // ---- Button 4: show External ID ----
-            const e_id_Btn = document.createElement("div");
-            e_id_Btn.className = "tpdb-copy-btn";
-            e_id_Btn.title = "E_ID";
-            e_id_Btn.textContent = "🆔";
-
-            e_id_Btn.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                showExternalStudioID(titleLink.href);
-            });
-
-            // ---- Button 5: show Performers ----
-            const performers = document.createElement("div");
-            performers.className = "tpdb-copy-btn";
-            performers.title = "E_ID";
-            performers.textContent = "👥";
-
-            performers.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                showPerformers(titleLink.href);
-            });
-
-
-            // ---- Button 6: API JSON action ----
-            const jsonBtn = document.createElement("div");
-            jsonBtn.className = "tpdb-copy-btn";
-            jsonBtn.title = "Check Site Parents";
-            jsonBtn.textContent = "🌳";
-
-            jsonBtn.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                fetchSceneAndShowSiteParents(titleLink.href);
-            });
-
-            // ---- Button 7: Collect ----
-            const collectBtn = document.createElement("div");
-            collectBtn.className = "tpdb-copy-btn";
-            collectBtn.title = "Collect Scene";
-            collectBtn.textContent = "★";
-
-            collectBtn.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                collectSceneFromUrl(titleLink.href);
-            });
-
-            // ---- Button 8: Copy Filename ----
-            const copy_filename = document.createElement("div");
-            copy_filename.className = "tpdb-copy-btn";
-            copy_filename.title = "Filename";
-            copy_filename.textContent = "🗎";
-
-            copy_filename.addEventListener("click", e => {
-                e.stopPropagation();
-                e.preventDefault();
-                generate_filename(titleLink.href);
-            });
-
-            btnContainer.appendChild(copyBtn);
-            btnContainer.appendChild(copy_scene_url_button);
-            btnContainer.appendChild(e_id_Btn);
-            btnContainer.appendChild(performers);
-            btnContainer.appendChild(jsonBtn);
-            btnContainer.appendChild(open_url_btn);
-            btnContainer.appendChild(collectBtn);
-            btnContainer.appendChild(copy_filename);
-
-            // ensure inline layout
-            titleLink.parentElement.style.display = "inline-flex";
-            titleLink.parentElement.style.alignItems = "center";
-
-            titleLink.after(btnContainer);
+        document.addEventListener('mouseover', (e) => {
+            if (!isTarget(e.target)) return;
+            img.src = e.target.src.replace(/-small(\.[a-zA-Z0-9]+)$/, '-large$1');
+            box.style.display = 'block';
+            move(e.clientX, e.clientY);
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (box.style.display === 'block') move(e.clientX, e.clientY);
+        });
+        document.addEventListener('mouseout', (e) => {
+            if (!isTarget(e.target)) return;
+            box.style.display = 'none';
+            img.removeAttribute('src');
         });
     }
 
-    /* ---------- Grid View: object-fit contain + no link + hover preview (large image fix) ---------- */
-    function enhanceGridImages() {
-        // 1. Fix image object-fit & unwrap link
-        document.querySelectorAll('div.grid.grid-cols-scene-card img[style*="object-fit"]').forEach(img => {
-            // Remove <a> wrapper
-            const parentLink = img.closest('a');
-            if (parentLink) {
-                const parent = parentLink.parentNode;
-                if (parent) parent.replaceChild(img, parentLink);
-            }
-
-            // Replace "cover" with "contain"
-            img.style.objectFit = "contain";
-            img.style.backgroundColor = "#000";
-
-            // ✅ Add missing inline style rules for sizing
-            img.style.height = "200px";
-            img.style.width = "100%";
-            img.style.display = "block";
-            img.style.margin = "0 auto";
-
-            addCopyButtonsToGrid();
-        });
-
-        // 2. Setup hover preview box once
-        if (!document.getElementById('tpdb-grid-preview-box')) {
-            const previewBox = document.createElement('div');
-            previewBox.id = 'tpdb-grid-preview-box';
-            previewBox.style.position = 'fixed';
-            previewBox.style.pointerEvents = 'none';
-            previewBox.style.zIndex = '9999';
-            previewBox.style.display = 'none';
-            previewBox.style.border = '2px solid #333';
-            previewBox.style.background = '#fff';
-            previewBox.style.padding = '5px';
-            previewBox.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
-            document.body.appendChild(previewBox);
-
-            const previewImg = document.createElement('img');
-            previewImg.style.maxWidth = '900px';
-            previewImg.style.maxHeight = '700px';
-            previewBox.appendChild(previewImg);
-
-            function showPreview(imgSrc, x, y) {
-                // Replace "-small" with "-large" in image URL if present
-                const largeSrc = imgSrc.replace(/-small(\.[a-zA-Z0-9]+)$/, '-large$1');
-                previewImg.src = largeSrc;
-                previewBox.style.display = 'block';
-                movePreview(x, y);
-            }
-
-            function hidePreview() {
-                previewBox.style.display = 'none';
-                previewImg.src = '';
-            }
-
-            function movePreview(x, y) {
-                const padding = 20;
-                const previewWidth = previewBox.offsetWidth || 800;
-                const previewHeight = previewBox.offsetHeight || 800;
-
-                let posX = x + padding;
-                let posY = y + padding;
-
-                if ((posX + previewWidth) > window.innerWidth) {
-                    posX = x - previewWidth - padding;
-                }
-                if ((posY + previewHeight) > window.innerHeight) {
-                    posY = y - previewHeight - padding;
-                }
-
-                posX = Math.max(padding, posX);
-                posY = Math.max(padding, posY);
-
-                previewBox.style.left = `${posX}px`;
-                previewBox.style.top = `${posY}px`;
-            }
-
-            // 3. Bind hover events for grid images
-            function bindHoverEvents() {
-                document.querySelectorAll('div.grid.grid-cols-scene-card img').forEach(img => {
-                    if (img.__hoverBound) return;
-                    img.__hoverBound = true;
-
-                    img.addEventListener('mouseenter', e => showPreview(img.src, e.clientX, e.clientY));
-                    img.addEventListener('mousemove', e => movePreview(e.clientX, e.clientY));
-                    img.addEventListener('mouseleave', hidePreview);
-                });
-            }
-
-            // Initial and lazy-load binding
-            bindHoverEvents();
-            new MutationObserver(bindHoverEvents).observe(document.body, { childList: true, subtree: true });
-        }
-    }
-
-    // 4. Observe DOM for new grid items (lazy-loaded scenes)
-    const gridObserver = new MutationObserver(() => {
-        enhanceGridImages();
+    /* =====================================================================
+     * 10. INIT — single debounced MutationObserver
+     * ===================================================================== */
+    function enhancePage() {
+        untruncate();
+        initToolbar();
+        unwrapGridImageLinks();
+        addActionButtons();
         formatGridDates();
-    });
-    gridObserver.observe(document.body, { childList: true, subtree: true });
+    }
 
-    // Initial run
-    enhanceGridImages();
-    addCopyButtonsToGrid();
-    formatGridDates(); // <-- add this
+    let enhanceQueued = false;
+    function scheduleEnhance() {
+        if (enhanceQueued) return;
+        enhanceQueued = true;
+        requestAnimationFrame(() => {
+            enhanceQueued = false;
+            enhancePage();
+        });
+    }
 
+    registerMenu();
+    initHoverPreview();
+    enhancePage();
+    new MutationObserver(scheduleEnhance).observe(document.body, { childList: true, subtree: true });
+    checkVersionUpdate();
 })();
