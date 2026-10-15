@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     3.2
+// @version     3.3
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -53,7 +53,7 @@ let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
 // --------------------
-const SCRIPT_VERSION = '3.2';
+const SCRIPT_VERSION = '3.3';
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/AVE_Changelog.md';
 let changelogCache = null;
 const CHANGELOG_HISTORY_DEPTH = 3; // how many versions to show in the manual "Show Changelog" view
@@ -116,6 +116,22 @@ let UPLOADER_BLACKLIST = [];
             ? parsed.map(u => String(u).toLowerCase().trim()).filter(Boolean)
         : [];
     } catch (e) { UPLOADER_BLACKLIST = []; }
+})();
+
+// Expiry timestamps (ms since epoch) for timed uploader blocks.
+// Names in UPLOADER_BLACKLIST with no entry here are permanent.
+const DAY_MS = 24 * 60 * 60 * 1000;
+let UPLOADER_BLACKLIST_EXPIRY = {};
+(function () {
+    try {
+        const parsed = JSON.parse(GM_getValue('UPLOADER_BLACKLIST_EXPIRY', '{}'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            Object.keys(parsed).forEach(function (k) {
+                const v = Number(parsed[k]);
+                if (isFinite(v) && v > 0) UPLOADER_BLACKLIST_EXPIRY[String(k).toLowerCase().trim()] = v;
+            });
+        }
+    } catch (e) { UPLOADER_BLACKLIST_EXPIRY = {}; }
 })();
 
 // --------------------
@@ -647,6 +663,9 @@ GM_addStyle(`
     padding: 0 1px; margin-left: 1px; transition: color 0.12s;
 }
 #vsm-uploader-chips-container .vsm-bl-chip button:hover { color: #cc88ff; }
+#vsm-uploader-chips-container .vsm-bl-time {
+    font-size: 9px; font-weight: 500; opacity: 0.75; margin-left: 2px;
+}
 #vsm-uploader-add-row {
     display: flex; gap: 6px; align-items: center; padding: 6px 0;
 }
@@ -689,7 +708,53 @@ GM_addStyle(`
 }
 `);
 
-
+// --------------------
+// CSS — block duration dialog
+// --------------------
+GM_addStyle(`
+#vbd-backdrop {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 1000000; backdrop-filter: blur(2px);
+}
+#vbd-backdrop.active { display: flex; align-items: center; justify-content: center; }
+#vbd-modal {
+    background: #1e1e1e; border: 1px solid #444; border-radius: 6px;
+    width: 320px; max-width: 94vw; color: #d0d0d0; font-size: 12px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.7);
+}
+#vbd-modal .vbd-header {
+    padding: 11px 16px 9px; border-bottom: 1px solid #3a3a3a;
+    font-size: 13px; font-weight: 700; color: #e8e8e8;
+    text-transform: uppercase; letter-spacing: 0.03em;
+}
+#vbd-modal .vbd-body { padding: 14px 16px 6px; }
+#vbd-modal .vbd-target {
+    font-weight: 700; color: #b070e0; margin-bottom: 12px;
+    word-break: break-word;
+}
+#vbd-modal .vbd-label { display: block; color: #999; font-size: 11px; margin-bottom: 5px; }
+#vbd-modal select, #vbd-modal input[type="number"] {
+    background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0;
+    padding: 5px 7px; border-radius: 3px; font-size: 12px; outline: none;
+}
+#vbd-modal select { width: 100%; }
+#vbd-modal select:focus, #vbd-modal input[type="number"]:focus { border-color: #888; }
+#vbd-custom-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+#vbd-custom-row input { width: 90px; text-align: center; }
+#vbd-modal .vbd-error { min-height: 14px; color: #e06060; font-size: 10px; margin-top: 6px; }
+#vbd-modal .vbd-footer {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 8px 16px 14px;
+}
+#vbd-modal .vbd-btn {
+    padding: 5px 16px; font-size: 11px; font-weight: 600;
+    border-radius: 3px; cursor: pointer; border: 1px solid;
+}
+#vbd-modal .vbd-btn-cancel { background: #2a2a2a; border-color: #444; color: #888; }
+#vbd-modal .vbd-btn-cancel:hover { background: #333; color: #bbb; }
+#vbd-modal .vbd-btn-ok { background: #3a1f4a; border-color: #7a40a0; color: #c898e8; }
+#vbd-modal .vbd-btn-ok:hover { background: #4a2a5e; color: #e0b8ff; }
+`);
 
 // --------------------
 // CSS — changelog popup
@@ -927,7 +992,7 @@ function buildSettingsOverlay() {
                     <p class="vsm-section-title">Uploader Blacklist</p>
                     <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
                         <span class="vsm-label">Blacklisted Uploaders</span>
-                        <span class="vsm-hint">Rows/cards from blacklisted uploaders are hidden. In gallery view, click ⛔ next to an uploader name to block them instantly. Changes apply without saving.</span>
+                        <span class="vsm-hint">Rows/cards from blacklisted uploaders are hidden. Click ⛔ next to an uploader name to block them — you'll be asked for a duration (permanent by default). Timed blocks show their remaining time and expire automatically. Changes apply without saving.</span>
                     </div>
                     <div id="vsm-uploader-chips-container"></div>
                     <div id="vsm-uploader-add-row">
@@ -981,17 +1046,23 @@ function buildSettingsOverlay() {
     });
 
     // Uploader blacklist handlers
+    // Adding opens the duration dialog; the chosen duration applies to every name entered.
     jQuery(document).on('click', '#vsm-uploader-add-btn', function() {
         const val = jQuery('#vsm-uploader-add-input').val().trim().toLowerCase();
         if (!val) return;
+        const names = [];
         val.split(/[\s,]+/).forEach(function(u) {
             u = u.trim();
-            if (u && UPLOADER_BLACKLIST.indexOf(u) === -1) UPLOADER_BLACKLIST.push(u);
+            if (u && u !== 'anon' && u !== 'anonymous' &&
+                names.indexOf(u) === -1 && !isUploaderBlacklisted(u)) names.push(u);
         });
-        saveUploaderBlacklist();
-        applyBlacklistsToPage();
-        jQuery('#vsm-uploader-add-input').val('');
-        refreshUploaderSettingsPanel();
+        if (!names.length) { jQuery('#vsm-uploader-add-input').val(''); return; }
+        showBlockDurationDialog(names, function (durationMs) {
+            names.forEach(n => addUploaderToBlacklist(n, durationMs));
+            applyBlacklistsToPage();
+            jQuery('#vsm-uploader-add-input').val('');
+            refreshUploaderSettingsPanel();
+        });
     });
     jQuery(document).on('keydown', '#vsm-uploader-add-input', function(e) {
         if (e.key === 'Enter') jQuery('#vsm-uploader-add-btn').trigger('click');
@@ -1000,6 +1071,7 @@ function buildSettingsOverlay() {
         if (!UPLOADER_BLACKLIST.length) return;
         if (!confirm('Remove all ' + UPLOADER_BLACKLIST.length + ' blacklisted uploader(s)?')) return;
         UPLOADER_BLACKLIST = [];
+        UPLOADER_BLACKLIST_EXPIRY = {};
         saveUploaderBlacklist();
         applyBlacklistsToPage();
         refreshUploaderSettingsPanel();
@@ -1552,7 +1624,7 @@ function buildGalleryCard($row) {
             const $footer = jQuery('<div class="vg-footer">');
             if (uploaderText) {
                 const uploaderKey = uploaderText.toLowerCase();
-                const isUlBl = UPLOADER_BLACKLIST.indexOf(uploaderKey) !== -1;
+                const isUlBl = isUploaderBlacklisted(uploaderKey);
                 const $ulWrap = jQuery('<span style="display:inline-flex;align-items:center;gap:1px;">');
                 const $uploaderAnchor = jQuery('<a>')
                 .attr('href', uploaderHref)
@@ -1593,10 +1665,13 @@ function buildGalleryCard($row) {
                 $blockBtn.on('click', function (e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    toggleUploaderInBlacklist(uploaderKey);
-                    const nowBl = UPLOADER_BLACKLIST.indexOf(uploaderKey) !== -1;
-                    $ulWrap.find('a').toggleClass('vg-uploader-bl', nowBl);
-                    jQuery(this).attr('title', nowBl ? 'Blocked — click to unblock ' + uploaderText : 'Block uploader: ' + uploaderText);
+                    const $btn = jQuery(this);
+                    // Opens the duration dialog when blocking; unblocks immediately otherwise
+                    toggleUploaderInBlacklist(uploaderKey, function () {
+                        const nowBl = isUploaderBlacklisted(uploaderKey);
+                        $ulWrap.find('a').toggleClass('vg-uploader-bl', nowBl);
+                        $btn.attr('title', nowBl ? 'Blocked — click to unblock ' + uploaderText : 'Block uploader: ' + uploaderText);
+                    });
                 });
                 $ulWrap.append($blockBtn);
                 $footer.append($ulWrap);
@@ -1888,10 +1963,60 @@ function refreshTagSettingsPanel() {
 }
 
 // --------------------
-// UPLOADER BLACKLIST — HELPERS
+// UPLOADER BLACKLIST — HELPERS (with optional expiry)
 // --------------------
 function saveUploaderBlacklist() {
     GM_setValue('UPLOADER_BLACKLIST', JSON.stringify(UPLOADER_BLACKLIST));
+    GM_setValue('UPLOADER_BLACKLIST_EXPIRY', JSON.stringify(UPLOADER_BLACKLIST_EXPIRY));
+}
+
+function isUploaderExpired(name) {
+    const exp = UPLOADER_BLACKLIST_EXPIRY[name];
+    return !!exp && exp <= Date.now();
+}
+
+// True only if the name is on the list AND has not expired.
+function isUploaderBlacklisted(name) {
+    name = String(name || '').toLowerCase().trim();
+    return UPLOADER_BLACKLIST.indexOf(name) !== -1 && !isUploaderExpired(name);
+}
+
+// Drops expired entries. Returns true if anything was removed.
+function purgeExpiredUploaders() {
+    const before = UPLOADER_BLACKLIST.length;
+    UPLOADER_BLACKLIST = UPLOADER_BLACKLIST.filter(n => !isUploaderExpired(n));
+    Object.keys(UPLOADER_BLACKLIST_EXPIRY).forEach(function (k) {
+        if (UPLOADER_BLACKLIST.indexOf(k) === -1) delete UPLOADER_BLACKLIST_EXPIRY[k];
+    });
+    const changed = UPLOADER_BLACKLIST.length !== before;
+    if (changed) saveUploaderBlacklist();
+    return changed;
+}
+
+// durationMs falsy/0 => permanent
+function addUploaderToBlacklist(name, durationMs) {
+    name = String(name).toLowerCase().trim();
+    if (!name || name === 'anon' || name === 'anonymous') return;
+    if (UPLOADER_BLACKLIST.indexOf(name) === -1) UPLOADER_BLACKLIST.push(name);
+    if (durationMs && durationMs > 0) UPLOADER_BLACKLIST_EXPIRY[name] = Date.now() + durationMs;
+    else delete UPLOADER_BLACKLIST_EXPIRY[name];
+    saveUploaderBlacklist();
+}
+
+function removeUploaderFromBlacklist(name) {
+    name = String(name).toLowerCase().trim();
+    const idx = UPLOADER_BLACKLIST.indexOf(name);
+    if (idx !== -1) UPLOADER_BLACKLIST.splice(idx, 1);
+    delete UPLOADER_BLACKLIST_EXPIRY[name];
+    saveUploaderBlacklist();
+}
+
+function formatRemaining(ms) {
+    const mins = Math.max(1, Math.ceil(ms / 60000));
+    if (mins < 60) return mins + 'm';
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + 'h ' + (mins % 60) + 'm';
+    return Math.floor(hours / 24) + 'd ' + (hours % 24) + 'h';
 }
 
 // Extract uploader name from a row — column first, overlay script as fallback.
@@ -1927,27 +2052,47 @@ function getUploaderFromRow($row) {
 function rowMatchesUploaderBlacklist($row) {
     if (!UPLOADER_BLACKLIST.length) return false;
     const uploader = getUploaderFromRow($row);
-    return uploader !== null && UPLOADER_BLACKLIST.indexOf(uploader) !== -1;
+    return uploader !== null && isUploaderBlacklisted(uploader);
 }
 
-function toggleUploaderInBlacklist(name) {
+// Blocked -> unblock immediately. Not blocked -> ask for a duration first.
+// onDone (optional) runs after the change has been applied.
+function toggleUploaderInBlacklist(name, onDone) {
     name = String(name).toLowerCase().trim();
     if (!name || name === 'anon' || name === 'anonymous') return; // never block anon
-    const idx = UPLOADER_BLACKLIST.indexOf(name);
-    if (idx === -1) UPLOADER_BLACKLIST.push(name);
-    else UPLOADER_BLACKLIST.splice(idx, 1);
-    saveUploaderBlacklist();
-    applyBlacklistsToPage();
-    refreshUploaderSettingsPanel();
+
+    function finish() {
+        applyBlacklistsToPage();
+        refreshUploaderSettingsPanel();
+        if (onDone) onDone();
+    }
+
+    if (isUploaderBlacklisted(name)) {
+        removeUploaderFromBlacklist(name);
+        finish();
+    } else {
+        showBlockDurationDialog([name], function (durationMs) {
+            addUploaderToBlacklist(name, durationMs);
+            finish();
+        });
+    }
 }
 
 function refreshUploaderSettingsPanel() {
     const $container = jQuery('#vsm-uploader-chips-container');
     if (!$container.length) return;
     $container.empty();
-    if (UPLOADER_BLACKLIST.length) {
-        UPLOADER_BLACKLIST.forEach(function (name) {
+    const active = UPLOADER_BLACKLIST.filter(isUploaderBlacklisted);
+    if (active.length) {
+        active.forEach(function (name) {
             const $chip = jQuery('<span class="vsm-bl-chip">').text(name);
+            const exp = UPLOADER_BLACKLIST_EXPIRY[name];
+            if (exp) {
+                jQuery('<span class="vsm-bl-time">')
+                    .text('· ' + formatRemaining(exp - Date.now()))
+                    .attr('title', 'Expires ' + new Date(exp).toLocaleString())
+                    .appendTo($chip);
+            }
             const $rm   = jQuery('<button type="button" title="Remove">').html('&times;');
             $rm.on('click', function () { toggleUploaderInBlacklist(name); });
             $chip.append($rm);
@@ -1958,6 +2103,99 @@ function refreshUploaderSettingsPanel() {
             jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No uploaders blacklisted.')
         );
     }
+}
+
+// --------------------
+// BLOCK DURATION DIALOG
+// --------------------
+let blockDialogBuilt = false;
+
+function ensureBlockDialog() {
+    if (blockDialogBuilt) return;
+    blockDialogBuilt = true;
+    jQuery('body').append(`
+    <div id="vbd-backdrop">
+        <div id="vbd-modal" role="dialog" aria-modal="true">
+            <div class="vbd-header">&#9940; Block uploader</div>
+            <div class="vbd-body">
+                <div class="vbd-target" id="vbd-target"></div>
+                <label class="vbd-label" for="vbd-duration">Block duration</label>
+                <select id="vbd-duration">
+                    <option value="permanent" selected>Permanent</option>
+                    <option value="1">1 day</option>
+                    <option value="3">3 days</option>
+                    <option value="7">7 days</option>
+                    <option value="30">30 days</option>
+                    <option value="custom">Custom (days)&hellip;</option>
+                </select>
+                <div id="vbd-custom-row" style="display:none">
+                    <input type="number" id="vbd-custom-days" min="1" max="3650" step="1" value="14">
+                    <span>days</span>
+                </div>
+                <div class="vbd-error" id="vbd-error"></div>
+            </div>
+            <div class="vbd-footer">
+                <button type="button" class="vbd-btn vbd-btn-cancel" id="vbd-cancel">Cancel</button>
+                <button type="button" class="vbd-btn vbd-btn-ok" id="vbd-ok">Block</button>
+            </div>
+        </div>
+    </div>`);
+}
+
+// names: array of uploader names; onConfirm(durationMs) — 0 means permanent.
+function showBlockDurationDialog(names, onConfirm) {
+    ensureBlockDialog();
+    const $bd = jQuery('#vbd-backdrop');
+
+    jQuery('#vbd-target').text(names.join(', '));
+    jQuery('#vbd-duration').val('permanent');
+    jQuery('#vbd-custom-days').val(14);
+    jQuery('#vbd-custom-row').hide();
+    jQuery('#vbd-error').text('');
+
+    // Capture-phase key handler so Escape doesn't also close the settings modal underneath
+    function onKey(e) {
+        if (e.key === 'Escape') {
+            e.stopPropagation(); e.preventDefault(); close();
+        } else if (e.key === 'Enter' && e.target.id !== 'vbd-cancel') {
+            e.stopPropagation(); e.preventDefault(); confirmBlock();
+        }
+    }
+    function close() {
+        $bd.removeClass('active').off('.vbd');
+        jQuery('#vbd-duration, #vbd-ok, #vbd-cancel').off('.vbd');
+        window.removeEventListener('keydown', onKey, true);
+    }
+    function confirmBlock() {
+        const v = jQuery('#vbd-duration').val();
+        let ms = 0;
+        if (v === 'custom') {
+            const days = parseFloat(jQuery('#vbd-custom-days').val());
+            if (!isFinite(days) || days <= 0 || days > 3650) {
+                jQuery('#vbd-error').text('Enter a number of days between 1 and 3650.');
+                return;
+            }
+            ms = Math.round(days * DAY_MS);
+        } else if (v !== 'permanent') {
+            ms = parseInt(v, 10) * DAY_MS;
+        }
+        close();
+        onConfirm(ms);
+    }
+
+    jQuery('#vbd-duration').off('.vbd').on('change.vbd', function () {
+        const isCustom = jQuery(this).val() === 'custom';
+        jQuery('#vbd-custom-row').toggle(isCustom);
+        jQuery('#vbd-error').text('');
+        if (isCustom) jQuery('#vbd-custom-days').trigger('focus').trigger('select');
+    });
+    jQuery('#vbd-ok').off('.vbd').on('click.vbd', confirmBlock);
+    jQuery('#vbd-cancel').off('.vbd').on('click.vbd', close);
+    $bd.off('.vbd').on('click.vbd', function (e) { if (e.target === this) close(); });
+    window.addEventListener('keydown', onKey, true);
+
+    $bd.addClass('active');
+    setTimeout(() => jQuery('#vbd-duration').trigger('focus'), 0);
 }
 
 // Adds a ⛔ block button next to the uploader name in the uploader column (table view).
@@ -2681,6 +2919,16 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
 // INIT
 // --------------------
 (function init() {
+    // Drop expired timed uploader blocks before anything reads the blacklist,
+    // then keep checking so rows/cards reappear without a reload.
+    purgeExpiredUploaders();
+    setInterval(function () {
+        if (purgeExpiredUploaders()) {
+            applyBlacklistsToPage();
+            refreshUploaderSettingsPanel();
+        }
+    }, 30 * 1000);
+
     buildSettingsOverlay();
 
     if (typeof GM_registerMenuCommand !== 'undefined') {

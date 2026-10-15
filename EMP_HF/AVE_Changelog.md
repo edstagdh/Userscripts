@@ -4,6 +4,12 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.3 - 2026-10-15
+- Uploader blacklist now supports timed blocks: clicking the block button (or adding an uploader in Viewer Settings) opens a duration popup — Permanent (default), 1, 3, 7, 30 days or a custom number of days.
+- Timed blocks expire automatically; the uploader's rows/cards reappear without needing a reload.
+- Viewer Settings now shows the time remaining next to each timed uploader block (hover for the exact expiry date).
+- Existing blacklisted uploaders are kept and remain permanent.
+
 ## v3.2 - 2026-07-28
 - Fixed Manual "Show Changelog" menu.
 
