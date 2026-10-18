@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         [Filester] Advanced Viewer Experience
-// @namespace    https://github.com/edstagdh/Userscripts
-// @version      1.1
-// @description  This script provides better experience viewing filester folders, using real anchor links, large previews, hover zoom, table view, persistent sort & view, cross-page search.
+// @namespace    http://tampermonkey.net/
+// @version      1.3
+// @description  This script provides better experience viewing filster folders, using real anchor links, large previews, hover zoom, table view, persistent sort & view, in-folder search, automatic "load all pages", and a remotely-fetched changelog.
 // @match        https://filester.me/*
 // @match        https://filester.sh/*
 // @match        https://filester.si/*
@@ -13,7 +13,10 @@
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/Filester/filester_advanced_viewer_experience.user.js
 // @run-at       document-start
 // @noframes
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
+// @connect      raw.githubusercontent.com
 // ==/UserScript==
 (function () {
     'use strict';
@@ -29,6 +32,23 @@
     }
 
     // =========================================
+    // Helpers
+    // =========================================
+    // With GM_* grants the script runs sandboxed, so the page's own globals
+    // (setViewMode, applyFilters, ...) are reached through unsafeWindow.
+    const W = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
+    // The script runs at document-start, when <head>/<body> may not exist
+    // yet. Anything touching the DOM waits for this.
+    function onReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn, { once: true });
+        } else {
+            fn();
+        }
+    }
+
+    // =========================================
     // Persistence helpers
     // =========================================
     const LS_VIEW = 'filester_view_mode';
@@ -38,7 +58,7 @@
     const LS_SEARCH_SORT = 'filester_search_sort';
 
     function saveSearchView(mode) { try { localStorage.setItem(LS_SEARCH_VIEW, mode); } catch (_) {} }
-    function loadSearchView()     { try { return localStorage.getItem(LS_SEARCH_VIEW) || 'list'; } catch (_) { return 'list'; } }
+    function loadSearchView()     { try { return localStorage.getItem(LS_SEARCH_VIEW) || 'table'; } catch (_) { return 'table'; } }
     function saveSearchSort(mode) { try { localStorage.setItem(LS_SEARCH_SORT, mode); } catch (_) {} }
     function loadSearchSort()     { try { return localStorage.getItem(LS_SEARCH_SORT) || 'name_asc'; } catch (_) { return 'name_asc'; } }
 
@@ -47,39 +67,23 @@
     function saveSort(val)  { try { localStorage.setItem(LS_SORT, val); } catch (_) {} }
     function loadSort()     { try { return localStorage.getItem(LS_SORT); } catch (_) { return null; } }
 
-    // =========================================
-    // Folder identity (used as sessionStorage key)
-    // =========================================
-    const FOLDER_KEY = 'fmsearch_' + location.pathname.replace(/\/$/, '');
+    // The site's own init calls setViewMode() with ITS saved value, which
+    // (through our patch) used to overwrite our saved view before we could
+    // restore it. Saving is therefore disabled until init has finished.
+    let initDone = false;
 
     // =========================================
     // Script identity / version tracking
     // =========================================
     const SCRIPT_NAME    = '[Filester] Advanced Viewer Experience';
-    const SCRIPT_VERSION = '1.1';
+    const SCRIPT_VERSION = '1.3';
     const GITHUB_REPO_URL = 'https://github.com/edstagdh/Userscripts/tree/master/Filester/filester_advanced_viewer_experience.user.js';
 
-    // Entries are newest-first. Add a new entry here with every release.
-    const VERSION_HISTORY = [
-        {
-            version: '1.1',
-            changes: [
-                'Domain canonicalization: opening a filester.sh / .si / .gg link now automatically redirects to filester.me, so your login session is always active.',
-            ],
-        },
-        {
-            version: '1.0',
-            changes: [
-                'Introduced version tracking: a "What\'s New" popup now appears automatically after an update.',
-                'Added a changelog button (ℹ) in the site\'s header nav with script info and a link to the GitHub repo.',
-                'Search is now the leftmost button in the toolbar, ahead of the grid/list/table-view buttons.',
-                'Hardened table view toggling when the page\'s own setViewMode() isn\'t available yet.',
-                'Wrapped all localStorage reads/writes in try/catch so the script keeps working if storage is blocked.',
-                'Added a page-count safety cap to the cross-page search crawler.',
-                'Grid view now shows each file\'s date underneath its name, reusing the same data-date attribute the table view already relies on.',
-            ],
-        },
-    ];
+    // Changelog lives in AVE_Changelog.md next to this script on GitHub and is
+    // fetched on demand (see the changelog section below). Every release needs
+    // a "## vX.Y — YYYY-MM-DD" entry there, with the same version as above.
+    const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/master/Filester/FAVE_Changelog.md';
+    const CHANGELOG_PAGE_URL = 'https://github.com/edstagdh/Userscripts/blob/master/Filester/FAVE_Changelog.md';
 
     const LS_LAST_SEEN_VERSION = 'filester_script_last_seen_version';
     function loadLastSeenVersion() {
@@ -96,11 +100,7 @@
     // =========================================
     const style = document.createElement('style');
     style.textContent = `
-        .related-file-name {
-            overflow: visible !important;
-            white-space: break-spaces !important;
-        }
-        .container { max-width: 1800px !important; }
+        .container, main.max-w-5xl { max-width: 1800px !important; }
 
         /* ── Larger grid cards ── */
         .files-list.grid-view {
@@ -122,7 +122,7 @@
             display: block !important;
             font-size: 0.72rem;
             color: #6b6b6b;
-            margin-top: 3px;
+            padding: 0 0.7rem 0.6rem;
             white-space: nowrap;
         }
 
@@ -165,28 +165,36 @@
             image-rendering: auto;
         }
 
-        /* ── View toggle buttons (shared style) ── */
+        /* ── Toolbar buttons (shared style) ── */
         #tableViewBtn, #searchBtn, #fm-changelog-btn {
             padding: 0.5rem;
             border-radius: 0.375rem;
-            border: 1px solid var(--border-color, #333);
+            border: 1px solid #262b3a;
             background: transparent;
-            color: #888;
+            color: #8a90a3;
             cursor: pointer;
         }
-        #tableViewBtn.active {
-            background: var(--card-bg, #1a1a1a) !important;
-            color: #fff !important;
+        #fm-changelog-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.25rem;
+            height: 2.25rem;
+            padding: 0;
+            margin-right: 4px;
         }
-        #searchBtn:hover { color: #fff; }
-        #fm-changelog-btn:hover { color: #fff; }
+        #tableViewBtn.active {
+            background: #1d2130 !important;
+            color: #e8eaf0 !important;
+        }
+        #searchBtn:hover, #tableViewBtn:hover, #fm-changelog-btn:hover { color: #fff; }
 
         /* ── Table view: container ── */
         .files-list.table-view {
             display: block !important;
             border: 1px solid #2a2a2a !important;
             border-radius: 8px !important;
-            overflow: hidden !important;
+            overflow: clip !important;
         }
 
         /* ── Table view: sticky header ── */
@@ -224,6 +232,7 @@
             gap: 0 !important;
             padding: 0 !important;
             border-radius: 0 !important;
+            border: none !important;
             border-bottom: 1px solid #1c1c1c !important;
             min-height: 50px;
             overflow: visible !important;
@@ -248,7 +257,7 @@
         }
         .files-list.table-view .file-meta {
             padding: 0 0.75rem !important; font-size: 0.8rem !important;
-            color: #666 !important; white-space: nowrap !important;
+            color: #666 !important; white-space: nowrap !important; margin: 0 !important;
         }
         .files-list.table-view .file-date {
             display: block !important; padding: 0 0.75rem !important;
@@ -290,7 +299,6 @@
             box-shadow: 0 24px 80px rgba(0,0,0,0.9);
         }
 
-        /* Header bar */
         #fm-search-header {
             display: flex;
             align-items: center;
@@ -336,7 +344,6 @@
         }
         #fm-search-close:hover { color: #ccc; background: #222; }
 
-        /* Status bar */
         #fm-search-status {
             padding: 6px 16px;
             font-size: 0.72rem;
@@ -348,21 +355,7 @@
             gap: 8px;
             min-height: 30px;
         }
-        .fm-crawl-bar {
-            flex: 1;
-            height: 2px;
-            background: #222;
-            border-radius: 2px;
-            overflow: hidden;
-        }
-        .fm-crawl-fill {
-            height: 100%;
-            background: #7c6af7;
-            border-radius: 2px;
-            transition: width 0.2s;
-        }
 
-        /* Results list */
         #fm-search-results {
             overflow-y: auto;
             flex: 1;
@@ -371,87 +364,6 @@
         #fm-search-results::-webkit-scrollbar-track { background: transparent; }
         #fm-search-results::-webkit-scrollbar-thumb { background: #2e2e2e; border-radius: 3px; }
 
-        /* Global Result Base Styling */
-        .fm-result-item {
-            display: grid;
-            grid-template-columns: 100px 1fr auto;
-            align-items: center;
-            gap: 0;
-            border-bottom: 1px solid #1c1c1c;
-            text-decoration: none;
-            color: inherit;
-            transition: background 0.1s;
-            min-height: 58px;
-        }
-        .fm-result-item:last-child { border-bottom: none; }
-        .fm-result-item:hover { background: rgba(255,255,255,0.04); }
-
-        .fm-result-thumb {
-            width: 100px;
-            height: 56px;
-            overflow: hidden;
-            background: #0d0d0d;
-            flex-shrink: 0;
-        }
-        .fm-result-thumb img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            display: block;
-        }
-        .fm-result-thumb-placeholder {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.4rem;
-            color: #333;
-        }
-
-        .fm-result-info {
-            padding: 0 14px;
-            min-width: 0;
-        }
-        .fm-result-name {
-            font-size: 0.88rem;
-            color: #ddd;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            line-height: 1.35;
-        }
-        .fm-result-name mark {
-            background: none;
-            color: #a99af8;
-            font-weight: 600;
-        }
-        .fm-result-meta {
-            font-size: 0.75rem;
-            color: #555;
-            margin-top: 3px;
-            display: flex;
-            gap: 10px;
-        }
-        .fm-result-meta span { white-space: nowrap; }
-        .fm-result-page-badge {
-            font-size: 0.65rem;
-            background: #222;
-            color: #666;
-            border-radius: 4px;
-            padding: 1px 5px;
-            border: 1px solid #2a2a2a;
-            white-space: nowrap;
-        }
-
-        .fm-result-actions {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
-            padding: 0 14px;
-            flex-shrink: 0;
-        }
         .fm-result-dl {
             display: flex;
             align-items: center;
@@ -467,7 +379,6 @@
         }
         .fm-result-dl:hover { background: #7c6af7; color: #fff; border-color: #7c6af7; }
 
-        /* Empty / no-results */
         .fm-search-empty {
             padding: 48px 0;
             text-align: center;
@@ -482,7 +393,6 @@
             align-items: center;
         }
 
-        /* SVG Icon styling for View toggles */
         .fm-search-view-btn {
             background: #1b1b1b;
             border: 1px solid #333;
@@ -495,7 +405,6 @@
             justify-content: center;
             transition: color 0.15s, border-color 0.15s;
         }
-
         .fm-search-view-btn.active {
             color: #fff;
             border-color: #666;
@@ -503,7 +412,7 @@
         }
         .fm-search-view-btn:hover { color: #fff; }
 
-		/* ── SEARCH RESULTS: GRID ── */
+        /* ── SEARCH RESULTS: GRID ── */
         #fm-search-results.fm-search-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -511,7 +420,6 @@
             padding: 16px;
             align-content: start;
         }
-        /* Card outer — div, not <a>, so display:flex is never overridden by page CSS */
         .fmg-card {
             display: flex;
             min-height: 260px;
@@ -525,9 +433,7 @@
             transition: border-color 0.15s, background 0.15s, transform 0.15s;
         }
         .fmg-card:hover { border-color: #3a3a3a; background: #161616; transform: translateY(-2px); }
-        /* Full-cover invisible link sits behind content */
         .fmg-cover { position: absolute; inset: 0; z-index: 0; display: block; }
-        /* Thumbnail */
         .fmg-thumb {
             position: relative; z-index: 1;
             width: 100%; height: 160px; flex-shrink: 0;
@@ -537,7 +443,6 @@
         }
         .fmg-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
         .fmg-thumb-placeholder { font-size: 2rem; color: #2a2a2a; }
-        /* Info */
         .fmg-info {
             position: relative; z-index: 1;
             display: flex; flex-direction: column; gap: 5px;
@@ -547,7 +452,6 @@
         .fmg-name mark { background: none; color: #a99af8; font-weight: 600; }
         .fmg-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 0.7rem; color: #555; margin-top: auto; padding-top: 4px; }
         .fmg-meta span { white-space: nowrap; }
-        /* Download — above cover link */
         .fmg-dl {
             position: absolute; top: 8px; right: 8px; z-index: 2;
             display: flex; align-items: center; justify-content: center;
@@ -563,7 +467,7 @@
         #fm-search-results.fm-search-table { display: block; }
         .fmr-row {
             display: grid;
-            grid-template-columns: 82px 1fr 90px 110px 60px 50px;
+            grid-template-columns: 82px 1fr 90px 110px 50px;
             align-items: center;
             border-bottom: 1px solid #1c1c1c;
             min-height: 50px;
@@ -711,19 +615,43 @@
             color: #cfc6ff;
             transition: background 0.15s, color 0.15s;
         }
+        .fm-cl-update-banner {
+            font-size: 12px;
+            color: #f0d080;
+            background: #2e2810;
+            border: 1px solid #6a5a1a;
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin-bottom: 14px;
+        }
+        .fm-cl-more {
+            font-size: 11px;
+            color: #777;
+            padding: 10px 0 2px;
+            border-top: 1px solid #2a2a2a;
+            margin-top: 4px;
+        }
+        .fm-cl-more a { color: #7c6af7; text-decoration: none; }
+        .fm-cl-more a:hover { text-decoration: underline; }
         #fm-cl-ok:hover { background: #352c66; color: #e5dfff; border-color: #6a5cc4; }
     `;
-    document.head.appendChild(style);
+    (document.head || document.documentElement).appendChild(style);
 
     // =========================================
     // Hover zoom popup
     // =========================================
-    const popup = document.createElement('img');
-    popup.id = 'fm-zoom-popup';
-    document.body.appendChild(popup);
+    let popup = null;
     const PAD = 16;
 
+    function createPopup() {
+        if (popup) return;
+        popup = document.createElement('img');
+        popup.id = 'fm-zoom-popup';
+        document.body.appendChild(popup);
+    }
+
     function positionPopup(e) {
+        if (!popup) return;
         const pw = popup.offsetWidth  || window.innerWidth  * 0.8;
         const ph = popup.offsetHeight || window.innerHeight * 0.8;
         const vw = window.innerWidth, vh = window.innerHeight;
@@ -738,35 +666,62 @@
         if (img.dataset.zoomAttached) return;
         img.dataset.zoomAttached = 'true';
         img.addEventListener('mouseenter', e => {
+            if (!popup) return;
             popup.src = img.src;
             popup.style.display = 'block';
             positionPopup(e);
             popup.onload = () => positionPopup(e);
         });
         img.addEventListener('mousemove', positionPopup);
-        img.addEventListener('mouseleave', () => popup.style.display = 'none');
+        img.addEventListener('mouseleave', () => { if (popup) popup.style.display = 'none'; });
     }
 
     // =========================================
     // Convert .file-item divs → real <a> links
     // =========================================
+    // The site makes each card clickable via onclick="window.location.href='/d/xxx'".
+    // We replace that with a real anchor (middle-click, ctrl-click, etc.) and keep
+    // the path in data-fm-href so other code (search index, the site's own
+    // "Copy URLs" button) can still find it after the onclick is removed.
+    const CONTROL_SELECTOR = 'button, .download-btn, .rename-btn, .admin-del-btn, a';
+
     function convertItems() {
         document.querySelectorAll('.file-item:not([data-linkified])').forEach(item => {
             const onclick = item.getAttribute('onclick');
             if (!onclick) return;
-            const match = onclick.match(/href='([^']+)'/);
+            const match = onclick.match(/href\s*=\s*['"]([^'"]+)['"]/);
             if (!match) return;
             item.removeAttribute('onclick');
             item.dataset.linkified = 'true';
+            item.dataset.fmHref = match[1];
             const link = document.createElement('a');
             link.href = match[1];
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.className = 'file-item-link';
-            const dlBtn = item.querySelector('.download-btn');
-            while (item.firstChild && item.firstChild !== dlBtn) link.appendChild(item.firstChild);
-            if (dlBtn) item.insertBefore(link, dlBtn); else item.appendChild(link);
+            // Move everything before the first control button into the link,
+            // leaving download / rename / delete buttons outside of it.
+            while (item.firstChild &&
+                   !(item.firstChild.nodeType === 1 && item.firstChild.matches(CONTROL_SELECTOR))) {
+                link.appendChild(item.firstChild);
+            }
+            item.insertBefore(link, item.firstChild);
         });
+    }
+
+    // The site's "Copy URLs" button reads the onclick attribute we removed;
+    // give it a version that understands our data attribute.
+    function patchSiteHelpers() {
+        if (typeof W.fileItemURL === 'function' && !W.fileItemURL._fmPatched) {
+            const orig = W.fileItemURL;
+            W.fileItemURL = function (item) {
+                if (item && item.dataset && item.dataset.fmHref) {
+                    return location.origin + item.dataset.fmHref;
+                }
+                return orig.call(W, item);
+            };
+            W.fileItemURL._fmPatched = true;
+        }
     }
 
     // =========================================
@@ -781,16 +736,21 @@
     ];
     let tableActive = false;
 
+    // data-date is an ISO date at midnight UTC; format it in UTC so it
+    // doesn't shift a day in timezones behind UTC.
+    function formatDate(raw) {
+        const d = new Date(raw || '');
+        if (isNaN(d.getTime())) return { str: '', ts: 0 };
+        return { str: d.toLocaleDateString(undefined, { timeZone: 'UTC' }), ts: d.getTime() };
+    }
+
     function injectDateCells() {
         document.querySelectorAll('#filesGrid .file-item-link').forEach(link => {
             if (link.querySelector('.file-date')) return;
             const item = link.closest('.file-item');
             const el = document.createElement('div');
             el.className = 'file-date';
-            try {
-                const d = new Date(item?.dataset.date || '');
-                el.textContent = isNaN(d.getTime()) ? '' : d.toLocaleDateString();
-            } catch (_) { el.textContent = ''; }
+            el.textContent = formatDate(item?.dataset.date).str;
             link.appendChild(el);
         });
     }
@@ -845,7 +805,7 @@
         grid.classList.add('table-view');
         ['gridViewBtn', 'listViewBtn'].forEach(id => {
             const b = document.getElementById(id);
-            if (b) { b.style.background = 'transparent'; b.style.color = '#888'; }
+            if (b) { b.style.background = 'transparent'; b.style.color = '#8a90a3'; }
         });
         document.getElementById('tableViewBtn')?.classList.add('active');
         injectDateCells();
@@ -862,72 +822,12 @@
         document.getElementById('tableViewBtn')?.classList.remove('active');
     }
 
-    function setupTableView() {
-        if (!document.getElementById('tableViewBtn')) {
-            const viewControls = document.querySelector('.view-controls');
-            if (viewControls) {
-                const btn = document.createElement('button');
-                btn.id = 'tableViewBtn';
-                btn.title = 'Table view';
-                btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M3 3h18v2H3V3zm0 4h18v2H3V7zm0 4h18v2H3v-2zm0 4h18v2H3v-2zm0 4h18v2H3v-2z"/>
-                </svg>`;
-                btn.addEventListener('click', () => {
-                    if (tableActive) {
-                        deactivateTableView();
-                        if (typeof window.setViewMode === 'function') window.setViewMode('grid');
-                        else {
-                            const grid = document.getElementById('filesGrid');
-                            if (grid) grid.classList.add('grid-view');
-                            saveView('grid');
-                        }
-                    } else {
-                        activateTableView();
-                    }
-                });
-                const listBtn = document.getElementById('listViewBtn');
-                if (listBtn) listBtn.after(btn); else viewControls.appendChild(btn);
-            }
-        }
-
-        if (typeof window.setViewMode === 'function' && !window.setViewMode._fmPatched) {
-            const orig = window.setViewMode;
-            window.setViewMode = function (mode) {
-                deactivateTableView();
-                orig.call(window, mode);
-                saveView(mode);
-            };
-            window.setViewMode._fmPatched = true;
-        }
-
-        if (typeof window.applyFilters === 'function' && !window.applyFilters._fmPatched) {
-            const orig = window.applyFilters;
-            window.applyFilters = function () {
-                orig.call(window);
-                if (!tableActive) return;
-                document.querySelectorAll('#filesGrid .file-item').forEach(item => {
-                    if (item.style.display === 'flex') item.style.display = '';
-                });
-                injectDateCells();
-                if (!document.getElementById('fm-table-header')) {
-                    document.getElementById('filesGrid')?.prepend(buildTableHeader());
-                }
-                updateSortIndicators();
-            };
-            window.applyFilters._fmPatched = true;
-        }
-
+    // Restores the persisted sort + view (grid/list/table).
+    function restoreSavedView() {
         const sortSel = document.getElementById('sortSelect');
-        if (sortSel && !sortSel.dataset.fmPersist) {
-            sortSel.dataset.fmPersist = '1';
-            sortSel.addEventListener('change', () => {
-                saveSort(sortSel.value);
-                if (tableActive) updateSortIndicators();
-            });
-        }
-
         const savedSort = loadSort();
-        if (savedSort && sortSel && sortSel.value !== savedSort) {
+        if (savedSort && sortSel && sortSel.value !== savedSort &&
+            [...sortSel.options].some(o => o.value === savedSort)) {
             sortSel.value = savedSort;
             sortSel.dispatchEvent(new Event('change'));
         }
@@ -942,24 +842,91 @@
         }
     }
 
+    // The grid/list buttons (and sort <select>) sit in a plain wrapper div
+    // with no class on the redesigned site, so find it via the buttons.
+    function getToolbar() {
+        return document.getElementById('gridViewBtn')?.parentElement
+            || document.getElementById('listViewBtn')?.parentElement
+            || document.querySelector('.view-controls');
+    }
+
+    function setupTableView() {
+        if (!document.getElementById('tableViewBtn')) {
+            const viewControls = getToolbar();
+            if (viewControls) {
+                const btn = document.createElement('button');
+                btn.id = 'tableViewBtn';
+                btn.type = 'button';
+                btn.title = 'Table view';
+                btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 3h18v2H3V3zm0 4h18v2H3V7zm0 4h18v2H3v-2zm0 4h18v2H3v-2zm0 4h18v2H3v-2z"/>
+                </svg>`;
+                btn.addEventListener('click', () => {
+                    if (tableActive) {
+                        deactivateTableView();
+                        if (typeof W.setViewMode === 'function') W.setViewMode('grid');
+                        else {
+                            const grid = document.getElementById('filesGrid');
+                            if (grid) grid.classList.add('grid-view');
+                            saveView('grid');
+                        }
+                    } else {
+                        activateTableView();
+                    }
+                });
+                const listBtn = document.getElementById('listViewBtn');
+                if (listBtn) listBtn.after(btn); else viewControls.appendChild(btn);
+            }
+        }
+
+        if (typeof W.setViewMode === 'function' && !W.setViewMode._fmPatched) {
+            const orig = W.setViewMode;
+            W.setViewMode = function (mode) {
+                deactivateTableView();
+                orig.call(W, mode);
+                if (initDone) saveView(mode);
+            };
+            W.setViewMode._fmPatched = true;
+        }
+
+        if (typeof W.applyFilters === 'function' && !W.applyFilters._fmPatched) {
+            const orig = W.applyFilters;
+            W.applyFilters = function () {
+                orig.call(W);
+                if (!tableActive) return;
+                document.querySelectorAll('#filesGrid .file-item').forEach(item => {
+                    if (item.style.display === 'flex') item.style.display = '';
+                });
+                injectDateCells();
+                if (!document.getElementById('fm-table-header')) {
+                    document.getElementById('filesGrid')?.prepend(buildTableHeader());
+                }
+                updateSortIndicators();
+            };
+            W.applyFilters._fmPatched = true;
+        }
+
+        const sortSel = document.getElementById('sortSelect');
+        if (sortSel && !sortSel.dataset.fmPersist) {
+            sortSel.dataset.fmPersist = '1';
+            sortSel.addEventListener('change', () => {
+                saveSort(sortSel.value);
+                if (tableActive) updateSortIndicators();
+            });
+        }
+    }
+
     // =========================================
     // ── SEARCH SYSTEM ──────────────────────────
     // =========================================
 
-    let searchIndex = null;
-    let crawlState  = { done: false, total: 0, loaded: 0 };
+    let searchIndex = [];
 
-    function loadIndexFromSession() {
-        try {
-            const raw = sessionStorage.getItem(FOLDER_KEY);
-            if (!raw) return null;
-            return JSON.parse(raw);
-        } catch (_) { return null; }
-    }
-
-    function saveIndexToSession(files) {
-        try { sessionStorage.setItem(FOLDER_KEY, JSON.stringify(files)); } catch (_) {}
-    }
+    let fmSearchInput   = null;
+    let fmSearchSort    = null;
+    let fmSearchStatus  = null;
+    let fmSearchResults = null;
+    let fmSearchView    = 'table';
 
     function parseSizeToBytes(sizeStr) {
         if (!sizeStr) return 0;
@@ -969,103 +936,52 @@
         return parseFloat(match[1]) * (units[match[2]] || 1);
     }
 
-    function parsePageFiles(html, pageNum) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const files = [];
-        doc.querySelectorAll('.file-item').forEach(item => {
-            const onclick = item.getAttribute('onclick') || '';
-            const hrefMatch = onclick.match(/href='([^']+)'/);
-            if (!hrefMatch) return;
-            const href = hrefMatch[1];
+    // View link of a .file-item: our data attribute (set when the onclick is
+    // converted into a real link), falling back to the original onclick.
+    function fileItemHref(item) {
+        if (item.dataset.fmHref) return item.dataset.fmHref;
+        const onclick = item.getAttribute('onclick') || '';
+        const match = onclick.match(/href\s*=\s*['"]([^'"]+)['"]/);
+        return match ? match[1] : null;
+    }
 
-            const dlA = item.querySelector('.download-btn[href], a[download]');
-            const dlHref = dlA?.href || href;
+    // Download control is <button onclick="...downloadFile('slug')">; the
+    // site's downloadFile() just navigates to /d/<slug>.
+    function fileItemDownloadHref(item, fallbackHref) {
+        const dlBtn = item.querySelector('.download-btn');
+        if (!dlBtn) return fallbackHref;
+        if (dlBtn.tagName === 'A' && dlBtn.getAttribute('href')) return dlBtn.href;
+        const onclick = dlBtn.getAttribute('onclick') || '';
+        const slugMatch = onclick.match(/downloadFile\(\s*['"]([^'"]+)['"]\s*\)/);
+        if (slugMatch) return location.origin + '/d/' + slugMatch[1];
+        return fallbackHref;
+    }
+
+    // Builds file records straight from the live DOM (every page that has
+    // been loaded so far).
+    function collectFilesFromDom() {
+        const files = [];
+        document.querySelectorAll('#filesGrid .file-item').forEach(item => {
+            const href = fileItemHref(item);
+            if (!href) return;
+
+            const dlHref = fileItemDownloadHref(item, href);
 
             const nameEl = item.querySelector('.file-name');
-            const name   = nameEl?.textContent.trim() || '';
+            const name   = item.dataset.name || nameEl?.textContent.trim() || '';
 
             const metaEl = item.querySelector('.file-meta, .file-size');
             const size   = metaEl?.textContent.trim() || '';
-            const sizeRaw = parseSizeToBytes(size);
+            const sizeRaw = parseInt(item.dataset.size, 10) || parseSizeToBytes(size);
 
-            const dateRaw = item.dataset.date || '';
-            let dateStr = '';
-            let timestamp = 0;
-            try {
-                const d = new Date(dateRaw);
-                timestamp = d.getTime() || 0;
-                dateStr = isNaN(timestamp) ? '' : d.toLocaleDateString();
-            } catch (_) {}
+            const { str: dateStr, ts: timestamp } = formatDate(item.dataset.date);
 
             const imgEl = item.querySelector('.file-preview img');
             const thumb = imgEl?.src || imgEl?.dataset.src || '';
 
-            files.push({ href, dlHref, name, size, sizeRaw, dateStr, timestamp, thumb, page: pageNum });
+            files.push({ href, dlHref, name, size, sizeRaw, dateStr, timestamp, thumb });
         });
         return files;
-    }
-
-    function pageUrl(n) {
-        const base = location.href.replace(/[?&]page=\d+/, '');
-        const sep  = base.includes('?') ? '&' : '?';
-        return n === 1 ? base : `${base}${sep}page=${n}`;
-    }
-
-    async function buildIndex(onProgress) {
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-
-        crawlState = { done: false, total: '?', loaded: 0 };
-        onProgress(crawlState);
-
-        const allFiles = [];
-        const seenUrls = new Set();
-        let page = 1;
-        let consecutiveEmptyPages = 0;
-        const MAX_PAGES = 2000;
-
-        while (page <= MAX_PAGES) {
-            try {
-                const response = await fetch(pageUrl(page), {
-                    credentials: 'same-origin',
-                    cache: 'no-store'
-                });
-
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-                const html = await response.text();
-                const files = parsePageFiles(html, page);
-
-                const newFiles = files.filter(file => {
-                    const key = file.href;
-                    if (seenUrls.has(key)) return false;
-                    seenUrls.add(key);
-                    return true;
-                });
-
-                if (newFiles.length === 0) {
-                    consecutiveEmptyPages++;
-                    if (consecutiveEmptyPages >= 2) break;
-                } else {
-                    consecutiveEmptyPages = 0;
-                    allFiles.push(...newFiles);
-                }
-            } catch (err) {
-                consecutiveEmptyPages++;
-                if (consecutiveEmptyPages >= 2) break;
-            }
-
-            crawlState.loaded = page;
-            onProgress({ ...crawlState });
-            page++;
-            await sleep(500);
-        }
-
-        crawlState.done = true;
-        crawlState.total = page - 1;
-        saveIndexToSession(allFiles);
-        return allFiles;
     }
 
     function highlight(text, query) {
@@ -1075,7 +991,7 @@
     }
 
     function escHtml(s) {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
     function sortFiles(files, mode) {
@@ -1083,8 +999,8 @@
             switch (mode) {
                 case 'name_asc':  return a.name.localeCompare(b.name);
                 case 'name_desc': return b.name.localeCompare(a.name);
-                case 'size_desc': return (b.sizeRaw ?? parseSizeToBytes(b.size)) - (a.sizeRaw ?? parseSizeToBytes(a.size));
-                case 'size_asc':  return (a.sizeRaw ?? parseSizeToBytes(a.size)) - (b.sizeRaw ?? parseSizeToBytes(b.size));
+                case 'size_desc': return (b.sizeRaw || 0) - (a.sizeRaw || 0);
+                case 'size_asc':  return (a.sizeRaw || 0) - (b.sizeRaw || 0);
                 case 'date_desc': return (b.timestamp || 0) - (a.timestamp || 0);
                 case 'date_asc':  return (a.timestamp || 0) - (b.timestamp || 0);
                 default: return 0;
@@ -1097,6 +1013,12 @@
         const q = query.toLowerCase();
         return index.filter(f => f.name.toLowerCase().includes(q));
     }
+
+    const DL_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>`;
 
     function renderResults(files, query, container, currentView) {
         container.innerHTML = '';
@@ -1111,6 +1033,8 @@
                 </div>`;
             return;
         }
+
+        const frag = document.createDocumentFragment();
 
         if (currentView === 'grid') {
             files.forEach(f => {
@@ -1151,10 +1075,6 @@
                 meta.className = 'fmg-meta';
                 if (f.size)    { const s = document.createElement('span'); s.textContent = f.size;    meta.appendChild(s); }
                 if (f.dateStr) { const s = document.createElement('span'); s.textContent = f.dateStr; meta.appendChild(s); }
-                const badge = document.createElement('span');
-                badge.className = 'fm-result-page-badge';
-                badge.textContent = `p.${f.page}`;
-                meta.appendChild(badge);
                 info.appendChild(meta);
                 card.appendChild(info);
 
@@ -1164,27 +1084,22 @@
                 dlA.target = '_blank';
                 dlA.rel = 'noopener noreferrer';
                 dlA.title = 'Download';
-                dlA.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="7 10 12 15 17 10"/>
-                    <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>`;
+                dlA.innerHTML = DL_ICON;
                 card.appendChild(dlA);
 
-                container.appendChild(card);
+                frag.appendChild(card);
             });
 
         } else {
             const header = document.createElement('div');
             header.className = 'fm-table-header';
-            header.style.cssText = 'display:grid;grid-template-columns:82px 1fr 90px 110px 60px 50px;';
-            ['', 'Name', 'Size', 'Date', 'Page', ''].forEach(label => {
+            ['', 'Name', 'Size', 'Date', ''].forEach(label => {
                 const th = document.createElement('div');
                 th.className = 'fm-th';
                 th.textContent = label;
                 header.appendChild(th);
             });
-            container.appendChild(header);
+            frag.appendChild(header);
 
             files.forEach(f => {
                 const row = document.createElement('a');
@@ -1222,14 +1137,6 @@
                 dateDiv.textContent = f.dateStr || '—';
                 row.appendChild(dateDiv);
 
-                const pageDiv = document.createElement('div');
-                pageDiv.className = 'fmr-cell';
-                const badge = document.createElement('span');
-                badge.className = 'fm-result-page-badge';
-                badge.textContent = `p.${f.page}`;
-                pageDiv.appendChild(badge);
-                row.appendChild(pageDiv);
-
                 const dlWrap = document.createElement('div');
                 dlWrap.className = 'fmr-dl-cell';
                 const dlA = document.createElement('a');
@@ -1238,25 +1145,72 @@
                 dlA.target = '_blank';
                 dlA.rel = 'noopener noreferrer';
                 dlA.title = 'Download';
-                dlA.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="7 10 12 15 17 10"/>
-                    <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>`;
+                dlA.innerHTML = DL_ICON;
                 dlA.addEventListener('click', e => e.stopPropagation());
                 dlWrap.appendChild(dlA);
                 row.appendChild(dlWrap);
 
-                container.appendChild(row);
+                frag.appendChild(row);
             });
         }
+
+        container.appendChild(frag);
+    }
+
+    function setSearchStatus(text) {
+        if (fmSearchStatus) fmSearchStatus.textContent = text;
+    }
+
+    function loadingNote() {
+        const btn = document.getElementById('loadAllPagesBtn');
+        if (!btn) return '';
+        return btn.disabled
+            ? ' — still loading remaining pages…'
+            : ' — only loaded pages are searched (click "Load all pages")';
+    }
+
+    function updateAndRenderSearch() {
+        if (!fmSearchInput || !fmSearchResults) return;
+        const q = fmSearchInput.value;
+        if (!q.trim()) {
+            fmSearchResults.innerHTML = '';
+            setSearchStatus(`${searchIndex.length} files ready — start typing to search${loadingNote()}`);
+            return;
+        }
+        const filtered = filterIndex(searchIndex, q);
+        const sorted = sortFiles(filtered, fmSearchSort ? fmSearchSort.value : 'name_asc');
+        setSearchStatus(`${sorted.length} of ${searchIndex.length} files${loadingNote()}`);
+        renderResults(sorted, q, fmSearchResults, fmSearchView);
+    }
+
+    function rebuildSearchIndex() {
+        searchIndex = collectFilesFromDom();
+    }
+
+    function applySearchViewMode() {
+        if (!fmSearchResults) return;
+        fmSearchResults.classList.remove('fm-search-grid', 'fm-search-table');
+        fmSearchResults.classList.add(`fm-search-${fmSearchView}`);
+        document.querySelectorAll('.fm-search-view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === fmSearchView);
+        });
+        updateAndRenderSearch();
+    }
+
+    // Re-renders the search modal if it's open (called once all pages load).
+    function refreshOpenSearchResults() {
+        const overlay = document.getElementById('fm-search-overlay');
+        if (!overlay || !overlay.classList.contains('open')) return;
+        rebuildSearchIndex();
+        updateAndRenderSearch();
     }
 
     function setupSearch() {
-
-        let searchView = loadSearchView();
-
+        // Only on pages that actually list files.
+        if (!document.getElementById('filesGrid')) return;
         if (document.getElementById('fm-search-overlay')) return;
+
+        fmSearchView = loadSearchView();
 
         const overlay = document.createElement('div');
         overlay.id = 'fm-search-overlay';
@@ -1269,7 +1223,7 @@
                         <circle cx="11" cy="11" r="8"/>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
-                    <input id="fm-search-input" type="text" placeholder="Search all pages…" autocomplete="off" spellcheck="false">
+                    <input id="fm-search-input" type="text" placeholder="Search all loaded files…" autocomplete="off" spellcheck="false">
                     <div id="fm-search-view-controls">
                         <select id="fm-search-sort" title="Sort Results">
                             <option value="name_asc">Name (A-Z)</option>
@@ -1293,61 +1247,35 @@
             </div>`;
         document.body.appendChild(overlay);
 
-        const input      = document.getElementById('fm-search-input');
-        const sortSelect = document.getElementById('fm-search-sort');
-        const status     = document.getElementById('fm-search-status');
-        const results    = document.getElementById('fm-search-results');
-        const closeBtn   = document.getElementById('fm-search-close');
+        fmSearchInput   = document.getElementById('fm-search-input');
+        fmSearchSort    = document.getElementById('fm-search-sort');
+        fmSearchStatus  = document.getElementById('fm-search-status');
+        fmSearchResults = document.getElementById('fm-search-results');
+        const closeBtn  = document.getElementById('fm-search-close');
 
-        sortSelect.value = loadSearchSort();
-
-        function updateAndRender() {
-            if (!searchIndex) return;
-            const q = input.value;
-            const filtered = filterIndex(searchIndex, q);
-            const sorted = sortFiles(filtered, sortSelect.value);
-            setStatus(`${sorted.length} of ${searchIndex.length} files`);
-            renderResults(sorted, q, results, searchView);
-        }
-
-        function applySearchView() {
-            results.classList.remove('fm-search-grid', 'fm-search-table');
-            results.classList.add(`fm-search-${searchView}`);
-            document.querySelectorAll('.fm-search-view-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.view === searchView);
-            });
-            updateAndRender();
-        }
+        fmSearchSort.value = loadSearchSort();
 
         document.getElementById('fm-search-view-controls').addEventListener('click', e => {
             const btn = e.target.closest('.fm-search-view-btn');
             if (!btn) return;
-            searchView = btn.dataset.view;
-            saveSearchView(searchView);
-            applySearchView();
+            fmSearchView = btn.dataset.view;
+            saveSearchView(fmSearchView);
+            applySearchViewMode();
         });
 
-        sortSelect.addEventListener('change', () => {
-            saveSearchSort(sortSelect.value);
-            updateAndRender();
+        fmSearchSort.addEventListener('change', () => {
+            saveSearchSort(fmSearchSort.value);
+            updateAndRenderSearch();
         });
 
-        applySearchView();
-
-        function setStatus(text, progress) {
-            if (progress !== undefined) {
-                status.innerHTML = `<span>${escHtml(text)}</span>
-                    <div class="fm-crawl-bar"><div class="fm-crawl-fill" style="width:${progress}%"></div></div>`;
-            } else {
-                status.textContent = text;
-            }
-        }
+        applySearchViewMode();
 
         function openModal() {
             overlay.classList.add('open');
-            input.focus();
-            input.select();
-            startCrawlIfNeeded();
+            rebuildSearchIndex();
+            updateAndRenderSearch();
+            fmSearchInput.focus();
+            fmSearchInput.select();
         }
 
         function closeModal() { overlay.classList.remove('open'); }
@@ -1359,7 +1287,8 @@
             if (overlay.classList.contains('open')) {
                 if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
             } else {
-                if ((e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) ||
+                const tag = document.activeElement ? document.activeElement.tagName : '';
+                if ((e.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(tag)) ||
                     (e.key === 'k' && (e.ctrlKey || e.metaKey))) {
                     e.preventDefault();
                     openModal();
@@ -1368,57 +1297,19 @@
         });
 
         let debounceTimer;
-        input.addEventListener('input', () => {
+        fmSearchInput.addEventListener('input', () => {
             clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(updateAndRender, 120);
+            debounceTimer = setTimeout(updateAndRenderSearch, 120);
         });
 
-        let crawlPromise = null;
-
-        function startCrawlIfNeeded() {
-            if (searchIndex) {
-                setStatus(`${searchIndex.length} files indexed — ready`);
-                if (input.value) updateAndRender();
-                return;
-            }
-
-            const cached = loadIndexFromSession();
-            if (cached && cached.length) {
-                searchIndex = cached;
-                setStatus(`${searchIndex.length} files indexed (cached)`);
-                if (input.value) updateAndRender();
-                return;
-            }
-
-            if (crawlPromise) return;
-
-            setStatus('Scanning pages…', 0);
-            results.innerHTML = '';
-
-            crawlPromise = buildIndex(state => {
-                const pct = state.total && state.total !== '?' ? Math.round((state.loaded / state.total) * 100) : 0;
-                setStatus(`Scanning page ${state.loaded}…`, pct);
-
-                const partial = loadIndexFromSession() || [];
-                if (input.value) {
-                    const filtered = filterIndex(partial, input.value);
-                    const sorted = sortFiles(filtered, sortSelect.value);
-                    renderResults(sorted, input.value, results, searchView);
-                }
-            }).then(files => {
-                searchIndex = files;
-                setStatus(`${files.length} files indexed across ${crawlState.total} pages`);
-                if (input.value) updateAndRender();
-            });
-        }
-
         if (!document.getElementById('searchBtn')) {
-            const viewControls = document.querySelector('.view-controls');
+            const viewControls = getToolbar();
             if (viewControls) {
                 const btn = document.createElement('button');
                 btn.id = 'searchBtn';
+                btn.type = 'button';
                 btn.title = 'Search all pages (/ or Ctrl+K)';
-                btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" stroke-width="2">
                     <circle cx="11" cy="11" r="8"/>
                     <line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -1427,27 +1318,147 @@
                 viewControls.prepend(btn);
             }
         }
+    }
 
-        startCrawlIfNeeded();
+    // =========================================
+    // ── AUTO "LOAD ALL PAGES" ──────────────────
+    // =========================================
+
+    // The site has its own "Load all pages" button. We click it ourselves,
+    // then poll until the site removes it (which it does as its last step),
+    // so this also fires if the person clicks it manually. No function
+    // patching is needed, so it doesn't matter when the site bound its
+    // click handler.
+    function setupAutoLoadAll() {
+        if (window.__fmAutoLoadAllSetup) return;
+        window.__fmAutoLoadAllSetup = true;
+
+        const btn = document.getElementById('loadAllPagesBtn');
+        if (!btn) {
+            // Single page folder (or nothing to load) — finish immediately.
+            onFolderFullyLoaded();
+            return;
+        }
+
+        const started = Date.now();
+        const timer = setInterval(() => {
+            if (!document.getElementById('loadAllPagesBtn')) {
+                clearInterval(timer);
+                onFolderFullyLoaded();
+            } else if (Date.now() - started > 10 * 60 * 1000) {
+                clearInterval(timer);
+            }
+        }, 300);
+
+        if (!btn.disabled) {
+            btn.click();
+            // Safety net in case the click handler wasn't attached.
+            setTimeout(() => {
+                const b = document.getElementById('loadAllPagesBtn');
+                if (b && !b.disabled && typeof W.loadAllFolderPages === 'function') {
+                    W.loadAllFolderPages();
+                }
+            }, 500);
+        }
+    }
+
+    // Runs once every page of the folder is in the DOM.
+    function onFolderFullyLoaded() {
+        convertItems();
+        injectDateCells();
+        document.querySelectorAll('.file-preview img').forEach(attachHoverZoom);
+
+        rebuildSearchIndex();
+        refreshOpenSearchResults();
+
+        restoreSavedView();
+        setupSearch();
+        setupTableView();
+        setupChangelogButton();
     }
 
     // =========================================
     // ── CHANGELOG / "WHAT'S NEW" POPUP ─────────
     // =========================================
 
-    function buildChangelogModal(versionsToShow, mode) {
-        if (document.getElementById('fm-changelog-backdrop')) {
-            document.getElementById('fm-changelog-backdrop').remove();
-        }
+    const CHANGELOG_HISTORY_DEPTH = 3; // versions shown in the manual view
+    let changelogCache = null;
 
-        const blocksHtml = versionsToShow.map(entry => {
+    function fetchChangelogText() {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest !== 'function') {
+                reject(new Error('GM_xmlhttpRequest unavailable'));
+                return;
+            }
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: CHANGELOG_URL + '?t=' + Date.now(),
+                timeout: 10000,
+                onload: r => (r.status >= 200 && r.status < 300)
+                    ? resolve(r.responseText)
+                    : reject(new Error('HTTP ' + r.status)),
+                onerror: () => reject(new Error('Network error')),
+                ontimeout: () => reject(new Error('Timed out')),
+            });
+        });
+    }
+
+    function fetchChangelog() {
+        if (changelogCache) return Promise.resolve(changelogCache);
+        return fetchChangelogText().then(md => {
+            changelogCache = parseChangelog(md);
+            return changelogCache;
+        });
+    }
+
+    function findChangelogIndexForVersion(entries, version) {
+        return entries.findIndex(e => e.version === version);
+    }
+
+    function parseChangelog(md) {
+        const entries = [];
+        let cur = null;
+        String(md).split(/\r?\n/).forEach(line => {
+            const h = line.match(/^##\s+v?(\d+(?:\.\d+)*)\s*(?:[—–-]+\s*(\d{4}-\d{2}-\d{2}))?\s*$/);
+            if (h) {
+                cur = { version: h[1], date: h[2] || '', changes: [] };
+                entries.push(cur);
+                return;
+            }
+            const b = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+            if (b && cur) cur.changes.push(b[1]);
+        });
+        return entries.filter(e => e.changes.length);
+    }
+
+    function renderChangelogBody(entries, opts) {
+        opts = opts || {};
+        let html = '';
+        if (opts.updateAvailableVersion) {
+            html += `<div class="fm-cl-update-banner">🔔 A newer version (v${escHtml(opts.updateAvailableVersion)}) is available on GitHub — you're currently on v${escHtml(SCRIPT_VERSION)}.</div>`;
+        }
+        html += entries.map(entry => {
             const items = entry.changes.map(c => `<li>${escHtml(c)}</li>`).join('');
+            const label = `v${escHtml(entry.version)}` + (entry.date ? ` · ${escHtml(entry.date)}` : '');
             return `
                 <div class="fm-cl-version-block">
-                    <span class="fm-cl-version-label">v${escHtml(entry.version)}</span>
+                    <span class="fm-cl-version-label">${label}</span>
                     <ul class="fm-cl-changes">${items}</ul>
                 </div>`;
         }).join('');
+        if (opts.hasMore) {
+            html += `<div class="fm-cl-more">Showing the ${entries.length} most recent versions — <a href="${CHANGELOG_PAGE_URL}" target="_blank" rel="noopener noreferrer">see full version history on GitHub</a>.</div>`;
+        }
+        return html;
+    }
+
+    function changelogMessageHtml(msg) {
+        return `<div class="fm-cl-version-block"><ul class="fm-cl-changes"><li>${escHtml(msg)}</li></ul></div>`;
+    }
+
+    // bodyHtml may be replaced later (manual open shows "Loading…" first).
+    function buildChangelogModal(bodyHtml, mode) {
+        document.getElementById('fm-changelog-backdrop')?.remove();
 
         const subtitle = mode === 'auto'
             ? `Updated to v${escHtml(SCRIPT_VERSION)}`
@@ -1465,10 +1476,13 @@
                     </div>
                     <button id="fm-cl-close" title="Close (Esc)">✕</button>
                 </div>
-                <div id="fm-cl-body">${blocksHtml}</div>
+                <div id="fm-cl-body">${bodyHtml}</div>
                 <div id="fm-cl-footer">
+                    <a class="fm-cl-link" href="${CHANGELOG_PAGE_URL}" target="_blank" rel="noopener noreferrer">
+                        🔗 Full changelog on GitHub
+                    </a>
                     <a class="fm-cl-link" href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer">
-                        🔗 View on GitHub
+                        Script source
                     </a>
                     <button id="fm-cl-ok">OK, got it</button>
                 </div>
@@ -1477,7 +1491,8 @@
 
         function close() {
             backdrop.classList.remove('open');
-            saveLastSeenVersion(SCRIPT_VERSION);
+            // Only the automatic popup counts as "seen" for the version gate.
+            if (mode === 'auto') saveLastSeenVersion(SCRIPT_VERSION);
             backdrop.remove();
             document.removeEventListener('keydown', onKeydown);
         }
@@ -1491,39 +1506,77 @@
         backdrop.classList.add('open');
     }
 
+    // Manual open (menu command / ℹ button): starts at the installed version
+    // and shows the CHANGELOG_HISTORY_DEPTH most recent entries from there,
+    // with a banner if the file lists a newer version than the one installed.
     function openChangelogModal() {
-        buildChangelogModal(VERSION_HISTORY, 'manual');
+        buildChangelogModal(changelogMessageHtml('Loading changelog…'), 'manual');
+        fetchChangelog()
+            .then(entries => {
+                const body = document.getElementById('fm-cl-body');
+                if (!body) return;
+                if (!entries.length) {
+                    body.innerHTML = changelogMessageHtml('No changelog entries found.');
+                    return;
+                }
+                const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+                const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+                const startIdx = currentIdx === -1 ? 0 : currentIdx;
+                const toShow = entries.slice(startIdx, startIdx + CHANGELOG_HISTORY_DEPTH);
+                const hasMore = entries.length > startIdx + CHANGELOG_HISTORY_DEPTH;
+                body.innerHTML = renderChangelogBody(toShow, { updateAvailableVersion, hasMore });
+            })
+            .catch(err => {
+                const body = document.getElementById('fm-cl-body');
+                if (body) body.innerHTML = changelogMessageHtml(
+                    `Couldn't load the changelog (${err.message}). Check the GitHub repo directly for the latest version history.`);
+            });
     }
 
+    // Automatic popup: once per version bump, showing only what's new since
+    // the version last seen. If the fetch fails nothing is shown and the
+    // version is NOT marked as seen, so it simply retries on the next load.
     function checkVersionAndShowChangelog() {
         const lastSeen = loadLastSeenVersion();
         if (lastSeen === SCRIPT_VERSION) return;
 
-        let toShow = [];
-        if (!lastSeen) {
-            toShow = [VERSION_HISTORY[0]];
-        } else {
-            for (const entry of VERSION_HISTORY) {
-                if (entry.version === lastSeen) break;
-                toShow.push(entry);
-            }
-            if (!toShow.length) toShow = [VERSION_HISTORY[0]];
-        }
+        fetchChangelog()
+            .then(entries => {
+                if (!entries.length) return;
 
-        buildChangelogModal(toShow, 'auto');
+                const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+                const available = currentIdx === -1 ? entries : entries.slice(currentIdx);
+                if (!available.length) return;
+
+                let toShow = [];
+                if (!lastSeen) {
+                    toShow = [available[0]];
+                } else {
+                    for (const entry of available) {
+                        if (entry.version === lastSeen) break;
+                        toShow.push(entry);
+                    }
+                    if (!toShow.length) toShow = [available[0]];
+                }
+                const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
+                buildChangelogModal(renderChangelogBody(toShow, { updateAvailableVersion }), 'auto');
+            })
+            .catch(() => {});
     }
 
     function setupChangelogButton() {
         if (document.getElementById('fm-changelog-btn')) return;
 
-        const navTarget = document.querySelector('header nav .flex')
-            || document.querySelector('header nav > div')
-            || document.querySelector('nav .flex')
-            || document.querySelector('nav');
+        // Right-hand header group (holds the Login / Register button).
+        const navTarget = document.querySelector('header .flex.items-center.gap-1')
+            || document.querySelector('header nav .flex')
+            || document.querySelector('header nav')
+            || document.querySelector('header');
         if (!navTarget) return;
 
         const btn = document.createElement('button');
         btn.id = 'fm-changelog-btn';
+        btn.type = 'button';
         btn.title = `About & changelog (v${SCRIPT_VERSION})`;
         btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2">
@@ -1533,7 +1586,7 @@
         </svg>`;
         btn.addEventListener('click', openChangelogModal);
 
-        navTarget.appendChild(btn);
+        navTarget.prepend(btn);
     }
 
     // =========================================
@@ -1545,26 +1598,36 @@
         document.querySelectorAll('.file-preview img').forEach(attachHoverZoom);
     }
 
-    run();
-
-    function initControls() {
-        setupSearch();
-        setupTableView();
-        setupChangelogButton();
-        checkVersionAndShowChangelog();
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initControls);
-    } else {
-        initControls();
-    }
-
     let runDebounceTimer = null;
     function scheduleRun() {
         clearTimeout(runDebounceTimer);
         runDebounceTimer = setTimeout(run, 50);
     }
-    const observer = new MutationObserver(scheduleRun);
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    if (typeof GM_registerMenuCommand === 'function') {
+        GM_registerMenuCommand('📋 Show Changelog', () => onReady(openChangelogModal));
+    }
+
+    onReady(function () {
+        createPopup();
+        run();
+        patchSiteHelpers();
+
+        setupSearch();
+        setupTableView();
+        setupChangelogButton();
+        checkVersionAndShowChangelog();
+
+        new MutationObserver(scheduleRun).observe(document.body, { childList: true, subtree: true });
+
+        // Deferred to a fresh task so it runs *after* the site's own
+        // DOMContentLoaded handlers (which build its file list, restore its
+        // own saved view, and bind the "Load all pages" button).
+        setTimeout(() => {
+            patchSiteHelpers();
+            restoreSavedView();
+            initDone = true;
+            setupAutoLoadAll();
+        }, 0);
+    });
 })();
