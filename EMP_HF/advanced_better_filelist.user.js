@@ -37,8 +37,8 @@ var DEFAULT_SETTINGS = {
     tagColumnsEnabled: false,         // off by default — moves the tag list into the middle column and lays it out in columns
     thumbHoverPreviewEnabled: false,  // off by default — hovering a known-host thumbnail (.th. etc.) pops up the full-size image
     thumbFullSizeEnabled: false,      // off by default — swaps known-host thumbnails for their full-size images in place (pauses the hover preview)
-    thumbFullSizeMaxWidth: 800,       // px — largest box a swapped full-size image is shown in (also never wider than its container)
-    thumbFullSizeMaxHeight: 800,      // px
+    thumbFullSizeMaxWidth: 500,       // px — largest box a swapped full-size image is shown in (also never wider than its container)
+    thumbFullSizeMaxHeight: 500,      // px
 };
 var SETTINGS_KEY_PREFIX = 'abf_setting_';
 
