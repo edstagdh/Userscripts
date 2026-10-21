@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     3.3
+// @version     3.8
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -53,7 +53,7 @@ let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
 // --------------------
-const SCRIPT_VERSION = '3.3';
+const SCRIPT_VERSION = '3.8';
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/AVE_Changelog.md';
 let changelogCache = null;
 const CHANGELOG_HISTORY_DEPTH = 3; // how many versions to show in the manual "Show Changelog" view
@@ -132,6 +132,29 @@ let UPLOADER_BLACKLIST_EXPIRY = {};
             });
         }
     } catch (e) { UPLOADER_BLACKLIST_EXPIRY = {}; }
+})();
+
+// Per-uploader tag rules: { "<uploader>": { "<tag>": expiryMs | 0 } }  (0 = permanent).
+// A tag listed under an uploader only hides items uploaded by THAT uploader.
+let UPLOADER_TAG_RULES = {};
+(function () {
+    try {
+        const parsed = JSON.parse(GM_getValue('UPLOADER_TAG_RULES', '{}'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            Object.keys(parsed).forEach(function (u) {
+                const uk   = String(u).toLowerCase().trim();
+                const tags = parsed[u];
+                if (!uk || !tags || typeof tags !== 'object' || Array.isArray(tags)) return;
+                Object.keys(tags).forEach(function (t) {
+                    const tk  = String(t).toLowerCase().trim();
+                    if (!tk) return;
+                    const exp = Number(tags[t]);
+                    if (!UPLOADER_TAG_RULES[uk]) UPLOADER_TAG_RULES[uk] = {};
+                    UPLOADER_TAG_RULES[uk][tk] = (isFinite(exp) && exp > 0) ? exp : 0;
+                });
+            });
+        }
+    } catch (e) { UPLOADER_TAG_RULES = {}; }
 })();
 
 // --------------------
@@ -757,6 +780,142 @@ GM_addStyle(`
 `);
 
 // --------------------
+// CSS — uploader + tag rules
+// --------------------
+GM_addStyle(`
+.vg-tag-chip.vg-tag-ubl {
+    background: #102a2e; color: #4fd0e0; border-color: #1f6068;
+}
+.vg-tag-chip.vg-tag-ubl:hover { background: #143640; color: #7fe6f2; border-color: #2f8a96; }
+#vsm-utr-container {
+    padding: 6px 0 4px; display: flex; flex-direction: column; gap: 6px; min-height: 24px;
+}
+#vsm-utr-container .vsm-utr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+#vsm-utr-container .vsm-utr-user { font-size: 11px; font-weight: 700; color: #b070e0; margin-right: 2px; }
+#vsm-utr-container .vsm-utr-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 4px 2px 7px; border-radius: 3px;
+    background: #102a2e; color: #4fd0e0; border: 1px solid #1f6068;
+}
+#vsm-utr-container .vsm-utr-chip.vsm-utr-shadowed { opacity: 0.55; }
+#vsm-utr-container .vsm-utr-chip button {
+    background: none; border: none; color: #3fa8b6;
+    font-size: 13px; line-height: 1; cursor: pointer;
+    padding: 0 1px; margin-left: 1px; transition: color 0.12s;
+}
+#vsm-utr-container .vsm-utr-chip button:hover { color: #7fe6f2; }
+#vsm-utr-container .vsm-bl-time { font-size: 9px; font-weight: 500; opacity: 0.75; margin-left: 2px; }
+#vsm-utr-add-row { display: flex; gap: 6px; align-items: center; padding: 6px 0; }
+#vsm-utr-add-row input {
+    background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0;
+    padding: 3px 7px; border-radius: 3px; font-size: 11px; outline: none;
+    transition: border-color 0.15s;
+}
+#vsm-utr-add-row input:focus { border-color: #888; }
+#vsm-utr-user-input { width: 120px; }
+#vsm-utr-tags-input { flex: 1; min-width: 0; }
+#vsm-utr-add-btn, #vsm-utr-clear-btn { padding: 4px 10px; font-size: 10px; }
+`);
+
+// --------------------
+// CSS — uploader tag-block icon + popup
+// --------------------
+GM_addStyle(`
+.vg-uname, .vg-footer-block-btn, .vg-uploader-block-btn,
+.vg-footer-utag-btn, .vg-uploader-utag-btn {
+    box-sizing: border-box; height: 18px; margin: 0;
+    font-family: Arial, sans-serif; font-size: 11px; font-weight: 700;
+    border-radius: 3px; cursor: pointer; opacity: 1 !important;
+    vertical-align: middle; white-space: nowrap; text-decoration: none !important;
+    transition: background 0.15s, box-shadow 0.15s;
+}
+.vg-footer-block-btn, .vg-uploader-block-btn,
+.vg-footer-utag-btn, .vg-uploader-utag-btn {
+    display: inline-flex !important; align-items: center; justify-content: center;
+    width: 22px; padding: 0; line-height: 1;
+}
+.vg-uname {
+    display: inline-block !important; max-width: 140px; padding: 0 7px;
+    line-height: 16px; overflow: hidden; text-overflow: ellipsis;
+}
+/* teal: uploader name + tag-block button (muted, brightens on hover) */
+.vg-uname, .vg-footer-utag-btn, .vg-uploader-utag-btn {
+    color: #6fd6e6 !important; background: #12323a !important;
+    border: 1px solid #1f5560 !important; box-shadow: none;
+}
+.vg-uname:hover, .vg-footer-utag-btn:hover, .vg-uploader-utag-btn:hover {
+    color: #9be8f5 !important; background: #174250 !important;
+    border-color: #2b7a8a !important;
+}
+/* red: block-uploader button */
+.vg-footer-block-btn, .vg-uploader-block-btn {
+    color: #f08080 !important; background: #3a1a1a !important;
+    border: 1px solid #6a2a2a !important; box-shadow: none;
+}
+.vg-footer-block-btn:hover, .vg-uploader-block-btn:hover {
+    color: #ff9a9a !important; background: #4a2020 !important;
+    border-color: #8a3636 !important;
+}
+/* blocked uploader (gallery card) */
+.vg-uname.vg-uploader-bl {
+    background: #3a1414 !important; color: #ff8a8a !important;
+    border-color: #883030 !important; box-shadow: none;
+    text-decoration: line-through !important;
+}
+/* list view: the two buttons sit together after the name */
+.vg-uploader-btn-group {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: 6px; vertical-align: middle;
+}
+#vg-utag-popup {
+    display: none; position: absolute; z-index: 999999;
+    background: #191919; border: 1px solid #383838; border-radius: 5px;
+    padding: 10px 12px; width: 270px; color: #d0d0d0; font-size: 11px;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.65);
+}
+#vg-utag-popup .vut-title {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #888; margin-bottom: 8px;
+    padding-bottom: 5px; border-bottom: 1px solid #2a2a2a;
+}
+#vg-utag-popup .vut-title b { color: #b070e0; text-transform: none; letter-spacing: 0; }
+#vg-utag-popup label { display: block; color: #999; font-size: 10px; margin: 6px 0 3px; }
+#vg-utag-popup select, #vg-utag-popup input[type="text"] {
+    width: 100%; box-sizing: border-box;
+    background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0;
+    padding: 4px 6px; border-radius: 3px; font-size: 11px; outline: none;
+}
+#vg-utag-popup select:focus, #vg-utag-popup input[type="text"]:focus { border-color: #888; }
+#vg-utag-popup .vut-error { min-height: 13px; color: #e06060; font-size: 10px; margin-top: 4px; }
+#vg-utag-popup .vut-btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+#vg-utag-popup .vut-btn {
+    padding: 4px 12px; font-size: 11px; font-weight: 600;
+    border-radius: 3px; cursor: pointer; border: 1px solid;
+}
+#vg-utag-popup .vut-btn-cancel { background: #2a2a2a; border-color: #444; color: #888; }
+#vg-utag-popup .vut-btn-cancel:hover { background: #333; color: #bbb; }
+#vg-utag-popup .vut-btn-ok { background: #3a1f4a; border-color: #7a40a0; color: #c898e8; }
+#vg-utag-popup .vut-btn-ok:hover { background: #4a2a5e; color: #e0b8ff; }
+#vg-utag-popup .vut-existing {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+    margin-top: 8px; padding-top: 6px; border-top: 1px solid #2a2a2a;
+}
+#vg-utag-popup .vut-existing-label { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: 0.06em; margin-right: 3px; }
+#vg-utag-popup .vut-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 4px 2px 7px; border-radius: 3px;
+    background: #102a2e; color: #4fd0e0; border: 1px solid #1f6068;
+}
+#vg-utag-popup .vut-chip button {
+    background: none; border: none; color: #3fa8b6;
+    font-size: 13px; line-height: 1; cursor: pointer; padding: 0 1px;
+}
+#vg-utag-popup .vut-chip button:hover { color: #7fe6f2; }
+`);
+
+// --------------------
 // CSS — changelog popup
 // --------------------
 GM_addStyle(`
@@ -964,9 +1123,9 @@ function buildSettingsOverlay() {
                 <div class="vsm-section" id="vsm-fav-tags-section">
                     <p class="vsm-section-title">Favorite Tags</p>
                     ${row('Tag Popup Click Action',
-                          'What clicking a tag chip in the Tags popup does. Popup shows current mode. Tags are mutually exclusive between lists.',
+                          'What clicking a tag chip in the Tags popup does. Popup shows current mode. Shift+click in blacklist mode blocks the tag for just that uploader. Tags are mutually exclusive between the global lists.',
                           select('vsm-TAG_CLICK_ACTION',
-                                 [['blacklist','Blacklist tag'],['favorite','Add to favorites']],
+                                 [['blacklist','Blacklist tag (everyone)'],['uploader_tag','Blacklist tag for this uploader only'],['favorite','Add to favorites']],
                                  TAG_CLICK_ACTION))}
                     <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
                         <span class="vsm-label">Glow Color</span>
@@ -992,13 +1151,28 @@ function buildSettingsOverlay() {
                     <p class="vsm-section-title">Uploader Blacklist</p>
                     <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
                         <span class="vsm-label">Blacklisted Uploaders</span>
-                        <span class="vsm-hint">Rows/cards from blacklisted uploaders are hidden. Click ⛔ next to an uploader name to block them — you'll be asked for a duration (permanent by default). Timed blocks show their remaining time and expire automatically. Changes apply without saving.</span>
+                        <span class="vsm-hint">Rows/cards from blacklisted uploaders are hidden. Click the red ✕ next to an uploader name to block them — you'll be asked for a duration (permanent by default). Timed blocks show their remaining time and expire automatically. Changes apply without saving.</span>
                     </div>
                     <div id="vsm-uploader-chips-container"></div>
                     <div id="vsm-uploader-add-row">
                         <input type="text" id="vsm-uploader-add-input" placeholder="e.g. username123" autocomplete="off">
                         <button class="vsm-btn vsm-btn-save" id="vsm-uploader-add-btn" type="button">Add</button>
                         <button class="vsm-btn vsm-btn-reset" id="vsm-uploader-clear-btn" type="button">Clear all</button>
+                    </div>
+                </div>
+
+                <div class="vsm-section" id="vsm-utr-section">
+                    <p class="vsm-section-title">Uploader + Tag Rules</p>
+                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
+                        <span class="vsm-label">Tags blocked per uploader</span>
+                        <span class="vsm-hint">A tag listed under an uploader hides only items uploaded by that uploader. These rules are checked after the global Tag Blacklist and the Uploader Blacklist, so a tag on the global list always applies to everyone. Separate several tags with spaces or commas. In gallery view you can also Shift+click a tag in the Tags popup.</span>
+                    </div>
+                    <div id="vsm-utr-container"></div>
+                    <div id="vsm-utr-add-row">
+                        <input type="text" id="vsm-utr-user-input" placeholder="uploader" autocomplete="off">
+                        <input type="text" id="vsm-utr-tags-input" placeholder="e.g. oral  or  big.tits scat" autocomplete="off">
+                        <button class="vsm-btn vsm-btn-save" id="vsm-utr-add-btn" type="button">Add</button>
+                        <button class="vsm-btn vsm-btn-reset" id="vsm-utr-clear-btn" type="button">Clear all</button>
                     </div>
                 </div>
 
@@ -1077,6 +1251,37 @@ function buildSettingsOverlay() {
         refreshUploaderSettingsPanel();
     });
 
+    // Uploader + tag rule handlers
+    jQuery(document).on('click', '#vsm-utr-add-btn', function() {
+        const uploader = jQuery('#vsm-utr-user-input').val().trim().toLowerCase();
+        const raw      = jQuery('#vsm-utr-tags-input').val().trim().toLowerCase();
+        if (!uploader || !raw || uploader === 'anon' || uploader === 'anonymous') return;
+        const tags = [];
+        raw.split(/[\s,]+/).forEach(function (t) {
+            t = t.trim();
+            if (t && tags.indexOf(t) === -1) tags.push(t);
+        });
+        if (!tags.length) return;
+        showBlockDurationDialog(tags, function (durationMs) {
+            tags.forEach(t => addUploaderTagRule(uploader, t, durationMs));
+            applyBlacklistsToPage();
+            jQuery('#vsm-utr-tags-input').val('');
+            refreshUploaderTagRulesPanel();
+        }, { title: '\u26D4 Block tags for uploader', target: uploader + ': ' + tags.join(', ') });
+    });
+    jQuery(document).on('keydown', '#vsm-utr-user-input, #vsm-utr-tags-input', function(e) {
+        if (e.key === 'Enter') jQuery('#vsm-utr-add-btn').trigger('click');
+    });
+    jQuery(document).on('click', '#vsm-utr-clear-btn', function() {
+        const n = countUploaderTagRules();
+        if (!n) return;
+        if (!confirm('Remove all ' + n + ' uploader + tag rule(s)?')) return;
+        UPLOADER_TAG_RULES = {};
+        saveUploaderTagRules();
+        applyBlacklistsToPage();
+        refreshUploaderTagRulesPanel();
+    });
+
     // Favorite tags handlers
     jQuery(document).on('click', '#vsm-fav-add-btn', function() {
         const val = jQuery('#vsm-fav-add-input').val().trim().toLowerCase();
@@ -1128,6 +1333,7 @@ function openOverlay()  {
     jQuery('#viewer-settings-backdrop').addClass('active');
     refreshTagSettingsPanel();
     refreshUploaderSettingsPanel();
+    refreshUploaderTagRulesPanel();
     refreshFavoriteTagsPanel();
     buildGlowSwatches();
 }
@@ -1555,7 +1761,8 @@ function buildGalleryCard($row) {
             }
             if (rowTags.length) {
                 const $tagsBtn = jQuery('<button class="vg-download-btn vg-tags-btn" type="button">').html('🏷 Tags');
-                $tagsBtn.on('mouseenter', function () { showTagsPopup(jQuery(this), rowTags); });
+                const rowUploader = getUploaderFromRow($row);
+                $tagsBtn.on('mouseenter', function () { showTagsPopup(jQuery(this), rowTags, rowUploader); });
                 $tagsBtn.on('mouseleave', scheduleHideTagsPopup);
                 $btnRow.append($tagsBtn);
             }
@@ -1625,10 +1832,11 @@ function buildGalleryCard($row) {
             if (uploaderText) {
                 const uploaderKey = uploaderText.toLowerCase();
                 const isUlBl = isUploaderBlacklisted(uploaderKey);
-                const $ulWrap = jQuery('<span style="display:inline-flex;align-items:center;gap:1px;">');
-                const $uploaderAnchor = jQuery('<a>')
+                const $ulWrap = jQuery('<span style="display:inline-flex;align-items:center;gap:5px;">');
+                const $uploaderAnchor = jQuery('<a class="vg-uname">')
                 .attr('href', uploaderHref)
-                .text('👤 ' + uploaderText)
+                .attr('title', uploaderText)
+                .text(uploaderText)
                 .toggleClass('vg-uploader-bl', isUlBl);
 
                 if (cols.uploader < 0) {
@@ -1661,7 +1869,7 @@ function buildGalleryCard($row) {
                 $uploaderAnchor.appendTo($ulWrap);
                 const $blockBtn = jQuery('<button class="vg-footer-block-btn" type="button">')
                 .attr('title', isUlBl ? 'Blocked — click to unblock ' + uploaderText : 'Block uploader: ' + uploaderText)
-                .text('⛔');
+                .text('✕');
                 $blockBtn.on('click', function (e) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1674,6 +1882,17 @@ function buildGalleryCard($row) {
                     });
                 });
                 $ulWrap.append($blockBtn);
+                if (uploaderKey !== 'anon' && uploaderKey !== 'anonymous') {
+                    const $utagBtn = jQuery('<button class="vg-footer-utag-btn" type="button">')
+                    .attr('title', 'Block a tag for ' + uploaderText + ' only')
+                    .text('#');
+                    $utagBtn.on('click', function (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        showUploaderTagPopup(jQuery(this), uploaderKey, rowTags);
+                    });
+                    $ulWrap.append($utagBtn);
+                }
                 $footer.append($ulWrap);
             }
             if (timeDisplay) {
@@ -1776,7 +1995,7 @@ function buildGalleryView() {
 
         $rows.each(function () {
             const $r = jQuery(this);
-            if (rowMatchesBlacklist($r) || rowMatchesUploaderBlacklist($r)) return; // hidden by blacklist
+            if (rowIsBlacklisted($r)) return; // hidden by a blacklist rule
             const $card = buildGalleryCard($r);
             if ($card) $grid.append($card);
         });
@@ -1913,7 +2132,7 @@ function applyBlacklistsToPage() {
     : 'tr.torrent';
     jQuery(rowSel).each(function () {
         const $r = jQuery(this);
-        const hide = rowMatchesBlacklist($r) || rowMatchesUploaderBlacklist($r);
+        const hide = rowIsBlacklisted($r);
         if (hide) {
             $r.addClass('vg-bl-hidden').hide();
             removeGlowFromRow($r);
@@ -2011,6 +2230,280 @@ function removeUploaderFromBlacklist(name) {
     saveUploaderBlacklist();
 }
 
+// --------------------
+// UPLOADER + TAG RULES — HELPERS
+// Evaluation order (see getRowHideReason):
+//   1. global Tag Blacklist  -> hides for everyone
+//   2. Uploader Blacklist    -> hides everything from that uploader
+//   3. Uploader + Tag rules  -> hides an item only if ITS uploader has that tag listed
+// --------------------
+function saveUploaderTagRules() {
+    GM_setValue('UPLOADER_TAG_RULES', JSON.stringify(UPLOADER_TAG_RULES));
+}
+
+function isUploaderTagRuleActive(uploader, tag) {
+    uploader = String(uploader || '').toLowerCase().trim();
+    tag      = String(tag || '').toLowerCase().trim();
+    const rules = UPLOADER_TAG_RULES[uploader];
+    if (!rules || !Object.prototype.hasOwnProperty.call(rules, tag)) return false;
+    const exp = rules[tag];
+    return !exp || exp > Date.now();
+}
+
+// durationMs falsy/0 => permanent
+function addUploaderTagRule(uploader, tag, durationMs) {
+    uploader = String(uploader || '').toLowerCase().trim();
+    tag      = String(tag || '').toLowerCase().trim();
+    if (!uploader || !tag || uploader === 'anon' || uploader === 'anonymous') return;
+    if (!UPLOADER_TAG_RULES[uploader]) UPLOADER_TAG_RULES[uploader] = {};
+    UPLOADER_TAG_RULES[uploader][tag] = (durationMs && durationMs > 0) ? Date.now() + durationMs : 0;
+    saveUploaderTagRules();
+}
+
+function removeUploaderTagRule(uploader, tag) {
+    uploader = String(uploader || '').toLowerCase().trim();
+    tag      = String(tag || '').toLowerCase().trim();
+    if (UPLOADER_TAG_RULES[uploader]) {
+        delete UPLOADER_TAG_RULES[uploader][tag];
+        if (!Object.keys(UPLOADER_TAG_RULES[uploader]).length) delete UPLOADER_TAG_RULES[uploader];
+    }
+    saveUploaderTagRules();
+}
+
+function countUploaderTagRules() {
+    let n = 0;
+    Object.keys(UPLOADER_TAG_RULES).forEach(function (u) {
+        Object.keys(UPLOADER_TAG_RULES[u]).forEach(function (t) {
+            if (isUploaderTagRuleActive(u, t)) n++;
+        });
+    });
+    return n;
+}
+
+// Drops expired rules. Returns true if anything was removed.
+function purgeExpiredUploaderTagRules() {
+    let changed = false;
+    Object.keys(UPLOADER_TAG_RULES).forEach(function (u) {
+        Object.keys(UPLOADER_TAG_RULES[u]).forEach(function (t) {
+            const exp = UPLOADER_TAG_RULES[u][t];
+            if (exp && exp <= Date.now()) { delete UPLOADER_TAG_RULES[u][t]; changed = true; }
+        });
+        if (!Object.keys(UPLOADER_TAG_RULES[u]).length) { delete UPLOADER_TAG_RULES[u]; changed = true; }
+    });
+    if (changed) saveUploaderTagRules();
+    return changed;
+}
+
+// Purges both timed uploader blocks and timed uploader+tag rules. Returns true if anything changed.
+function purgeAllExpired() {
+    const a = purgeExpiredUploaders();
+    const b = purgeExpiredUploaderTagRules();
+    return a || b;
+}
+
+function rowMatchesUploaderTagRules($row) {
+    if (!Object.keys(UPLOADER_TAG_RULES).length) return false;
+    const uploader = getUploaderFromRow($row);
+    if (!uploader || !UPLOADER_TAG_RULES[uploader]) return false;
+    return getTagsFromRow($row).some(t => isUploaderTagRuleActive(uploader, t));
+}
+
+// Returns 'tag' | 'uploader' | 'uploader-tag' | null, checked in that order.
+function getRowHideReason($row) {
+    if (rowMatchesBlacklist($row))            return 'tag';
+    if (rowMatchesUploaderBlacklist($row))    return 'uploader';
+    if (rowMatchesUploaderTagRules($row))     return 'uploader-tag';
+    return null;
+}
+
+function rowIsBlacklisted($row) {
+    return getRowHideReason($row) !== null;
+}
+
+// Remove the rule if it exists, otherwise ask for a duration and add it.
+function toggleUploaderTagRule(uploader, tag, onDone) {
+    uploader = String(uploader || '').toLowerCase().trim();
+    tag      = String(tag || '').toLowerCase().trim();
+    if (!uploader || !tag || uploader === 'anon' || uploader === 'anonymous') return;
+
+    function finish() {
+        applyBlacklistsToPage();
+        refreshUploaderTagRulesPanel();
+        if (onDone) onDone();
+    }
+
+    if (isUploaderTagRuleActive(uploader, tag)) {
+        removeUploaderTagRule(uploader, tag);
+        finish();
+    } else {
+        showBlockDurationDialog([tag], function (durationMs) {
+            addUploaderTagRule(uploader, tag, durationMs);
+            finish();
+        }, { title: '\u26D4 Block tag for uploader', target: uploader + ': ' + tag });
+    }
+}
+
+// --------------------
+// UPLOADER TAG-BLOCK POPUP (icon next to an uploader name)
+// Dropdown is filled from the item's tags; free text is also accepted.
+// --------------------
+let $utagPopupEl = null;
+
+function hideUploaderTagPopup() {
+    if ($utagPopupEl) $utagPopupEl.hide().removeData('anchor');
+    jQuery(document).off('mousedown.vut keydown.vut');
+}
+
+function showUploaderTagPopup($anchor, uploader, rowTags) {
+    uploader = String(uploader || '').toLowerCase().trim();
+    if (!uploader || uploader === 'anon' || uploader === 'anonymous') return;
+
+    if (!$utagPopupEl) $utagPopupEl = jQuery('<div id="vg-utag-popup">').appendTo('body');
+
+    // Clicking the same icon again closes the popup
+    if ($utagPopupEl.is(':visible') && $utagPopupEl.data('anchor') === $anchor[0]) {
+        hideUploaderTagPopup();
+        return;
+    }
+    hideUploaderTagPopup();
+
+    const tags = (rowTags || []).filter((t, i, a) => a.indexOf(t) === i);
+    const $p   = $utagPopupEl.empty().data('anchor', $anchor[0]);
+
+    jQuery('<div class="vut-title">').text('Block tag for ').append(jQuery('<b>').text(uploader)).appendTo($p);
+
+    jQuery('<label for="vut-select">').text(tags.length ? 'Pick from this item\u2019s tags' : 'This item has no tags').appendTo($p);
+    const $sel = jQuery('<select id="vut-select">');
+    $sel.append(jQuery('<option value="">').text('\u2014 choose a tag \u2014'));
+    tags.forEach(function (t) {
+        const globalBl = TAG_BLACKLIST.indexOf(t) !== -1;
+        const ruled    = isUploaderTagRuleActive(uploader, t);
+        const $o = jQuery('<option>').val(t).text(t + (globalBl ? '  (blocked for everyone)' : ruled ? '  (already blocked)' : ''));
+        if (globalBl || ruled) $o.prop('disabled', true);
+        $sel.append($o);
+    });
+    if (!tags.length) $sel.prop('disabled', true);
+    $p.append($sel);
+
+    jQuery('<label for="vut-text">').text('Or type a tag (several: space or comma)').appendTo($p);
+    const $txt = jQuery('<input type="text" id="vut-text" placeholder="e.g. oral" autocomplete="off">');
+    $p.append($txt);
+
+    const $err = jQuery('<div class="vut-error">').appendTo($p);
+
+    const $btns   = jQuery('<div class="vut-btns">').appendTo($p);
+    const $cancel = jQuery('<button type="button" class="vut-btn vut-btn-cancel">').text('Cancel').appendTo($btns);
+    const $ok     = jQuery('<button type="button" class="vut-btn vut-btn-ok">').text('Block\u2026').appendTo($btns);
+
+    function submit() {
+        const list = [];
+        const picked = $sel.val();
+        if (picked) list.push(picked);
+        $txt.val().trim().toLowerCase().split(/[\s,]+/).forEach(function (t) {
+            t = t.trim();
+            if (t && list.indexOf(t) === -1) list.push(t);
+        });
+        if (!list.length) { $err.text('Pick a tag or type one.'); return; }
+        const fresh = list.filter(t => TAG_BLACKLIST.indexOf(t) === -1 && !isUploaderTagRuleActive(uploader, t));
+        if (!fresh.length) { $err.text('Already blocked for this uploader.'); return; }
+        hideUploaderTagPopup();
+        showBlockDurationDialog(fresh, function (durationMs) {
+            fresh.forEach(t => addUploaderTagRule(uploader, t, durationMs));
+            applyBlacklistsToPage();
+            refreshUploaderTagRulesPanel();
+        }, { title: '\u26D4 Block tags for uploader', target: uploader + ': ' + fresh.join(', ') });
+    }
+    $ok.on('click', submit);
+    $cancel.on('click', hideUploaderTagPopup);
+    $txt.on('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+
+    // Existing rules for this uploader, removable in place
+    const active = Object.keys(UPLOADER_TAG_RULES[uploader] || {}).filter(t => isUploaderTagRuleActive(uploader, t)).sort();
+    if (active.length) {
+        const $ex = jQuery('<div class="vut-existing">').appendTo($p);
+        jQuery('<span class="vut-existing-label">').text('Blocked:').appendTo($ex);
+        active.forEach(function (t) {
+            const $chip = jQuery('<span class="vut-chip">').text(t);
+            const $rm   = jQuery('<button type="button" title="Remove">').html('&times;');
+            $rm.on('click', function () {
+                removeUploaderTagRule(uploader, t);
+                $chip.remove();
+                if (!$ex.find('.vut-chip').length) $ex.remove();
+                $sel.find('option').filter(function () { return this.value === t; })
+                    .prop('disabled', TAG_BLACKLIST.indexOf(t) !== -1).text(t + (TAG_BLACKLIST.indexOf(t) !== -1 ? '  (blocked for everyone)' : ''));
+                applyBlacklistsToPage();
+                refreshUploaderTagRulesPanel();
+            });
+            $chip.append($rm);
+            $ex.append($chip);
+        });
+    }
+
+    // Position below the icon, clamped to the viewport's right edge
+    const rect       = $anchor[0].getBoundingClientRect();
+    const scrollTop  = window.pageYOffset || document.documentElement.scrollTop;
+    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+    $p.css({ display: 'block', top: (rect.bottom + scrollTop + 4) + 'px', left: (rect.left + scrollLeft) + 'px' });
+    const pr = $p[0].getBoundingClientRect();
+    if (pr.right > window.innerWidth - 10) {
+        $p.css('left', (Math.max(10, window.innerWidth - pr.width - 10) + scrollLeft) + 'px');
+    }
+
+    // Dismiss on outside click or Escape
+    jQuery(document).on('mousedown.vut', function (e) {
+        if ($p[0].contains(e.target) || $anchor[0].contains(e.target)) return;
+        hideUploaderTagPopup();
+    });
+    jQuery(document).on('keydown.vut', function (e) {
+        if (e.key === 'Escape') hideUploaderTagPopup();
+    });
+
+    setTimeout(() => (tags.length ? $sel : $txt).trigger('focus'), 0);
+}
+
+function refreshUploaderTagRulesPanel() {
+    const $container = jQuery('#vsm-utr-container');
+    if (!$container.length) return;
+    $container.empty();
+    let shown = 0;
+    Object.keys(UPLOADER_TAG_RULES).sort().forEach(function (u) {
+        const tags = Object.keys(UPLOADER_TAG_RULES[u]).filter(t => isUploaderTagRuleActive(u, t)).sort();
+        if (!tags.length) return;
+        shown++;
+        const $row = jQuery('<div class="vsm-utr-row">');
+        jQuery('<span class="vsm-utr-user">').text(u + ':').appendTo($row);
+        tags.forEach(function (t) {
+            const exp = UPLOADER_TAG_RULES[u][t];
+            const $chip = jQuery('<span class="vsm-utr-chip">').text(t);
+            if (exp) {
+                jQuery('<span class="vsm-bl-time">')
+                    .text('\u00B7 ' + formatRemaining(exp - Date.now()))
+                    .attr('title', 'Expires ' + new Date(exp).toLocaleString())
+                    .appendTo($chip);
+            }
+            if (TAG_BLACKLIST.indexOf(t) !== -1) {
+                $chip.addClass('vsm-utr-shadowed').attr('title', 'Also covered by the global tag blacklist');
+            } else if (isUploaderBlacklisted(u)) {
+                $chip.addClass('vsm-utr-shadowed').attr('title', 'Also covered by the uploader blacklist');
+            }
+            const $rm = jQuery('<button type="button" title="Remove">').html('&times;');
+            $rm.on('click', function () {
+                removeUploaderTagRule(u, t);
+                applyBlacklistsToPage();
+                refreshUploaderTagRulesPanel();
+            });
+            $chip.append($rm);
+            $row.append($chip);
+        });
+        $container.append($row);
+    });
+    if (!shown) {
+        $container.append(
+            jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No uploader + tag rules.')
+        );
+    }
+}
+
 function formatRemaining(ms) {
     const mins = Math.max(1, Math.ceil(ms / 60000));
     if (mins < 60) return mins + 'm';
@@ -2045,6 +2538,13 @@ function getUploaderFromRow($row) {
             const name = m[1].trim().toLowerCase();
             if (name && ANON.indexOf(name) === -1) return name;
         }
+    }
+    // Strategy 3: first user-profile link inside the title cell (inline "uploaded by"
+    // link on pages without an uploader column, e.g. torrents.php?action=notify)
+    if (cols.title >= 0) {
+        const $a   = $row.find('> td').eq(cols.title).find('a[href*="user.php?id="]').first();
+        const name = $a.text().trim().toLowerCase();
+        if (name && ANON.indexOf(name) === -1) return name;
     }
     return null;
 }
@@ -2143,11 +2643,13 @@ function ensureBlockDialog() {
 }
 
 // names: array of uploader names; onConfirm(durationMs) — 0 means permanent.
-function showBlockDurationDialog(names, onConfirm) {
+function showBlockDurationDialog(names, onConfirm, opts) {
+    opts = opts || {};
     ensureBlockDialog();
     const $bd = jQuery('#vbd-backdrop');
 
-    jQuery('#vbd-target').text(names.join(', '));
+    jQuery('#vbd-modal .vbd-header').text(opts.title || '\u26D4 Block uploader');
+    jQuery('#vbd-target').text(opts.target || names.join(', '));
     jQuery('#vbd-duration').val('permanent');
     jQuery('#vbd-custom-days').val(14);
     jQuery('#vbd-custom-row').hide();
@@ -2201,7 +2703,7 @@ function showBlockDurationDialog(names, onConfirm) {
 // Adds a ⛔ block button next to the uploader name in the uploader column (table view).
 function addUploaderBlockBtnToRow($row) {
     const cols = getGalleryColOffsets();
-    if (cols.uploader < 0) return; // page has no uploader column
+    if (cols.uploader < 0) { addUploaderTagBtnFallback($row, cols); return; } // no uploader column
     const $td = $row.find('> td').eq(cols.uploader);
     if ($td.data('vg-uploader-btn-added')) return;
     $td.data('vg-uploader-btn-added', true);
@@ -2209,16 +2711,46 @@ function addUploaderBlockBtnToRow($row) {
     const uploader = getUploaderFromRow($row);
     if (!uploader) return;
 
-    const $btn = jQuery('<button class="vg-uploader-block-btn" type="button" title="Block uploader: ' + uploader + '">⛔</button>');
+    const $btn = jQuery('<button class="vg-uploader-block-btn" type="button" title="Block uploader: ' + uploader + '">✕</button>');
     $btn.on('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
         toggleUploaderInBlacklist(uploader);
     });
+    const $utagBtn = jQuery('<button class="vg-uploader-utag-btn" type="button">')
+        .attr('title', 'Block a tag for ' + uploader + ' only')
+        .text('#');
+    $utagBtn.on('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        showUploaderTagPopup(jQuery(this), uploader, getTagsFromRow($row));
+    });
     // Append after the link (or at end of cell)
+    const $group = jQuery('<span class="vg-uploader-btn-group">').append($btn, $utagBtn);
     const $link = $td.find('a').first();
-    if ($link.length) $link.after($btn);
-    else $td.append($btn);
+    if ($link.length) { $link.addClass('vg-uname'); $link.after($group); }
+    else $td.append($group);
+}
+
+// Pages without an uploader column (e.g. notify): put the tag-block icon after the
+// uploader's profile link inside the title cell, when there is one.
+function addUploaderTagBtnFallback($row, cols) {
+    if (cols.title < 0 || $row.data('vg-utag-fallback-added')) return;
+    const $a = $row.find('> td').eq(cols.title).find('a[href*="user.php?id="]').first();
+    if (!$a.length) return;
+    $row.data('vg-utag-fallback-added', true);
+    const uploader = getUploaderFromRow($row);
+    if (!uploader) return;
+    const $utagBtn = jQuery('<button class="vg-uploader-utag-btn" type="button">')
+        .attr('title', 'Block a tag for ' + uploader + ' only')
+        .text('#');
+    $utagBtn.on('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        showUploaderTagPopup(jQuery(this), uploader, getTagsFromRow($row));
+    });
+    $a.addClass('vg-uname');
+    $a.after(jQuery('<span class="vg-uploader-btn-group">').append($utagBtn));
 }
 
 // --------------------
@@ -2391,48 +2923,80 @@ function scheduleHideTagsPopup() {
     }, 200);
 }
 
-function showTagsPopup($btn, tags) {
+function showTagsPopup($btn, tags, rowUploader) {
     ensureTagsPopup();
     if (tagsHideTimer) { clearTimeout(tagsHideTimer); tagsHideTimer = null; }
 
     $tagsPopupEl.empty();
 
+    const canScope = !!rowUploader;
+
     // Mode hint line
-    const modeLabel = TAG_CLICK_ACTION === 'favorite' ? '★ Click to favorite / unfavorite' : '✖ Click to blacklist / unblacklist';
+    let modeLabel;
+    if (TAG_CLICK_ACTION === 'favorite') {
+        modeLabel = '\u2605 Click to favorite / unfavorite';
+    } else if (TAG_CLICK_ACTION === 'uploader_tag') {
+        modeLabel = canScope
+            ? '\u2716 Click to blacklist for ' + rowUploader + ' only'
+            : '\u26A0 Uploader unknown \u2014 cannot scope to an uploader';
+    } else {
+        modeLabel = '\u2716 Click to blacklist / unblacklist' + (canScope ? ' \u00B7 Shift+click: ' + rowUploader + ' only' : '');
+    }
     jQuery('<span class="vg-popup-hint">').text(modeLabel).appendTo($tagsPopupEl);
 
-    tags.forEach(function (tag) {
-        const isBl  = TAG_BLACKLIST.indexOf(tag)  !== -1;
-        const isFav = TAG_FAVORITES.indexOf(tag)  !== -1;
-
-        let chipClass = 'vg-tag-chip';
-        let tipText;
-        if (isBl)       { chipClass += ' vg-tag-bl';  tipText = 'Blacklisted — click to remove'; }
-        else if (isFav) { chipClass += ' vg-tag-fav'; tipText = 'Favorite — click to remove'; }
-        else {
-            tipText = TAG_CLICK_ACTION === 'favorite' ? 'Click to add to favorites' : 'Click to blacklist';
+    // Paint a chip according to its current state. Priority: global blacklist > uploader rule > favorite.
+    function paint($chip, tag) {
+        $chip.removeClass('vg-tag-bl vg-tag-ubl vg-tag-fav');
+        if (TAG_BLACKLIST.indexOf(tag) !== -1) {
+            $chip.addClass('vg-tag-bl').attr('title', 'Blacklisted for everyone \u2014 click to remove');
+        } else if (canScope && isUploaderTagRuleActive(rowUploader, tag)) {
+            $chip.addClass('vg-tag-ubl').attr('title', 'Blacklisted for ' + rowUploader + ' only \u2014 click to remove');
+        } else if (TAG_FAVORITES.indexOf(tag) !== -1) {
+            $chip.addClass('vg-tag-fav').attr('title', 'Favorite \u2014 click to remove');
+        } else if (TAG_CLICK_ACTION === 'favorite') {
+            $chip.attr('title', 'Click to add to favorites');
+        } else if (TAG_CLICK_ACTION === 'uploader_tag') {
+            $chip.attr('title', canScope ? 'Click to blacklist for ' + rowUploader + ' only' : 'Uploader unknown');
+        } else {
+            $chip.attr('title', 'Click to blacklist' + (canScope ? ' (Shift+click: ' + rowUploader + ' only)' : ''));
         }
+    }
 
-        const $chip = jQuery('<span>').addClass(chipClass).text(tag).attr('title', tipText)
-        .on('click', function (e) {
+    tags.forEach(function (tag) {
+        const $chip = jQuery('<span>').addClass('vg-tag-chip').text(tag);
+        paint($chip, tag);
+
+        $chip.on('click', function (e) {
             e.stopPropagation();
+            const refresh = function () { paint($chip, tag); };
+
             if (TAG_CLICK_ACTION === 'favorite') {
                 toggleTagInFavorites(tag);
-            } else {
-                // Blacklist action — also removes from favorites (mutual exclusivity)
-                const favIdx = TAG_FAVORITES.indexOf(tag);
-                if (favIdx !== -1) { TAG_FAVORITES.splice(favIdx, 1); saveFavoriteTags(); }
-                toggleTagInBlacklist(tag);
+                refresh();
+                return;
             }
-            // Refresh chip appearance
-            const nowBl  = TAG_BLACKLIST.indexOf(tag)  !== -1;
-            const nowFav = TAG_FAVORITES.indexOf(tag)  !== -1;
-            jQuery(this).removeClass('vg-tag-bl vg-tag-fav');
-            if (nowBl)       { jQuery(this).addClass('vg-tag-bl');  jQuery(this).attr('title', 'Blacklisted — click to remove'); }
-            else if (nowFav) { jQuery(this).addClass('vg-tag-fav'); jQuery(this).attr('title', 'Favorite — click to remove'); }
-            else {
-                jQuery(this).attr('title', TAG_CLICK_ACTION === 'favorite' ? 'Click to add to favorites' : 'Click to blacklist');
+
+            const scopedIntent = TAG_CLICK_ACTION === 'uploader_tag' || e.shiftKey;
+            const globallyBl   = TAG_BLACKLIST.indexOf(tag) !== -1;
+
+            if (globallyBl) {
+                // Already blocked for everyone: a scoped click has nothing to add, a plain click removes it
+                if (!scopedIntent) { toggleTagInBlacklist(tag); refresh(); }
+                return;
             }
+            if (canScope && isUploaderTagRuleActive(rowUploader, tag)) {
+                toggleUploaderTagRule(rowUploader, tag, refresh); // removes the rule
+                return;
+            }
+            if (scopedIntent) {
+                if (canScope) toggleUploaderTagRule(rowUploader, tag, refresh); // opens the duration dialog
+                return;
+            }
+            // Global blacklist — also removes from favorites (mutual exclusivity)
+            const favIdx = TAG_FAVORITES.indexOf(tag);
+            if (favIdx !== -1) { TAG_FAVORITES.splice(favIdx, 1); saveFavoriteTags(); }
+            toggleTagInBlacklist(tag);
+            refresh();
         });
         $tagsPopupEl.append($chip);
     });
@@ -2896,7 +3460,7 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
                     }
                     self.fix_title($row);
                     // Hide row if tags or uploader are blacklisted
-                    if (rowMatchesBlacklist($row) || rowMatchesUploaderBlacklist($row)) {
+                    if (rowIsBlacklisted($row)) {
                         $row.addClass('vg-bl-hidden').hide();
                     } else if (rowMatchesFavorites($row)) {
                         applyGlowToRow($row);
@@ -2921,11 +3485,12 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
 (function init() {
     // Drop expired timed uploader blocks before anything reads the blacklist,
     // then keep checking so rows/cards reappear without a reload.
-    purgeExpiredUploaders();
+    purgeAllExpired();
     setInterval(function () {
-        if (purgeExpiredUploaders()) {
+        if (purgeAllExpired()) {
             applyBlacklistsToPage();
             refreshUploaderSettingsPanel();
+            refreshUploaderTagRulesPanel();
         }
     }, 30 * 1000);
 

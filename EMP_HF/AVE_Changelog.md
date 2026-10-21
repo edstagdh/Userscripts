@@ -4,6 +4,29 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.8 - 2026-10-22
+- Toned down the uploader name and button badges: muted dark teal/red backgrounds with softer text, no glow; they brighten slightly on hover.
+
+## v3.7 - 2026-10-22
+- Uploader name is now a bright cyan badge, matching the tag-block button (gallery cards and list view).
+- The block-uploader button is now a bright red "✕" badge, same size and style as the tag-block button.
+- List view: the two uploader buttons are now grouped, equally sized and vertically aligned next to the name instead of sitting loosely after it.
+
+## v3.6 - 2026-10-22
+- The per-uploader tag-block button is now a bright cyan "#" badge that stays fully visible regardless of the site theme (previously a faint emoji icon).
+
+## v3.5 - 2026-10-22
+- New tag-block icon next to the uploader name (gallery cards and table view): opens a dropdown filled with that item's tags, plus a free-text field, to block tags for that uploader only.
+- The popup asks for a duration (permanent, 1, 3, 7, 30 days or custom) and lists the uploader's existing tag rules so they can be removed in place.
+- On pages without an uploader column (e.g. notifications), the icon is placed after the uploader's profile link in the title cell when one exists.
+
+## v3.4 - 2026-10-21
+- New "Uploader + Tag Rules": block a tag for one specific uploader only. A tag listed under an uploader hides only items uploaded by that uploader.
+- Rules are applied in order: global Tag Blacklist (everyone) first, then the Uploader Blacklist, then per-uploader tag rules.
+- Add rules from Viewer Settings, or from the gallery Tags popup: set the click action to "Blacklist tag for this uploader only", or Shift+click a tag in the normal blacklist mode.
+- Per-uploader tag rules support the same durations as uploader blocks (permanent, 1, 3, 7, 30 days or custom) and expire automatically.
+- Uploader detection now also falls back to the profile link in the title cell, for pages without an uploader column (e.g. the notifications page).
+
 ## v3.3 - 2026-10-15
 - Uploader blacklist now supports timed blocks: clicking the block button (or adding an uploader in Viewer Settings) opens a duration popup — Permanent (default), 1, 3, 7, 30 days or a custom number of days.
 - Timed blocks expire automatically; the uploader's rows/cards reappear without needing a reload.
