@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP] Advanced Better filelist
-// @version      1.4
+// @version      1.5
 // @description  inspired by original script by ephraim
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -34,7 +34,11 @@ var hiddenFileTypes = new Set();
 // code editing required. Toggling reloads the page so the change takes effect.
 
 var DEFAULT_SETTINGS = {
-    tagColumnsEnabled: false, // off by default — moves the tag list into the middle column and lays it out in columns
+    tagColumnsEnabled: false,         // off by default — moves the tag list into the middle column and lays it out in columns
+    thumbHoverPreviewEnabled: false,  // off by default — hovering a known-host thumbnail (.th. etc.) pops up the full-size image
+    thumbFullSizeEnabled: false,      // off by default — swaps known-host thumbnails for their full-size images in place (pauses the hover preview)
+    thumbFullSizeMaxWidth: 800,       // px — largest box a swapped full-size image is shown in (also never wider than its container)
+    thumbFullSizeMaxHeight: 800,      // px
 };
 var SETTINGS_KEY_PREFIX = 'abf_setting_';
 
@@ -48,9 +52,331 @@ function setSetting(name, value) {
     GM_setValue(SETTINGS_KEY_PREFIX + name, value);
 }
 
+// ── Thumbnail hover preview ──────────────────────────────────────────────────
+// Hovering a thumbnail from a known image host shows the full-size image in a
+// floating popup next to the cursor. The full-size URL is derived from the
+// thumbnail URL per host (reverse of each host's thumbnail naming scheme).
+// Toggleable via the Tampermonkey menu.
+
+var THUMB_HOSTS = {
+    HAMSTER: 'hamsterimg.net',
+    IMGBOX: 'imgbox.com',
+};
+// pixhost serves the same files from several mirror domains. Thumbnail hosts look
+// like tNN.<domain>, full-size hosts like imgNN.<domain>, for any domain below.
+var PIXHOST_DOMAINS = ['pixhost.to', 'pixhost.cc', 'pixho.st'];
+var PIXHOST_THUMB_HOST_RE = new RegExp('^t(\\d+)\\.(' +
+    PIXHOST_DOMAINS.map(d => d.replace(/\./g, '\\.')).join('|') + ')$', 'i');
+var THUMB_PREVIEW_DELAY_MS = 150; // wait before showing, so sweeping the mouse across a grid doesn't flash popups
+var THUMB_PREVIEW_MARGIN = 16;    // gap between cursor / viewport edges and the popup
+
+// Thumbnail URL -> full-size URL, or null if it isn't a recognised thumbnail.
+function thumbToFullUrl(url) {
+    if (!url) return null;
+    try {
+        var u = new URL(url, location.href);
+
+        // hamsterimg (Chevereto): name.th.ext / name.md.ext -> name.ext
+        if (u.hostname.endsWith(THUMB_HOSTS.HAMSTER) && /\.(th|md)\.[a-z0-9]+$/i.test(u.pathname)) {
+            u.pathname = u.pathname.replace(/\.(th|md)\.([a-z0-9]+)$/i, '.$2');
+            return u.toString();
+        }
+
+        // imgbox: thumbsN.imgbox.com/.../ID_t.ext -> imagesN.imgbox.com/.../ID_o.ext
+        if (u.hostname.endsWith(THUMB_HOSTS.IMGBOX) && /^thumbs/.test(u.hostname) && /_t\.[a-z0-9]+$/i.test(u.pathname)) {
+            u.hostname = u.hostname.replace(/^thumbs/, 'images');
+            u.pathname = u.pathname.replace(/_t\.([a-z0-9]+)$/i, '_o.$1');
+            return u.toString();
+        }
+
+        // pixhost (any mirror): tNN.<domain>/thumbs/... -> imgNN.<domain>/images/...
+        // Stays on the same mirror domain the thumbnail came from.
+        var pm = u.hostname.match(PIXHOST_THUMB_HOST_RE);
+        if (pm && u.pathname.startsWith('/thumbs/')) {
+            u.hostname = 'img' + pm[1] + '.' + pm[2].toLowerCase();
+            u.pathname = u.pathname.replace(/^\/thumbs\//, '/images/');
+            return u.toString();
+        }
+    } catch (e) { /* not a valid URL */ }
+    return null;
+}
+
+function initThumbHoverPreview() {
+    var style = document.createElement('style');
+    style.id = 'abf-thumb-preview-style';
+    style.textContent = `
+        #abf-thumb-preview {
+            position: fixed;
+            z-index: 2147483000;
+            display: none;
+            pointer-events: none;
+            padding: 4px;
+            background: #111;
+            border: 1px solid #444;
+            border-radius: 6px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.6);
+        }
+        #abf-thumb-preview img {
+            display: block;
+            max-width: none;
+            max-height: none;
+            border-radius: 3px;
+        }
+        #abf-thumb-preview .abf-tp-status {
+            color: #ddd;
+            font: 12px/1.4 sans-serif;
+            padding: 6px 10px;
+            white-space: nowrap;
+        }
+    `;
+    document.head.appendChild(style);
+
+    var popup = document.createElement('div');
+    popup.id = 'abf-thumb-preview';
+    var status = document.createElement('div');
+    status.className = 'abf-tp-status';
+    var popupImg = document.createElement('img');
+    popupImg.alt = '';
+    popup.append(status, popupImg);
+    document.body.appendChild(popup);
+
+    var currentThumb = null;
+    var showTimer = null;
+    var lastX = 0, lastY = 0;
+
+    // Put the popup on whichever side of the cursor has more room, scaled to fit the viewport.
+    function position() {
+        if (popup.style.display === 'none') return;
+        var vw = document.documentElement.clientWidth;
+        var vh = document.documentElement.clientHeight;
+        var M = THUMB_PREVIEW_MARGIN;
+
+        if (popupImg.style.display !== 'none' && popupImg.naturalWidth) {
+            var spaceRight = vw - lastX - M * 2;
+            var spaceLeft = lastX - M * 2;
+            var availW = Math.max(spaceRight, spaceLeft) - 10; // 10 = popup padding + border
+            var availH = vh - M * 2 - 10;
+            var scale = Math.min(1, availW / popupImg.naturalWidth, availH / popupImg.naturalHeight);
+            popupImg.style.width = Math.round(popupImg.naturalWidth * scale) + 'px';
+            popupImg.style.height = Math.round(popupImg.naturalHeight * scale) + 'px';
+        }
+
+        var w = popup.offsetWidth, h = popup.offsetHeight;
+        var left = (lastX + M + w <= vw - M || lastX < vw / 2) ? lastX + M : lastX - M - w;
+        var top = lastY - h / 2;
+        left = Math.max(M, Math.min(left, vw - w - M));
+        top = Math.max(M, Math.min(top, vh - h - M));
+        popup.style.left = left + 'px';
+        popup.style.top = top + 'px';
+    }
+
+    function hide() {
+        clearTimeout(showTimer);
+        showTimer = null;
+        currentThumb = null;
+        popup.style.display = 'none';
+        popupImg.onload = popupImg.onerror = null;
+        popupImg.removeAttribute('src');
+    }
+
+    function show(thumb, fullUrl) {
+        status.textContent = 'Loading full size…';
+        status.style.display = '';
+        popupImg.style.display = 'none';
+        popup.style.display = 'block';
+        position();
+
+        popupImg.onload = function () {
+            if (currentThumb !== thumb) return;
+            status.style.display = 'none';
+            popupImg.style.display = 'block';
+            position();
+        };
+        popupImg.onerror = function () {
+            if (currentThumb !== thumb) return;
+            status.textContent = 'Full-size image not available';
+            position();
+        };
+        popupImg.src = fullUrl;
+    }
+
+    document.addEventListener('mouseover', function (e) {
+        var img = e.target;
+        if (!(img instanceof HTMLImageElement) || img === popupImg || img === currentThumb) return;
+        var fullUrl = thumbToFullUrl(img.currentSrc || img.src);
+        if (!fullUrl || fullUrl === img.src) return;
+
+        hide();
+        currentThumb = img;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        showTimer = setTimeout(function () {
+            if (currentThumb === img) show(img, fullUrl);
+        }, THUMB_PREVIEW_DELAY_MS);
+    }, true);
+
+    document.addEventListener('mousemove', function (e) {
+        if (!currentThumb) return;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        position();
+    }, { passive: true });
+
+    document.addEventListener('mouseout', function (e) {
+        if (currentThumb && e.target === currentThumb) hide();
+    }, true);
+
+    // Clicking a thumb usually opens a lightbox / navigates — get out of the way.
+    document.addEventListener('mousedown', hide, true);
+    window.addEventListener('scroll', hide, { passive: true });
+    window.addEventListener('blur', hide);
+}
+
+// ── Full-size images in place ────────────────────────────────────────────────
+// Swaps every known-host thumbnail on the page for its full-size image (same
+// thumbToFullUrl() mapping the hover preview uses).
+//  - Each image is shown inside a max box (thumbFullSizeMaxWidth x
+//    thumbFullSizeMaxHeight, set from the Tampermonkey menu), keeping its aspect
+//    ratio and never wider than its container.
+//  - The link around the thumbnail (to the host's "view image" page) is removed;
+//    instead, clicking an image that's shown smaller than its real size opens it
+//    in the site's own lightbox — the same full view the cover image uses.
+//  - If a full-size image fails to load, the thumbnail and its link are restored.
+
+// Links we must not unwrap: the file tree's Fancybox gallery uses these.
+function isProtectedLink(a) {
+    return a.hasAttribute('data-fancybox');
+}
+
+// Remove a link that wraps the image, keeping its contents in place.
+// Returns a function that puts the link back, or null if there was no link.
+function unwrapImageLink(img) {
+    var a = img.closest('a[href]');
+    if (!a || isProtectedLink(a)) return null;
+
+    var marker = document.createComment('abf-unwrapped-link');
+    var children = Array.from(a.childNodes);
+    a.replaceWith(marker);
+    marker.after(...children);
+
+    return function restore() {
+        if (!marker.parentNode) return;
+        children.forEach(c => a.appendChild(c));
+        marker.replaceWith(a);
+    };
+}
+
+// Hand clicks to the site's lightbox (runs in the page, where `lightbox` lives).
+// Its second argument is the size threshold: it only opens when the image's real
+// width is larger, so passing the current on-screen width means "open whenever
+// the image is being shown scaled down". The original handler is kept for restore.
+function useSiteLightbox(img) {
+    img.dataset.abfOrigOnclick = img.getAttribute('onclick') || '';
+    img.setAttribute('onclick', 'if (window.lightbox) lightbox.init(this, this.clientWidth);');
+}
+
+function markIfScaledDown(img) {
+    img.classList.toggle('abf-full-size-zoomable',
+        !!img.naturalWidth && img.clientWidth > 0 && img.clientWidth < img.naturalWidth);
+}
+
+function swapThumbToFull(img) {
+    if (img.dataset.abfFullSize) return; // already handled
+    var thumbUrl = img.getAttribute('src');
+    var fullUrl = thumbToFullUrl(thumbUrl);
+    if (!fullUrl || fullUrl === img.src) return;
+
+    img.dataset.abfFullSize = '1';
+    img.classList.add('abf-full-size');
+    var link = img.closest('a[href]');
+    var keepsOwnViewer = !!link && isProtectedLink(link); // e.g. file tree gallery: leave its click behaviour alone
+    var restoreLink = keepsOwnViewer ? null : unwrapImageLink(img);
+    if (!keepsOwnViewer) useSiteLightbox(img);
+
+    function onLoad() { markIfScaledDown(img); }
+    function revert() {
+        img.removeEventListener('load', onLoad);
+        img.removeEventListener('error', revert);
+        img.classList.remove('abf-full-size', 'abf-full-size-zoomable');
+        if (!keepsOwnViewer) {
+            if (img.dataset.abfOrigOnclick) img.setAttribute('onclick', img.dataset.abfOrigOnclick);
+            else img.removeAttribute('onclick');
+        }
+        if (restoreLink) restoreLink();
+        img.src = thumbUrl;
+    }
+    img.addEventListener('load', onLoad);
+    img.addEventListener('error', revert);
+    img.src = fullUrl;
+}
+
+function initFullSizeImages() {
+    var maxW = parseInt(getSetting('thumbFullSizeMaxWidth'), 10) || DEFAULT_SETTINGS.thumbFullSizeMaxWidth;
+    var maxH = parseInt(getSetting('thumbFullSizeMaxHeight'), 10) || DEFAULT_SETTINGS.thumbFullSizeMaxHeight;
+
+    var style = document.createElement('style');
+    style.id = 'abf-full-size-style';
+    style.textContent = `
+        img.abf-full-size {
+            max-width: min(100%, ${maxW}px) !important;
+            max-height: ${maxH}px !important;
+            height: auto;
+            object-fit: contain;
+        }
+        img.abf-full-size-zoomable { cursor: zoom-in; }
+    `;
+    document.head.appendChild(style);
+
+    document.querySelectorAll('img[src]').forEach(swapThumbToFull);
+
+    // Catch images the site (or this script) adds later.
+    new MutationObserver(function (mutations) {
+        mutations.forEach(function (m) {
+            m.addedNodes.forEach(function (node) {
+                if (node.nodeType !== 1) return;
+                if (node.tagName === 'IMG') swapThumbToFull(node);
+                else if (node.querySelectorAll) node.querySelectorAll('img[src]').forEach(swapThumbToFull);
+            });
+        });
+    }).observe(document.body, { childList: true, subtree: true });
+
+    // Whether an image counts as "scaled down" depends on the window width.
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () {
+            document.querySelectorAll('img.abf-full-size').forEach(markIfScaledDown);
+        }, 150);
+    });
+}
+
+// Ask for a new max box, e.g. "800x800". Returns true if something was saved.
+function promptFullSizeMaxDimensions() {
+    var current = getSetting('thumbFullSizeMaxWidth') + 'x' + getSetting('thumbFullSizeMaxHeight');
+    var answer = prompt('Max size for full-size images, as WIDTHxHEIGHT in pixels (e.g. 800x800):', current);
+    if (answer === null) return false;
+    var m = answer.trim().match(/^(\d{2,5})\s*[x×*,]\s*(\d{2,5})$/i);
+    if (!m) {
+        alert('Couldn\'t read "' + answer + '". Use the format WIDTHxHEIGHT, e.g. 800x800.');
+        return false;
+    }
+    setSetting('thumbFullSizeMaxWidth', parseInt(m[1], 10));
+    setSetting('thumbFullSizeMaxHeight', parseInt(m[2], 10));
+    return true;
+}
+
+// Initialised here (before the file tree code) so they work even on pages without a file list.
+// The two are mutually exclusive: with full-size images on, there's nothing left to preview.
+if (getSetting('thumbFullSizeEnabled')) {
+    initFullSizeImages();
+} else if (getSetting('thumbHoverPreviewEnabled')) {
+    initThumbHoverPreview();
+}
+
+
 // ── Changelog / "What's New" ────────────────────────────────────────────────
 
-const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.4';
+const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.5';
 
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/ABF_Changelog.md';
 var changelogCache = null; // parsed [{version, date, changes:[...]}] once fetched this session
@@ -104,79 +430,192 @@ function fetchChangelog(callback) {
     });
 }
 
-function buildChangelogModal() {
-    var modal = ce('div', 'abf_changelog_modal hidden');
-    modal.innerHTML = `
-        <div class="abf_changelog_box">
-            <div class="abf_changelog_header">
-                <div class="abf_changelog_header_left">
-                    <h2>📜 What's New</h2>
-                    <span class="abf_changelog_subtitle">Advanced Better filelist &mdash; currently v${SCRIPT_VERSION}</span>
+// Number of versions to show in the manual "Show Changelog" view (newest first,
+// starting from the installed version).
+const CHANGELOG_HISTORY_DEPTH = 3;
+
+// Styled to match the "What's New" popup in [HF][EMP] Advanced Viewer Experience.
+// Uses its own abf-cl-* ids so both scripts can run on the same page without clashing.
+function injectChangelogStyle() {
+    if (document.getElementById('abf-cl-style')) return;
+    var style = document.createElement('style');
+    style.id = 'abf-cl-style';
+    style.textContent = `
+#abf-cl-backdrop {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.78); z-index: 999997; backdrop-filter: blur(2px);
+}
+#abf-cl-backdrop.active { display: flex; align-items: center; justify-content: center; }
+#abf-cl-modal {
+    position: relative; background: #1a1a1a;
+    border: 1px solid #3a3a3a; border-radius: 8px;
+    width: 560px; max-width: 96vw; max-height: 86vh;
+    overflow-y: auto; color: #d0d0d0;
+    font-family: inherit; font-size: 12px; text-align: left;
+    box-shadow: 0 10px 50px rgba(0,0,0,0.8); z-index: 999998;
+}
+#abf-cl-modal .abf-cl-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px 12px; border-bottom: 1px solid #2e2e2e;
+    position: sticky; top: 0; background: #1a1a1a; z-index: 1;
+    gap: 10px;
+}
+#abf-cl-modal .abf-cl-header-left { display: flex; flex-direction: column; gap: 2px; }
+#abf-cl-modal .abf-cl-header h2 {
+    margin: 0; padding: 0; border: none; background: none;
+    font-size: 14px; font-weight: 800;
+    color: #f0f0f0; letter-spacing: 0.04em; text-transform: uppercase;
+}
+#abf-cl-modal .abf-cl-header .abf-cl-subtitle {
+    font-size: 10px; color: #666; letter-spacing: 0.02em;
+}
+#abf-cl-modal .abf-cl-body { padding: 14px 18px 6px; }
+#abf-cl-modal .abf-cl-version-block { margin-bottom: 18px; }
+#abf-cl-modal .abf-cl-version-block:last-child { margin-bottom: 0; }
+#abf-cl-modal .abf-cl-version-label {
+    display: inline-block;
+    font-size: 10px; font-weight: 800; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #7ec87e;
+    background: #1a2e1a; border: 1px solid #2e5e2e;
+    padding: 2px 8px; border-radius: 3px; margin-bottom: 8px;
+}
+#abf-cl-modal .abf-cl-version-date { font-size: 10px; color: #777; margin-left: 8px; }
+#abf-cl-modal .abf-cl-changes {
+    list-style: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; gap: 5px;
+}
+#abf-cl-modal .abf-cl-changes li {
+    display: flex; gap: 8px; align-items: flex-start;
+    font-size: 11px; color: #c0c0c0; line-height: 1.5;
+    margin: 0; padding: 0; list-style: none;
+}
+#abf-cl-modal .abf-cl-changes li::before {
+    content: '→'; color: #5a8a5a; font-weight: 700;
+    flex-shrink: 0;
+}
+#abf-cl-modal .abf-cl-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px 16px; border-top: 1px solid #2e2e2e; margin-top: 10px;
+    position: sticky; bottom: 0; background: #1a1a1a; gap: 10px;
+    flex-wrap: wrap;
+}
+#abf-cl-modal .abf-cl-github-link {
+    font-size: 11px; color: #5a7a9a; text-decoration: none; font-weight: 600;
+}
+#abf-cl-modal .abf-cl-github-link:hover { color: #7aa0c8; text-decoration: underline; }
+#abf-cl-modal .abf-cl-ok-btn {
+    padding: 6px 22px; font-size: 12px; font-weight: 700;
+    border-radius: 4px; cursor: pointer;
+    background: #2d4a2d; border: 1px solid #4a7a4a; color: #8fc88f;
+    transition: background 0.15s, color 0.15s; letter-spacing: 0.03em;
+}
+#abf-cl-modal .abf-cl-ok-btn:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
+#abf-cl-modal .abf-cl-update-banner {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #f0d080;
+    background: #2e2810; border: 1px solid #6a5a1a;
+    border-radius: 8px; padding: 8px 10px; margin-bottom: 14px;
+}
+#abf-cl-modal .abf-cl-loading, #abf-cl-modal .abf-cl-error {
+    font-size: 12px; color: #999; padding: 4px 0;
+}
+#abf-cl-modal .abf-cl-error { color: #d09090; }
+#abf-cl-modal .abf-cl-more {
+    font-size: 11px; color: #777; padding: 10px 0 2px;
+    border-top: 1px solid #2a2a2a; margin-top: 4px;
+}
+#abf-cl-modal .abf-cl-more a { color: #5a7a9a; text-decoration: none; }
+#abf-cl-modal .abf-cl-more a:hover { color: #7aa0c8; text-decoration: underline; }
+`;
+    document.head.appendChild(style);
+}
+
+function onChangelogKeydown(e) {
+    if (e.key === 'Escape') dismissChangelog();
+}
+
+function ensureChangelogModal() {
+    if (changelogModalEl) return;
+    injectChangelogStyle();
+
+    changelogModalEl = document.createElement('div');
+    changelogModalEl.id = 'abf-cl-backdrop';
+    changelogModalEl.innerHTML = `
+        <div id="abf-cl-modal">
+            <div class="abf-cl-header">
+                <div class="abf-cl-header-left">
+                    <h2>&#127381; What's New</h2>
+                    <span class="abf-cl-subtitle">[HF][EMP] Advanced Better filelist &mdash; currently v${SCRIPT_VERSION}</span>
                 </div>
-                <button type="button" class="abf_changelog_close" title="Close">✕</button>
             </div>
-            <div class="abf_changelog_body" id="abf_changelog_body_content"></div>
-            <div class="abf_changelog_footer">
-                <a class="abf_changelog_github_link" href="https://github.com/edstagdh/Userscripts" target="_blank" rel="noopener noreferrer">🔗 View on GitHub</a>
-                <button type="button" class="abf_changelog_btn">Got it!</button>
+            <div class="abf-cl-body" id="abf-cl-body-content"></div>
+            <div class="abf-cl-footer">
+                <a class="abf-cl-github-link" href="https://github.com/edstagdh/Userscripts" target="_blank" rel="noopener noreferrer">
+                    &#128279; View on GitHub
+                </a>
+                <button type="button" class="abf-cl-ok-btn" id="abf-cl-ok-btn">OK, got it</button>
             </div>
         </div>
     `;
-    document.body.appendChild(modal);
+    document.body.appendChild(changelogModalEl);
 
-    var closeFn = () => modal.classList.add('hidden');
-    modal.querySelector('.abf_changelog_close').addEventListener('click', closeFn);
-    modal.querySelector('.abf_changelog_btn').addEventListener('click', closeFn);
-    modal.addEventListener('click', e => { if (e.target === modal) closeFn(); });
-
-    return modal;
+    changelogModalEl.addEventListener('click', function (e) { if (e.target === this) dismissChangelog(); });
+    changelogModalEl.querySelector('#abf-cl-ok-btn').addEventListener('click', dismissChangelog);
 }
 
-function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion) {
-    var body = changelogModalEl.querySelector('#abf_changelog_body_content');
+function openChangelog() {
+    ensureChangelogModal();
+    changelogModalEl.classList.add('active');
+    document.addEventListener('keydown', onChangelogKeydown);
+}
+
+function dismissChangelog() {
+    if (changelogModalEl) changelogModalEl.classList.remove('active');
+    document.removeEventListener('keydown', onChangelogKeydown);
+}
+
+function renderChangelogBody(versionsToShow, errorMsg, updateAvailableVersion, hasMore) {
     var html = '';
     if (updateAvailableVersion) {
-        html += `<div class="abf_update_banner">🔔 A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
+        html += `<div class="abf-cl-update-banner">&#128276; A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
     }
     if (errorMsg) {
-        html += `<div class="abf_changelog_error">Couldn't load the changelog (${errorMsg}). Check the GitHub repo directly for the latest version history.</div>`;
+        html += `<div class="abf-cl-error">Couldn't load the changelog (${errorMsg}). Check the GitHub repo directly for the latest version history.</div>`;
     } else if (!versionsToShow || !versionsToShow.length) {
-        html += `<div class="abf_changelog_error">No changelog entries found.</div>`;
+        html += `<div class="abf-cl-error">No changelog entries found.</div>`;
     } else {
-        html += versionsToShow.map(item => `
-            <div class="abf_version_block">
-                <div class="abf_version_title">
-                    <span class="abf_version_badge">v${item.version}</span>
-                    ${item.date ? `<span class="abf_version_date">${item.date}</span>` : ''}
-                </div>
-                <ul class="abf_version_changes">
-                    ${item.changes.map(c => `<li>${c}</li>`).join('')}
-                </ul>
+        html += versionsToShow.map(entry => `
+            <div class="abf-cl-version-block">
+                <span class="abf-cl-version-label">v${entry.version}</span>
+                ${entry.date ? `<span class="abf-cl-version-date">${entry.date}</span>` : ''}
+                <ul class="abf-cl-changes">${entry.changes.map(c => `<li>${c}</li>`).join('')}</ul>
             </div>
         `).join('');
+
+        if (hasMore) {
+            html += `<div class="abf-cl-more">Showing the ${versionsToShow.length} most recent versions &mdash; <a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer">see full version history on GitHub</a>.</div>`;
+        }
     }
-    body.innerHTML = html;
+    changelogModalEl.querySelector('#abf-cl-body-content').innerHTML = html;
 }
 
 function showChangelogModal() {
-    if (!changelogModalEl) {
-        changelogModalEl = buildChangelogModal();
-    }
-    changelogModalEl.classList.remove('hidden');
-    changelogModalEl.querySelector('#abf_changelog_body_content').innerHTML =
-        '<div class="abf_changelog_loading">Loading changelog&hellip;</div>';
+    openChangelog();
+    changelogModalEl.querySelector('#abf-cl-body-content').innerHTML =
+        '<div class="abf-cl-loading">Loading changelog&hellip;</div>';
 
     fetchChangelog((entries, err) => {
         if (err) { renderChangelogBody(null, err, null); return; }
+
         var currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
-        if (currentIdx === -1) {
-            // Installed version isn't in the fetched changelog — show the latest
-            // entry as a best-effort fallback rather than nothing.
-            renderChangelogBody(entries.length ? [entries[0]] : [], null, null);
-            return;
-        }
         var updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
-        renderChangelogBody([entries[currentIdx]], null, updateAvailableVersion);
+
+        // Start from the installed version if we can find it, otherwise from the top
+        var startIdx = currentIdx === -1 ? 0 : currentIdx;
+        var toShow = entries.slice(startIdx, startIdx + CHANGELOG_HISTORY_DEPTH);
+        var hasMore = entries.length > startIdx + CHANGELOG_HISTORY_DEPTH;
+
+        renderChangelogBody(toShow, null, updateAvailableVersion, hasMore);
     });
 }
 
@@ -207,8 +646,7 @@ function checkVersionUpdate() {
         if (!toShow.length) return;
         var updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
 
-        if (!changelogModalEl) changelogModalEl = buildChangelogModal();
-        changelogModalEl.classList.remove('hidden');
+        openChangelog();
         renderChangelogBody(toShow, null, updateAvailableVersion);
     });
 }
@@ -1158,161 +1596,6 @@ treeStyle.innerHTML = `
 .file_type_wmv {
     color: #694d00;
 }
-
-/* changelog / "What's New" modal */
-.abf_changelog_modal {
-    position: fixed;
-    inset: 0;
-    z-index: 100055;
-    background: rgba(8, 9, 13, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-}
-.abf_changelog_modal.hidden {
-    display: none;
-}
-.abf_changelog_box {
-    background: #1e2b3e;
-    border: 1px solid #3a5070;
-    border-radius: 10px;
-    width: 100%;
-    max-width: 480px;
-    max-height: 78vh;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.55);
-    overflow: hidden;
-    color: #bcd;
-    font-family: inherit;
-}
-.abf_changelog_header {
-    padding: 14px 18px;
-    background: #29374F;
-    border-bottom: 1px solid #3a5070;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-}
-.abf_changelog_header_left {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-}
-.abf_changelog_subtitle {
-    font-size: 9pt;
-    color: #89a0b8;
-}
-.abf_changelog_header h2 {
-    margin: 0;
-    font-size: 13pt;
-    color: #dce6f2;
-}
-.abf_changelog_close {
-    background: transparent;
-    border: none;
-    color: #89a0b8;
-    font-size: 14pt;
-    cursor: pointer;
-    padding: 0;
-    line-height: 1;
-}
-.abf_changelog_close:hover {
-    color: #fff;
-}
-.abf_changelog_body {
-    padding: 16px 18px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
-.abf_version_block {
-    border-bottom: 1px solid #29374F;
-    padding-bottom: 10px;
-}
-.abf_version_block:last-child {
-    border-bottom: none;
-    padding-bottom: 0;
-}
-.abf_version_title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-}
-.abf_version_badge {
-    background: #1a4a7a;
-    color: #7ecfff;
-    border: 1px solid #4a9fd4;
-    font-size: 8pt;
-    padding: 1px 7px;
-    border-radius: 8px;
-    font-weight: bold;
-}
-.abf_version_date {
-    font-size: 8pt;
-    color: #89a0b8;
-}
-.abf_version_changes {
-    margin: 0;
-    padding-left: 16px;
-    font-size: 9pt;
-    color: #bcd;
-    line-height: 1.5;
-}
-.abf_changelog_footer {
-    padding: 10px 18px;
-    background: #182335;
-    border-top: 1px solid #3a5070;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-.abf_changelog_github_link {
-    font-size: 8pt;
-    color: #7ecfff;
-    text-decoration: none;
-    font-weight: bold;
-}
-.abf_changelog_github_link:hover {
-    text-decoration: underline;
-}
-.abf_changelog_btn {
-    background: #1a4a7a;
-    color: #7ecfff;
-    border: 1px solid #4a9fd4;
-    padding: 5px 14px;
-    border-radius: 5px;
-    font-weight: bold;
-    cursor: pointer;
-    font-size: 8pt;
-}
-.abf_changelog_btn:hover {
-    background: #234f83;
-}
-.abf_changelog_loading,
-.abf_changelog_error {
-    font-size: 9pt;
-    color: #89a0b8;
-    padding: 4px 0;
-}
-.abf_changelog_error {
-    color: #e0a0a0;
-}
-.abf_update_banner {
-    font-size: 8.5pt;
-    color: #f0d080;
-    background: #2e2810;
-    border: 1px solid #6a5a1a;
-    border-radius: 6px;
-    padding: 8px 10px;
-}
 `;
 
 
@@ -1410,6 +1693,46 @@ if (typeof GM_registerMenuCommand !== 'undefined') {
         () => {
             setSetting('tagColumnsEnabled', !tagColumnsCurrentlyEnabled);
             location.reload();
+        }
+    );
+
+    var fullSizeCurrentlyEnabled = getSetting('thumbFullSizeEnabled');
+    var thumbPreviewCurrentlyEnabled = getSetting('thumbHoverPreviewEnabled');
+
+    if (fullSizeCurrentlyEnabled) {
+        // Hover preview is paused while full-size images are on; clicking it switches back.
+        GM_registerMenuCommand(
+            '⏸️ Thumbnail Hover Preview (paused by Full-Size Images — click to switch to hover preview, reloads page)',
+            () => {
+                setSetting('thumbFullSizeEnabled', false);
+                setSetting('thumbHoverPreviewEnabled', true);
+                location.reload();
+            }
+        );
+    } else {
+        GM_registerMenuCommand(
+            (thumbPreviewCurrentlyEnabled ? '✅' : '⬜') + ' Thumbnail Hover Preview (click to ' +
+            (thumbPreviewCurrentlyEnabled ? 'disable' : 'enable') + ', reloads page)',
+            () => {
+                setSetting('thumbHoverPreviewEnabled', !thumbPreviewCurrentlyEnabled);
+                location.reload();
+            }
+        );
+    }
+
+    GM_registerMenuCommand(
+        (fullSizeCurrentlyEnabled ? '✅' : '⬜') + ' Full-Size Images Instead of Thumbnails (click to ' +
+        (fullSizeCurrentlyEnabled ? 'disable' : 'enable') + ', reloads page)',
+        () => {
+            setSetting('thumbFullSizeEnabled', !fullSizeCurrentlyEnabled);
+            location.reload();
+        }
+    );
+    GM_registerMenuCommand(
+        '📐 Full-Size Images Max Size (currently ' + getSetting('thumbFullSizeMaxWidth') + 'x' +
+        getSetting('thumbFullSizeMaxHeight') + ')',
+        () => {
+            if (promptFullSizeMaxDimensions() && fullSizeCurrentlyEnabled) location.reload();
         }
     );
 }
