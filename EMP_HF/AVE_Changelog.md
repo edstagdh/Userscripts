@@ -4,6 +4,10 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.14 - 2026-10-23
+- The script is now split into several files so it's easier to maintain (no change in behavior): settings + nav buttons, gallery view and Poster Wall moved to their own files, and all CSS moved to a stylesheet. Tampermonkey downloads them once and caches them.
+- Switched to the minified build of the same jQuery version (2.1.1), cutting the code parsed on every page by roughly a third.
+
 ## v3.13 - 2026-10-23
 - Poster Wall groups torrents that share the same image link into one poster with a "×N" badge, instead of hiding the extra ones.
 - Clicking a grouped poster (or pressing Enter) opens a picker listing every torrent using that image, with resolution, size, category, age and seeders, so you can choose the version you want.
