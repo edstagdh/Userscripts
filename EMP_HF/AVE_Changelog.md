@@ -4,6 +4,12 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.17 - 2026-10-23
+- Animated posters (GIF / WebP) on screen now play by themselves once scrolling stops — no need to hover them. Posters that leave the screen stop and release the image. Turn it off in Viewer Settings → Poster Wall ("Play Animated Posters") or press P on the wall.
+- Fixed the remaining aborted image requests (NS_BINDING_ABORTED): images still downloading are no longer dropped by the browser's memory cleanup, including when the wall is closed mid-load, and an animated poster that scrolls away while still loading is left to finish instead of being cancelled.
+- Fixed a brief flash of a poster's previous image when scrolling fast.
+- Hovering a still poster no longer loads the original image again (the small copy is already sized for the poster), which also removes re-downloads on image hosts that don't allow caching.
+
 ## v3.16 - 2026-10-23
 - Poster Wall loads images through a queue instead of requesting all of them at once (500 at once on big top-10 pages): posters on screen load first, nearest the middle first, then the area around them, then the rest in the background with only a few connections, so whatever you scroll to never waits behind background downloads.
 - No more cancelled image requests: opening the wall no longer interrupts page thumbnails that are still downloading (the wall reuses those downloads), and scrolling no longer cancels posters that were still loading.

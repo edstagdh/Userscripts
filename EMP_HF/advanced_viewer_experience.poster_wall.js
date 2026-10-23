@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Poster Wall: full-screen endless poster grid
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.16
+// Version 3.17
 
 // --------------------
 // POSTER WALL — endless 2D grid (Kaleidescape-style)
@@ -34,6 +34,13 @@ let WALL_GROUP_DUP_IMAGES = GM_getValue('WALL_GROUP_DUP_IMAGES', GM_getValue('WA
 // Close the wall after this many minutes without mouse / wheel / keyboard activity (0 = never)
 let WALL_IDLE_CLOSE_MIN = GM_getValue('WALL_IDLE_CLOSE_MIN', 10);
 const WALL_IDLE_WARN_S  = 30;      // countdown shown before an idle close
+// Visible posters whose image may be animated (GIF / WebP) show the original so it plays
+let WALL_ANIMATE        = GM_getValue('WALL_ANIMATE', true);
+const WALL_ANIM_RE      = /\.(gif|webp|apng)(?:[?#]|$)/i;
+const WALL_ANIM_SETTLE_MS = 180;   // start animations once scrolling has stopped this long
+// Downloads still running are kept referenced until they finish: an image object that
+// gets garbage-collected mid-download is cancelled by the browser (NS_BINDING_ABORTED).
+const wallInflight = new Set();
 // The notice about resource use / image hosts shown when the wall opens
 let WALL_NOTICE_SHOW    = GM_getValue('WALL_NOTICE_SHOW', true);
 const WALL_ACTIVITY_EVENTS = ['pointermove', 'pointerdown', 'wheel', 'keydown'];
@@ -148,10 +155,12 @@ function wallStartJob(job) {
     ld.perHost[job.host] = (ld.perHost[job.host] || 0) + 1;
     const img = new Image();
     img.decoding = 'async';
+    wallInflight.add(img);
     let netDone = false;
     const releaseSlot = () => {
         if (netDone) return;
         netDone = true;
+        wallInflight.delete(img);
         if (!wall || wall.session !== session) return;
         ld.active--;
         ld.perHost[job.host]--;
@@ -578,7 +587,7 @@ function openPosterWall() {
                 </div>
             </div>
             <div class="vw-info"><div class="vw-info-title"></div><div class="vw-info-meta"></div></div>
-            <div class="vw-help">Drag or scroll to glide &middot; Shift+wheel sideways &middot; Ctrl+wheel to resize &middot; Arrows step &middot; Enter opens &middot; D groups duplicates &middot; Esc closes</div>
+            <div class="vw-help">Drag or scroll to glide &middot; Shift+wheel sideways &middot; Ctrl+wheel to resize &middot; Arrows step &middot; Enter opens &middot; D groups duplicates &middot; P plays/pauses animations &middot; Esc closes</div>
             <div class="vw-loading"><div class="vw-loading-text">Loading posters&hellip;</div><div class="vw-bar"><div></div></div></div>
             <div class="vw-idle"></div>
         </div>
@@ -681,6 +690,7 @@ function closePosterWall() {
     document.documentElement.style.overflow = wall.prevOverflow;
     clearTimeout(wall.rebuildTimer);
     clearTimeout(wall.liveTimer);
+    wall.cells.forEach(el => wallDetachLive(el));   // overlays still loading finish quietly
     if (wall.ld) wall.ld.jobs.forEach(job => { if (job.thumb) wallFreeThumb(job.thumb); job.thumb = null; });
     const $root = wall.$root;
     wall = null;
@@ -806,6 +816,7 @@ function wallRebuild() {
     if (!wall.N) { wall.ready = false; wallClosePicker(); wallShowEmpty('None of the torrents on this page have a loadable image.'); return; }
     // Every cell's item may have shifted: recycle them all so they rebind
     wall.cells.forEach(el => {
+        wallDetachLive(el);
         el.style.display = 'none';
         el.dataset.idx = '';
         el.classList.remove('vw-focus');
@@ -949,38 +960,73 @@ function wallRedrawJob(job, fade) {
         const item = wall.items[+el.dataset.idx];
         if (item && item.job === job) wallDrawCell(el, fade);
     });
-    if (wall.focusEl && wall.items[+wall.focusEl.dataset.idx] && wall.items[+wall.focusEl.dataset.idx].job === job) wallScheduleLive();
+    if (WALL_ANIMATE && wallIsAnimCandidate(job.items[0])) wallScheduleLive();
 }
 
-// The highlighted poster shows the original image on top (sharp, and animated if it is)
+// Animated posters: the small copy is a still first frame, so visible posters whose
+// image may be animated (GIF / WebP) show the original on top while scrolling is at
+// rest. Off-screen posters drop it again. Still images never need the original.
+function wallIsAnimCandidate(item) {
+    return !!item && WALL_ANIM_RE.test(item.src);
+}
+
 function wallScheduleLive() {
-    clearTimeout(wall.liveTimer);
-    wall.liveTimer = setTimeout(wallUpdateLive, 160);
-}
-
-function wallUpdateLive() {
     if (!wall) return;
-    const el = wall.focusEl;
-    if (wall.liveEl && wall.liveEl !== el) wallClearLive(wall.liveEl);
-    wall.liveEl = null;
-    if (!el) return;
-    const item = wall.items[+el.dataset.idx];
-    if (!item || !item.job || !item.job.thumb) return;
-    const live = el.firstChild.children[1];
-    if (live.getAttribute('src') !== item.src) {
-        live.classList.remove('vw-shown');
-        live.onload = () => live.classList.add('vw-shown');
-        live.src = item.src;
-        if (live.complete && live.naturalWidth) live.classList.add('vw-shown');
-    }
-    wall.liveEl = el;
+    clearTimeout(wall.liveTimer);
+    wall.liveTimer = setTimeout(wallSyncLive, WALL_ANIM_SETTLE_MS);
 }
 
-function wallClearLive(el) {
-    const live = el.firstChild.children[1];
-    live.onload = null;
+function wallLiveImg(el) { return el.firstChild.children[1]; }
+
+function wallSyncLive() {
+    if (!wall || !wall.ready) return;
+    const vr = wall.viewRange;
+    wall.cells.forEach(el => {
+        const item = wall.items[+el.dataset.idx];
+        const i = +el.dataset.i, j = +el.dataset.j;
+        const want = WALL_ANIMATE && vr && wallIsAnimCandidate(item) && item.job && item.job.w &&
+                     i >= vr.vi0 && i <= vr.vi1 && j >= vr.vj0 && j <= vr.vj1;
+        if (want) wallAttachLive(el, item); else wallDetachLive(el);
+    });
+}
+
+function wallAttachLive(el, item) {
+    const live = wallLiveImg(el);
+    if (live.getAttribute('src') === item.src) return;
+    if (live.getAttribute('src')) wallDetachLive(el);
+    const img = wallLiveImg(el);
+    img.style.transition = '';
+    img.classList.remove('vw-shown');
+    img.onload = () => { img.classList.add('vw-shown'); };
+    img.onerror = () => { img.onload = img.onerror = null; img.removeAttribute('src'); };
+    img.src = item.src;
+    if (img.complete && img.naturalWidth) img.classList.add('vw-shown');
+}
+
+// Take the original off a poster. A finished image is simply cleared; one still loading
+// is swapped out and left to finish quietly in the background (never cancelled).
+function wallDetachLive(el) {
+    const live = wallLiveImg(el);
+    if (!live.getAttribute('src')) { live.classList.remove('vw-shown'); return; }
+    live.style.transition = 'none';
     live.classList.remove('vw-shown');
-    live.removeAttribute('src');
+    if (live.complete) {
+        live.onload = live.onerror = null;
+        live.removeAttribute('src');
+        return;
+    }
+    const fresh = document.createElement('img');
+    fresh.className = 'vw-live';
+    fresh.alt = '';
+    fresh.draggable = false;
+    fresh.decoding = 'async';
+    live.replaceWith(fresh);
+    wallInflight.add(live);
+    live.onload = live.onerror = () => {
+        wallInflight.delete(live);
+        live.onload = live.onerror = null;
+        live.removeAttribute('src');
+    };
 }
 
 function wallIndex(i, j) {
@@ -1049,7 +1095,7 @@ function wallRender() {
             if (el.dataset.idx !== String(idx)) {
                 el.dataset.idx = idx;
                 el.href = item.href;
-                if (el === wall.liveEl) { wallClearLive(el); wall.liveEl = null; }
+                wallDetachLive(el);
                 el.classList.toggle('vw-fav', !!item.fav);
                 const n = item.group ? item.group.length : 1;
                 el.classList.toggle('vw-has-dups', n > 1);
@@ -1071,7 +1117,7 @@ function wallRender() {
         wall.cells.delete(key);
         el.style.display = 'none';
         if (el === wall.focusEl) { el.classList.remove('vw-focus'); wall.focusEl = null; }
-        if (el === wall.liveEl) { wallClearLive(el); wall.liveEl = null; }
+        wallDetachLive(el);
         wall.pool.push(el);
     });
 
@@ -1079,6 +1125,7 @@ function wallRender() {
     // middle of the screen first), then about half a screen around them
     const vi0 = Math.floor(left / pw), vi1 = Math.floor((left + W - 1) / pw);
     const vj0 = Math.floor(top / ph),  vj1 = Math.floor((top + H - 1) / ph);
+    wall.viewRange = { vi0, vi1, vj0, vj1 };
     const rangeKey = vi0 + ',' + vi1 + ',' + vj0 + ',' + vj1 + ',' + wall.N;
     if (rangeKey !== wall.ld.rangeKey) {
         wall.ld.rangeKey = rangeKey;
@@ -1109,7 +1156,6 @@ function wallRender() {
         if (wall.focusEl) wall.focusEl.classList.remove('vw-focus');
         if (fEl) fEl.classList.add('vw-focus');
         wall.focusEl = fEl;
-        wallScheduleLive();
     }
     if (fKey !== wall.focusKey) {
         wall.focusKey = fKey;
@@ -1194,6 +1240,7 @@ function wallTick() {
         }
     }
 
+    if (moved || wall.drag) wallScheduleLive();
     if (moved) {
         wall.dirty = true;
         // Hover focus follows the content moving under a still mouse
@@ -1319,6 +1366,14 @@ function wallMarkUnavailable() {
     });
 }
 
+function wallToggleAnimate() {
+    WALL_ANIMATE = !WALL_ANIMATE;
+    GM_setValue('WALL_ANIMATE', WALL_ANIMATE);
+    jQuery('#vsm-WALL_ANIMATE').prop('checked', WALL_ANIMATE);
+    wallToast(WALL_ANIMATE ? 'Animated posters on screen will play.' : 'Animated posters paused (first frame shown).');
+    wallSyncLive();
+}
+
 function wallToggleGroupDups() {
     WALL_GROUP_DUP_IMAGES = !WALL_GROUP_DUP_IMAGES;
     GM_setValue('WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES);
@@ -1442,6 +1497,7 @@ function wallOnKey(e) {
     else if (k === 'e' || k === 'E') { wallToggleEdge(); }
     else if (k === 'u' || k === 'U') { wallMarkUnavailable(); }
     else if (k === 'd' || k === 'D') { wallToggleGroupDups(); }
+    else if (k === 'p' || k === 'P') { wallToggleAnimate(); }
     wallKick();
 }
 

@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Viewer Settings overlay and the nav-bar buttons (Grid/List, Wall, Viewer)
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.16
+// Version 3.17
 
 // --------------------
 // SETTINGS OVERLAY — BUILD & INJECT
@@ -107,6 +107,9 @@ function buildSettingsOverlay() {
                     ${row('Group Duplicate Images',
                           'Torrents that use the same image link (usually different resolutions) appear as one poster; clicking it lets you pick which torrent to open. Also switchable on the wall with D.',
                           toggle('vsm-WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES))}
+                    ${row('Play Animated Posters',
+                          'Animated images (GIF / WebP) on screen play once scrolling stops. Turn off for a lighter wall that shows their first frame. Also switchable on the wall with P.',
+                          toggle('vsm-WALL_ANIMATE', WALL_ANIMATE))}
                     ${row('Auto-close When Idle',
                           'Closes the Poster Wall after this long without mouse, wheel or keyboard activity (a 30-second warning appears first). The wall can be heavy on some PCs, so it is best not left open in the background.',
                           select('vsm-WALL_IDLE_CLOSE_MIN',
@@ -222,6 +225,10 @@ function buildSettingsOverlay() {
     jQuery(document).on('change', '#vsm-WALL_GROUP_DUP_IMAGES', function () {
         WALL_GROUP_DUP_IMAGES = this.checked;
         GM_setValue('WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES);
+    });
+    jQuery(document).on('change', '#vsm-WALL_ANIMATE', function () {
+        WALL_ANIMATE = this.checked;
+        GM_setValue('WALL_ANIMATE', WALL_ANIMATE);
     });
     jQuery(document).on('change', '#vsm-WALL_IDLE_CLOSE_MIN', function () {
         WALL_IDLE_CLOSE_MIN = parseInt(this.value, 10) || 0;
