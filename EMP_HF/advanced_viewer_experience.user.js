@@ -26,7 +26,7 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     3.8
+// @version     3.13
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
@@ -40,6 +40,9 @@
 // @grant       GM_xmlhttpRequest
 // @grant       GM_registerMenuCommand
 // @connect     raw.githubusercontent.com
+// @connect     imgbox.com
+// @connect     imagebam.com
+// @connect     *
 // ==/UserScript==
 
 
@@ -53,7 +56,7 @@ let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
 // --------------------
-const SCRIPT_VERSION = '3.8';
+const SCRIPT_VERSION = '3.13';
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/AVE_Changelog.md';
 let changelogCache = null;
 const CHANGELOG_HISTORY_DEPTH = 3; // how many versions to show in the manual "Show Changelog" view
@@ -726,6 +729,30 @@ GM_addStyle(`
 #vsm-tag-add-input:disabled { opacity: 0.4; cursor: not-allowed; }
 #vsm-tag-add-btn { padding: 4px 10px; }
 #vsm-tag-clear-btn { padding: 4px 10px; font-size: 10px; }
+#vsm-unavail-container {
+    padding: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 3px; min-height: 24px;
+}
+#vsm-unavail-container .vsm-bl-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 4px 2px 7px; border-radius: 3px;
+    background: #20242c; color: #b8c2d4; border: 1px solid #3a4250;
+}
+#vsm-unavail-container .vsm-bl-chip a { color: inherit; text-decoration: none; }
+#vsm-unavail-container .vsm-bl-chip a:hover { text-decoration: underline; }
+#vsm-unavail-container .vsm-bl-time { font-weight: 400; color: #7d8696; }
+#vsm-unavail-container .vsm-bl-chip button {
+    background: none; border: none; color: #8a93a3;
+    font-size: 13px; line-height: 1; cursor: pointer; padding: 0 1px;
+}
+#vsm-unavail-container .vsm-bl-chip button:hover { color: #fff; }
+#vsm-unavail-add-row { display: flex; gap: 6px; align-items: center; padding: 6px 0; }
+#vsm-unavail-add-input {
+    flex: 1; background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0;
+    padding: 3px 7px; border-radius: 3px; font-size: 11px; outline: none;
+}
+#vsm-unavail-add-input:focus { border-color: #888; }
+#vsm-unavail-add-btn, #vsm-unavail-reset-btn { padding: 4px 10px; font-size: 10px; }
 .vsm-tags-disabled-note {
     font-size: 10px; color: #555; font-style: italic; padding: 2px 0;
 }
@@ -1103,6 +1130,23 @@ function buildSettingsOverlay() {
                                  IMAGE_LOAD_MODE))}
                 </div>
 
+                <div class="vsm-section" id="vsm-wall-section">
+                    <p class="vsm-section-title">Poster Wall</p>
+                    ${row('Group Duplicate Images',
+                          'Torrents that use the same image link (usually different resolutions) appear as one poster; clicking it lets you pick which torrent to open. Also switchable on the wall with D.',
+                          toggle('vsm-WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES))}
+                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
+                        <span class="vsm-label">"Image unavailable" examples</span>
+                        <span class="vsm-hint">Links to images the host has replaced with an "image unavailable" template. Each one is downloaded once to learn the template; posters showing the same template are left out of the wall. Press U on the wall to add the highlighted poster. Changes apply without saving.</span>
+                    </div>
+                    <div id="vsm-unavail-container"></div>
+                    <div id="vsm-unavail-add-row">
+                        <input type="text" id="vsm-unavail-add-input" placeholder="https://… (several separated by spaces)" autocomplete="off">
+                        <button class="vsm-btn vsm-btn-save" id="vsm-unavail-add-btn" type="button">Add</button>
+                        <button class="vsm-btn vsm-btn-reset" id="vsm-unavail-reset-btn" type="button">Defaults</button>
+                    </div>
+                </div>
+
                 <div class="vsm-section" id="vsm-tags-section">
                     <p class="vsm-section-title">Tag Blacklist</p>
                     <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
@@ -1193,6 +1237,31 @@ function buildSettingsOverlay() {
     jQuery('body').append(html);
 
     jQuery('#viewer-settings-backdrop').on('click', function(e) { if (e.target === this) closeOverlay(); });
+
+    // Poster Wall settings apply immediately
+    jQuery(document).on('change', '#vsm-WALL_GROUP_DUP_IMAGES', function () {
+        WALL_GROUP_DUP_IMAGES = this.checked;
+        GM_setValue('WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES);
+    });
+    const addUnavail = function () {
+        const urls = (jQuery('#vsm-unavail-add-input').val() || '').split(/\s+/).filter(u => /^https?:\/\//i.test(u));
+        if (!urls.length) return;
+        urls.forEach(u => { u = wallAbsUrl(u); if (WALL_UNAVAIL_URLS.indexOf(u) === -1) WALL_UNAVAIL_URLS.push(u); });
+        jQuery('#vsm-unavail-add-input').val('');
+        wallSaveUnavail();
+        refreshUnavailSettingsPanel();
+        wallLearnUnavail();
+    };
+    jQuery(document).on('click', '#vsm-unavail-add-btn', addUnavail);
+    jQuery(document).on('keydown', '#vsm-unavail-add-input', function (e) { if (e.key === 'Enter') { e.preventDefault(); addUnavail(); } });
+    jQuery(document).on('click', '#vsm-unavail-reset-btn', function () {
+        if (!confirm('Replace the "image unavailable" examples with the built-in defaults?')) return;
+        WALL_UNAVAIL_URLS = WALL_UNAVAIL_DEFAULT_URLS.slice();
+        Object.keys(WALL_UNAVAIL_SIGS).forEach(u => { if (WALL_UNAVAIL_URLS.indexOf(u) === -1) delete WALL_UNAVAIL_SIGS[u]; });
+        wallSaveUnavail();
+        refreshUnavailSettingsPanel();
+        wallLearnUnavail();
+    });
     jQuery('#vsm-close-btn').on('click', closeOverlay);
 
     jQuery(document).on('click', '#vsm-tag-add-btn', function() {
@@ -1335,6 +1404,7 @@ function openOverlay()  {
     refreshUploaderSettingsPanel();
     refreshUploaderTagRulesPanel();
     refreshFavoriteTagsPanel();
+    refreshUnavailSettingsPanel();
     buildGlowSwatches();
 }
 function closeOverlay() { jQuery('#viewer-settings-backdrop').removeClass('active'); }
@@ -1407,6 +1477,19 @@ function injectNavButton() {
         `);
         $ul.prepend($galleryLi);
         jQuery(document).on('click', '#gallery-toggle-btn', toggleGalleryMode);
+    }
+
+    // Poster Wall: torrent listings only (not collages / requests)
+    if (!isCollagePage && !location.pathname.includes('/requests')) {
+        const $wallLi = jQuery(`
+            <li id="nav_poster_wall" class="brackets">
+                <a href="javascript:void(0)" id="poster-wall-open-btn" title="Full-screen endless poster wall">
+                    <span class="viewer-gear-icon">&#9638;</span>Wall
+                </a>
+            </li>
+        `);
+        $settingsLi.before($wallLi);
+        jQuery(document).on('click', '#poster-wall-open-btn', openPosterWall);
     }
 
     $majorStats.before($div);
@@ -2036,6 +2119,1327 @@ function destroyGalleryView() {
         galleryLazyObserver = null;
     }
     updateGalleryToggleLabel(false);
+}
+
+
+// --------------------
+// POSTER WALL — endless 2D grid (Kaleidescape-style)
+//
+// Full-screen overlay that tiles every torrent image on the page across an
+// endless plane. Drag / wheel to glide in any direction, arrows to step,
+// click or Enter to open. Rows without an image, or whose image fails to
+// load (or is a tiny placeholder), are left out.
+//
+// Layout: cell (i, j) shows item  (i + j * S) mod N.
+// Moving right walks the list in order and wraps around; each row down
+// starts S items further on, so neighbours never repeat on screen for a
+// normal 100-item page.
+// --------------------
+const WALL_INVALID_SRC_RE  = /noartwork|noimage/i;
+const WALL_MIN_IMG_PX      = 40;      // smaller than this = tracking pixel / placeholder
+const WALL_LOAD_GRACE_MS   = 3000;    // open the wall after this even if some images are still downloading
+const WALL_MIN_COLS        = 3;
+const WALL_MAX_COLS        = 14;
+const WALL_ASPECT_ORDER    = ['auto', 'portrait', 'square', 'landscape'];
+const WALL_ASPECTS         = { portrait: 2 / 3, square: 1, landscape: 16 / 9 };
+const WALL_ASPECT_LABELS   = { auto: 'Auto', portrait: 'Poster', square: 'Square', landscape: 'Wide' };
+
+let WALL_ASPECT       = GM_getValue('WALL_ASPECT', 'auto');
+let WALL_FIT          = GM_getValue('WALL_FIT', 'cover');           // 'cover' | 'contain'
+let WALL_COLS_VISIBLE = GM_getValue('WALL_COLS_VISIBLE', 7);        // zoom: columns across the screen
+let WALL_EDGE_PAN     = GM_getValue('WALL_EDGE_PAN', false);        // glide when the mouse nears an edge
+// Torrents sharing one image link become one poster with a picker (usually different resolutions)
+let WALL_GROUP_DUP_IMAGES = GM_getValue('WALL_GROUP_DUP_IMAGES', GM_getValue('WALL_SKIP_DUP_IMAGES', true));
+
+// "Image unavailable" placeholders: hosts like imgbox / imagebam keep the original
+// link but serve a generic template once an image is removed. We learn what those
+// templates look like from example links (size + content fingerprint) and leave out
+// any poster that matches. Example links themselves are also blocked outright.
+const WALL_UNAVAIL_DEFAULT_URLS = [
+    'https://images2.imgbox.com/9c/11/qvDFcYsq_o.jpg',
+    'https://images2.imgbox.com/dd/c9/488NiWBY_o.jpg',
+    'https://thumbs4.imagebam.com/bc/03/2f/MEOMWT2_t.jpg',
+    'https://thumbs4.imagebam.com/8f/59/df/ME1AM82Z_t.jpg',
+];
+const WALL_DHASH_MAX_DIFF = 5;     // of 64 bits — near-identical structure
+const WALL_PX_MEAN_DIFF   = 8;     // 8×8 colour thumbnail: average per-channel difference (0–255)
+const WALL_PX_MAX_DIFF    = 48;    // ...and no single cell may differ more than this
+let WALL_UNAVAIL_URLS = [];
+let WALL_UNAVAIL_SIGS = {};        // url -> { w, h, sha, dh, px }
+try { WALL_UNAVAIL_URLS = JSON.parse(GM_getValue('WALL_UNAVAIL_URLS', JSON.stringify(WALL_UNAVAIL_DEFAULT_URLS))) || []; } catch (e) { WALL_UNAVAIL_URLS = WALL_UNAVAIL_DEFAULT_URLS.slice(); }
+try { WALL_UNAVAIL_SIGS = JSON.parse(GM_getValue('WALL_UNAVAIL_SIGS', '{}')) || {}; } catch (e) { WALL_UNAVAIL_SIGS = {}; }
+Object.keys(WALL_UNAVAIL_SIGS).forEach(u => { if (WALL_UNAVAIL_SIGS[u].px === undefined) delete WALL_UNAVAIL_SIGS[u]; });
+const wallUnavailStatus = {};      // url -> 'learning' | 'failed' (this page load only)
+const wallFpCache = {};            // src -> Promise<{ w, h, sha, dh } | null>
+
+const wallImageCache = {};   // src -> Promise<{ ok, w, h }>
+let wall = null;             // live state while the wall is open
+let wallSession = 0;         // bumps on every open/close so late image loads are ignored
+
+GM_addStyle(`
+#nav_poster_wall a {
+    cursor: pointer; display: flex !important;
+    align-items: center; gap: 3px;
+    text-decoration: none; white-space: nowrap;
+}
+#nav_poster_wall a:hover { text-decoration: underline; }
+#nav_poster_wall .viewer-gear-icon {
+    display: inline-block; font-size: 11px; line-height: 1;
+    margin-right: 1px; opacity: 0.9;
+}
+#vw-wall {
+    position: fixed; inset: 0; z-index: 100000;
+    background: radial-gradient(ellipse at center, #15171c 0%, #08090b 75%);
+    color: #ddd; font-family: inherit; font-size: 13px;
+    overflow: hidden; user-select: none; outline: none;
+    opacity: 0; transition: opacity .25s ease;
+}
+#vw-wall.vw-open { opacity: 1; }
+#vw-wall .vw-stage { position: absolute; inset: 0; cursor: grab; touch-action: none; overflow: hidden; }
+#vw-wall .vw-layer { position: absolute; left: 0; top: 0; will-change: transform; }
+#vw-wall.vw-dragging .vw-stage { cursor: grabbing; }
+#vw-wall .vw-cell {
+    position: absolute; left: 0; top: 0; display: block;
+    text-decoration: none !important;
+    -webkit-user-drag: none;
+}
+#vw-wall .vw-poster {
+    position: absolute; overflow: hidden; border-radius: 6px;
+    background: #1b1d22;
+    box-shadow: 0 5px 12px rgba(0,0,0,.5);
+    transition: transform .22s cubic-bezier(.2,.8,.3,1), box-shadow .22s ease;
+}
+/* Dim non-focused posters with a cheap overlay instead of a per-poster CSS filter */
+#vw-wall .vw-poster::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: #000; opacity: .18; transition: opacity .22s ease;
+}
+#vw-wall .vw-cell.vw-focus .vw-poster::after { opacity: 0; }
+#vw-wall .vw-poster img {
+    width: 100%; height: 100%; display: block;
+    object-fit: cover; pointer-events: none;
+    transition: opacity .3s ease;
+}
+#vw-wall.vw-fit-contain .vw-poster img { object-fit: contain; }
+#vw-wall .vw-cell.vw-fav .vw-poster { outline: 2px solid var(--vw-fav, #f5c518); outline-offset: -2px; }
+#vw-wall .vw-cell.vw-focus { z-index: 2; }
+#vw-wall .vw-cell.vw-focus .vw-poster {
+    transform: scale(1.09);
+    box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 18px 45px rgba(0,0,0,.8);
+}
+#vw-wall.vw-dragging .vw-cell.vw-focus .vw-poster { transform: scale(1.03); }
+#vw-wall .vw-vignette {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,.8) 100%);
+}
+#vw-wall .vw-topbar {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 18px 26px;
+    background: linear-gradient(to bottom, rgba(0,0,0,.85), rgba(0,0,0,0));
+    pointer-events: none;
+}
+#vw-wall .vw-topbar > * { pointer-events: auto; }
+#vw-wall .vw-brand { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; color: #f0f0f0; }
+#vw-wall .vw-count { color: #8a8f99; font-size: 12px; }
+#vw-wall .vw-controls { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+#vw-wall .vw-btn {
+    background: rgba(255,255,255,.08); color: #ddd;
+    border: 1px solid rgba(255,255,255,.14); border-radius: 4px;
+    padding: 4px 9px; font: inherit; font-size: 12px; line-height: 1.2;
+    cursor: pointer; transition: background .15s, color .15s;
+}
+#vw-wall .vw-btn:hover { background: rgba(255,255,255,.18); color: #fff; }
+#vw-wall .vw-btn.vw-on { background: rgba(120,190,255,.25); border-color: rgba(120,190,255,.55); color: #fff; }
+#vw-wall .vw-btn.vw-close { font-size: 15px; padding: 2px 9px; margin-left: 6px; }
+#vw-wall .vw-sep { width: 1px; height: 18px; background: rgba(255,255,255,.15); margin: 0 4px; }
+#vw-wall .vw-info {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+    padding: 46px 22px 16px; pointer-events: none;
+    background: linear-gradient(to top, rgba(0,0,0,.92), rgba(0,0,0,0));
+    opacity: 0; transition: opacity .2s ease;
+}
+#vw-wall .vw-info.vw-show { opacity: 1; }
+#vw-wall .vw-info-title {
+    font-size: 17px; font-weight: 600; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: 0 2px 6px rgba(0,0,0,.8);
+}
+#vw-wall .vw-info-meta { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+#vw-wall .vw-chip {
+    font-size: 11px; padding: 2px 7px; border-radius: 3px;
+    background: rgba(255,255,255,.1); color: #c8ccd4;
+}
+#vw-wall .vw-chip.vw-seed  { color: #7fd88f; }
+#vw-wall .vw-chip.vw-leech { color: #e89a7f; }
+#vw-wall .vw-help {
+    position: absolute; right: 18px; bottom: 14px; z-index: 6;
+    font-size: 11px; color: #6d727c; pointer-events: none;
+}
+#vw-wall .vw-loading, #vw-wall .vw-empty {
+    position: absolute; inset: 0; z-index: 4;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    color: #aab; font-size: 14px;
+}
+#vw-wall .vw-bar { width: 260px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
+#vw-wall .vw-brand, #vw-wall .vw-btn { white-space: nowrap; flex: none; }
+#vw-wall .vw-count { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#vw-wall .vw-controls { flex: none; }
+#vw-wall .vw-kbd-hint { font-size: 11px; color: #9aa1ad; white-space: nowrap; cursor: help; }
+#vw-wall kbd {
+    display: inline-block; min-width: 16px; padding: 1px 5px; margin-right: 3px;
+    border: 1px solid rgba(255,255,255,.3); border-bottom-width: 2px; border-radius: 3px;
+    background: rgba(255,255,255,.08); color: #fff; font: 600 11px/1.3 inherit; text-align: center;
+}
+#vw-wall .vw-dup-badge {
+    position: absolute; top: 6px; right: 6px; z-index: 1; display: none;
+    padding: 1px 6px; border-radius: 10px; font-size: 11px; font-weight: 700;
+    background: rgba(0,0,0,.75); color: #fff; border: 1px solid rgba(255,255,255,.35);
+}
+#vw-wall .vw-cell.vw-has-dups .vw-dup-badge { display: block; }
+#vw-wall .vw-chip.vw-dupchip { color: #9fd0ff; }
+#vw-wall .vw-chip.vw-res { color: #fff; background: rgba(124,184,255,.3); font-weight: 700; }
+#vw-wall .vw-picker-back {
+    position: absolute; inset: 0; z-index: 8; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .15s ease;
+}
+#vw-wall .vw-picker-back.vw-show { opacity: 1; }
+#vw-wall .vw-picker {
+    width: 640px; max-width: calc(100vw - 32px); max-height: 80vh;
+    display: flex; flex-direction: column;
+    background: #17191e; border: 1px solid rgba(255,255,255,.15); border-radius: 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.7); overflow: hidden;
+}
+#vw-wall .vw-picker-head {
+    display: flex; align-items: center; gap: 14px; padding: 14px 16px;
+    border-bottom: 1px solid rgba(255,255,255,.1);
+}
+#vw-wall .vw-picker-img { width: 72px; height: 72px; object-fit: cover; border-radius: 4px; flex: none; background: #222; }
+#vw-wall .vw-picker-heading { flex: 1; min-width: 0; }
+#vw-wall .vw-picker-title { font-size: 15px; font-weight: 600; color: #fff; }
+#vw-wall .vw-picker-sub { margin-top: 4px; font-size: 11px; color: #8a8f99; }
+#vw-wall .vw-picker-list { overflow-y: auto; padding: 6px; }
+#vw-wall .vw-pick-row {
+    display: block; padding: 9px 11px; border-radius: 5px;
+    color: #ddd !important; text-decoration: none !important; border: 1px solid transparent;
+}
+#vw-wall .vw-pick-row.vw-sel { background: rgba(124,184,255,.14); border-color: rgba(124,184,255,.45); }
+#vw-wall .vw-pick-title { font-size: 13px; color: #f0f0f0; word-break: break-word; }
+#vw-wall .vw-pick-meta { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; }
+#vw-wall .vw-toast {
+    position: absolute; left: 50%; top: 62px; z-index: 7; transform: translateX(-50%);
+    background: rgba(20,22,27,.95); border: 1px solid rgba(255,255,255,.15); border-radius: 5px;
+    padding: 7px 14px; font-size: 12px; color: #e6e6e6; pointer-events: none;
+    opacity: 0; transition: opacity .2s ease;
+}
+#vw-wall .vw-toast.vw-show { opacity: 1; }
+/* Page content is hidden (and its images unloaded) while the wall is open */
+html.vw-page-suspended body > *:not(#vw-wall) { display: none !important; }
+#vw-wall .vw-bar > div { height: 100%; width: 0; background: #7cb8ff; transition: width .15s linear; }
+`);
+
+// ── Image probing (cached across opens; timeouts are retried next time) ──
+function wallProbeImage(src) {
+    if (wallImageCache[src]) return wallImageCache[src];
+    wallImageCache[src] = new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+            if (img.naturalWidth >= WALL_MIN_IMG_PX && img.naturalHeight >= WALL_MIN_IMG_PX) {
+                resolve({ ok: true, w: img.naturalWidth, h: img.naturalHeight });
+            } else {
+                resolve({ ok: false, reason: 'placeholder' });
+            }
+        };
+        img.onerror = () => {
+            delete wallImageCache[src];   // could be a network hiccup — retry on next open
+            resolve({ ok: false, reason: 'broken' });
+        };
+        img.src = src;
+    });
+    return wallImageCache[src];
+}
+
+// ── "Image unavailable" placeholder detection ──
+function wallAbsUrl(src) {
+    try { return new URL(src, location.href).href; } catch (e) { return src; }
+}
+
+function wallSaveUnavail() {
+    GM_setValue('WALL_UNAVAIL_URLS', JSON.stringify(WALL_UNAVAIL_URLS));
+    GM_setValue('WALL_UNAVAIL_SIGS', JSON.stringify(WALL_UNAVAIL_SIGS));
+}
+
+function wallIsBlockedUrl(src) {
+    return WALL_UNAVAIL_URLS.indexOf(wallAbsUrl(src)) !== -1;
+}
+
+function wallBytesToBase64(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+}
+
+function wallHamming(a, b) {
+    if (!a || !b || a.length !== b.length) return 64;
+    let d = 0;
+    for (let i = 0; i < a.length; i++) {
+        let x = parseInt(a[i], 16) ^ parseInt(b[i], 16);
+        while (x) { d += x & 1; x >>= 1; }
+    }
+    return d;
+}
+
+// Download an image's bytes (cross-origin, via Tampermonkey) and return its size,
+// a SHA-256 of the file and a 64-bit difference hash of a 9×8 grayscale copy.
+// Resolves null when it can't be fetched or decoded.
+function wallFingerprint(src) {
+    const url = wallAbsUrl(src);
+    if (wallFpCache[url]) return wallFpCache[url];
+    const p = new Promise(resolve => {
+        GM_xmlhttpRequest({
+            method: 'GET', url, responseType: 'arraybuffer', timeout: 20000,
+            headers: { Referer: location.origin + '/' },
+            onerror: () => resolve(null),
+            ontimeout: () => resolve(null),
+            onload: (r) => {
+                if (r.status < 200 || r.status >= 400 || !r.response) { resolve(null); return; }
+                const bytes = new Uint8Array(r.response);
+                const type  = ((r.responseHeaders || '').match(/content-type:\s*([^;\r\n]+)/i) || [])[1] || 'image/jpeg';
+                const shaP  = (window.crypto && crypto.subtle)
+                    ? crypto.subtle.digest('SHA-256', bytes).then(buf =>
+                        Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(''))
+                        .catch(() => '')
+                    : Promise.resolve('');
+                const img = new Image();
+                img.onerror = () => resolve(null);
+                img.onload  = () => {
+                    let dh = '', px = '';
+                    try {
+                        const c = document.createElement('canvas');
+                        c.width = 9; c.height = 8;
+                        const ctx = c.getContext('2d');
+                        ctx.drawImage(img, 0, 0, 9, 8);
+                        const d = ctx.getImageData(0, 0, 9, 8).data;
+                        const L = (x, y) => { const o = (y * 9 + x) * 4; return d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114; };
+                        let bits = '';
+                        for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) bits += L(x, y) > L(x + 1, y) ? '1' : '0';
+                        for (let i = 0; i < 64; i += 4) dh += parseInt(bits.substr(i, 4), 2).toString(16);
+                        // 8×8 colour thumbnail: separates pictures whose structure is similar
+                        // (e.g. mostly flat) but whose colours / layout differ
+                        const c2 = document.createElement('canvas');
+                        c2.width = 8; c2.height = 8;
+                        const ctx2 = c2.getContext('2d');
+                        ctx2.drawImage(img, 0, 0, 8, 8);
+                        const d2 = ctx2.getImageData(0, 0, 8, 8).data;
+                        for (let i = 0; i < d2.length; i += 4) {
+                            for (let ch = 0; ch < 3; ch++) px += d2[i + ch].toString(16).padStart(2, '0');
+                        }
+                    } catch (e) { dh = ''; px = ''; }   // canvas unavailable: fall back to the file hash alone
+                    shaP.then(sha => resolve({ w: img.naturalWidth, h: img.naturalHeight, sha, dh, px }));
+                };
+                // data: URL keeps the canvas readable (no cross-origin taint)
+                img.src = 'data:' + type.trim() + ';base64,' + wallBytesToBase64(bytes);
+            },
+        });
+    });
+    wallFpCache[url] = p;
+    p.then(v => { if (!v) delete wallFpCache[url]; });   // retry failures later
+    return p;
+}
+
+// Learn the signature of every example link we haven't fingerprinted yet.
+function wallLearnUnavail() {
+    const todo = WALL_UNAVAIL_URLS.filter(u => !WALL_UNAVAIL_SIGS[u] && wallUnavailStatus[u] !== 'learning');
+    return Promise.all(todo.map(u => {
+        wallUnavailStatus[u] = 'learning';
+        return wallFingerprint(u).then(fp => {
+            if (fp && WALL_UNAVAIL_URLS.indexOf(u) !== -1) {
+                WALL_UNAVAIL_SIGS[u] = fp;
+                delete wallUnavailStatus[u];
+            } else {
+                wallUnavailStatus[u] = 'failed';
+            }
+        });
+    })).then(() => { wallSaveUnavail(); refreshUnavailSettingsPanel(); });
+}
+
+// Is this (already loaded, w×h) image one of the known placeholders?
+// Only images with exactly a placeholder's size are downloaded and compared.
+function wallLooksUnavailable(src, w, h) {
+    const sigs = Object.keys(WALL_UNAVAIL_SIGS).map(k => WALL_UNAVAIL_SIGS[k]).filter(s => s.w === w && s.h === h);
+    if (!sigs.length) return Promise.resolve(false);
+    return wallFingerprint(src).then(fp => {
+        // The script's download must be the same picture the page shows; if the host
+        // served something else (e.g. a hotlink notice), don't guess — keep the poster.
+        if (!fp || fp.w !== w || fp.h !== h) return false;
+        return sigs.some(sg => wallSigMatches(sg, fp));
+    });
+}
+
+// Same file, or visually the same picture (structure AND colours) after re-encoding.
+function wallSigMatches(sg, fp) {
+    if (sg.sha && fp.sha && sg.sha === fp.sha) return true;
+    if (!sg.dh || !fp.dh || !sg.px || !fp.px || sg.px.length !== fp.px.length) return false;
+    if (wallHamming(sg.dh, fp.dh) > WALL_DHASH_MAX_DIFF) return false;
+    let sum = 0, max = 0;
+    for (let i = 0; i < sg.px.length; i += 2) {
+        const diff = Math.abs(parseInt(sg.px.substr(i, 2), 16) - parseInt(fp.px.substr(i, 2), 16));
+        sum += diff;
+        if (diff > max) max = diff;
+    }
+    return sum / (sg.px.length / 2) <= WALL_PX_MEAN_DIFF && max <= WALL_PX_MAX_DIFF;
+}
+
+function wallAddUnavailUrl(src) {
+    const u = wallAbsUrl(src);
+    if (WALL_UNAVAIL_URLS.indexOf(u) === -1) WALL_UNAVAIL_URLS.push(u);
+    wallSaveUnavail();
+    refreshUnavailSettingsPanel();
+    return wallLearnUnavail().then(() => WALL_UNAVAIL_SIGS[u] || null);
+}
+
+function wallRemoveUnavailUrl(u) {
+    WALL_UNAVAIL_URLS = WALL_UNAVAIL_URLS.filter(x => x !== u);
+    delete WALL_UNAVAIL_SIGS[u];
+    delete wallUnavailStatus[u];
+    wallSaveUnavail();
+    refreshUnavailSettingsPanel();
+}
+
+function refreshUnavailSettingsPanel() {
+    const $c = jQuery('#vsm-unavail-container');
+    if (!$c.length) return;
+    $c.empty();
+    if (!WALL_UNAVAIL_URLS.length) {
+        $c.append(jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No example images.'));
+        return;
+    }
+    WALL_UNAVAIL_URLS.forEach(u => {
+        const sig = WALL_UNAVAIL_SIGS[u];
+        const st  = wallUnavailStatus[u];
+        let short = u;
+        try { const x = new URL(u); short = x.hostname.replace(/^www\./, '') + '/…/' + x.pathname.split('/').pop(); } catch (e) {}
+        const $chip = jQuery('<span class="vsm-bl-chip">');
+        jQuery('<a target="_blank" rel="noopener">').attr('href', u).attr('title', u).text(short).appendTo($chip);
+        const status = sig ? `${sig.w}×${sig.h}` : (st === 'failed' ? 'could not fetch' : 'learning…');
+        jQuery('<span class="vsm-bl-time">').text('· ' + status)
+            .attr('title', sig ? 'Learned — matching images are left out of the wall'
+                               : (st === 'failed' ? 'Only this exact link is blocked until it can be fetched (retried on next wall open)' : ''))
+            .appendTo($chip);
+        jQuery('<button type="button" title="Remove">').html('&times;')
+            .on('click', () => wallRemoveUnavailUrl(u)).appendTo($chip);
+        $c.append($chip);
+    });
+}
+
+// ── Gather torrents from every table on the page (respects blacklists) ──
+function wallCollectItems() {
+    const cols  = getGalleryColOffsets();
+    const items = [];
+    const seen  = new Set();
+    const stats = { rows: 0, blacklisted: 0, noImage: 0, noLink: 0, duplicate: 0, blockedUrl: 0 };
+
+    jQuery('.torrent_table tr.torrent').each(function () {
+        const $row = jQuery(this);
+        stats.rows++;
+        if (rowIsBlacklisted($row)) { stats.blacklisted++; return; }
+
+        const src = globalBackend ? globalBackend.get_image_src($row) : '';
+        if (!src || WALL_INVALID_SRC_RE.test(src)) { stats.noImage++; return; }
+
+        const $tds  = $row.find('> td');
+        let $link = $tds.eq(cols.title).find('a[href*="torrents.php?id="]').first();
+        if (!$link.length) $link = $row.find('a[href*="torrents.php?id="]').not('[href*="action="]').first();
+        if (!$link.length) { stats.noLink++; return; }
+        const href = $link.attr('href');
+        if (seen.has(href)) { stats.duplicate++; return; }
+        seen.add(href);
+
+        if (wallIsBlockedUrl(src)) { stats.blockedUrl++; return; }
+        const absSrc = wallAbsUrl(src);
+
+        const td = (i) => (i >= 0 ? $tds.eq(i).text().replace(/\s+/g, ' ').trim() : '');
+
+        let cat = '';
+        if (cols.cat >= 0) {
+            const $catTd = $tds.eq(cols.cat);
+            cat = $catTd.find('div[title]').first().attr('title') || '';
+            if (!cat) cat = $catTd.find('div[style*="position: absolute"]').first().text().trim();
+        }
+
+        let fav = false;
+        try { fav = rowMatchesFavorites($row); } catch (e) { /* favorites optional */ }
+
+        items.push({
+            src, href, cat, fav,
+            title:    $link.text().trim(),
+            size:     td(cols.size),
+            seeders:  td(cols.seeders),
+            leechers: td(cols.leechers),
+            time:     td(cols.time),
+            absSrc,
+            state:    'loading',   // 'loading' | 'ok' | 'failed'
+            group:    null,        // display leader: every torrent sharing this image
+        });
+    });
+    return { items, stats };
+}
+
+// ── Page suspend / restore ──
+// While the wall is open, every page image is swapped for a 1x1 blank (freeing its
+// decoded pixels) and the page content is hidden (no layout / paint / observers).
+// Everything is put back on close; the images come straight from the browser cache.
+const WALL_BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+function wallSuspendPage() {
+    const saved = { scrollX: window.scrollX, scrollY: window.scrollY, imgs: [] };
+    document.querySelectorAll('body img').forEach(img => {
+        if (img.closest('#vw-wall')) return;
+        const src = img.getAttribute('src');
+        if (!src || src === WALL_BLANK_IMG) return;
+        saved.imgs.push([img, src, img.getAttribute('srcset')]);
+        if (img.hasAttribute('srcset')) img.removeAttribute('srcset');
+        img.setAttribute('src', WALL_BLANK_IMG);
+    });
+    document.documentElement.classList.add('vw-page-suspended');
+    return saved;
+}
+
+function wallRestorePage(saved) {
+    document.documentElement.classList.remove('vw-page-suspended');
+    if (!saved) return;
+    saved.imgs.forEach(([img, src, srcset]) => {
+        if (img.getAttribute('src') !== WALL_BLANK_IMG) return;   // changed by the page meanwhile
+        if (srcset) img.setAttribute('srcset', srcset);
+        img.setAttribute('src', src);
+    });
+    window.scrollTo(saved.scrollX, saved.scrollY);
+}
+
+// ── Open / close ──
+function openPosterWall() {
+    if (wall) return;
+    const session = ++wallSession;
+    const collected  = wallCollectItems();
+    const candidates = collected.items;
+
+    const $root = jQuery(`
+        <div id="vw-wall" tabindex="-1">
+            <div class="vw-stage"><div class="vw-layer"></div></div>
+            <div class="vw-vignette"></div>
+            <div class="vw-topbar">
+                <span class="vw-brand">&#9638; Poster Wall</span>
+                <span class="vw-count"></span>
+                <div class="vw-controls">
+                    <button class="vw-btn" data-act="zoom-out" title="Smaller (−)">&minus;</button>
+                    <button class="vw-btn" data-act="zoom-in"  title="Larger (+)">+</button>
+                    <span class="vw-sep"></span>
+                    <button class="vw-btn" data-act="aspect" title="Cell shape (A)"></button>
+                    <button class="vw-btn" data-act="fit"    title="Fill or fit images (F)"></button>
+                    <button class="vw-btn" data-act="edge"   title="Glide when the mouse nears an edge (E)">Edge glide</button>
+                    <button class="vw-btn" data-act="dups"   title="Group torrents that share an image into one poster (D)"></button>
+                    <span class="vw-sep"></span>
+                    <span class="vw-kbd-hint" title="Hover a poster showing an 'image unavailable' template and press U. No clicking needed, so the highlight stays on that poster."><kbd>U</kbd> mark hovered as unavailable</span>
+                    <button class="vw-btn vw-close" data-act="close" title="Close (Esc)">&times;</button>
+                </div>
+            </div>
+            <div class="vw-info"><div class="vw-info-title"></div><div class="vw-info-meta"></div></div>
+            <div class="vw-help">Drag or scroll to glide &middot; Shift+wheel sideways &middot; Ctrl+wheel to resize &middot; Arrows step &middot; Enter opens &middot; D groups duplicates &middot; Esc closes</div>
+            <div class="vw-loading"><div class="vw-loading-text">Loading posters&hellip;</div><div class="vw-bar"><div></div></div></div>
+        </div>
+    `);
+    jQuery('body').append($root);
+    const prevOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    const pageState = wallSuspendPage();
+    requestAnimationFrame(() => $root.addClass('vw-open'));
+    $root[0].focus();
+
+    wall = {
+        session, $root, prevOverflow, pageState,
+        root:  $root[0],
+        stage: $root.find('.vw-stage')[0],
+        layer: $root.find('.vw-layer')[0],
+        oi: 0, oj: 0,             // layer origin cell (cells are placed relative to it)
+        relayout: false,          // cell size changed: reposition every live cell
+        focusEl: null,
+        items: [], N: 0, S: 1,
+        cu: 0, cv: 0,             // camera centre, in cell units
+        pw: 1, ph: 1, gap: 8,     // cell pitch / gap, in px
+        vx: 0, vy: 0,             // inertia, in px per frame
+        wheelX: 0, wheelY: 0,     // pending smooth-wheel distance, in px
+        tween: null,              // { u, v } camera target for keyboard steps
+        cells: new Map(), pool: [],
+        focusI: 0, focusJ: 0, focusKey: '',
+        mouseX: -1, mouseY: -1, mouseIn: false, overUi: false, keyboardMode: false,
+        drag: null, suppressClick: false,
+        dirty: true, raf: 0, ready: false, autoAspect: 2 / 3,
+        stats: collected.stats, broken: 0, placeholder: 0, unavailable: 0, loading: candidates.length,
+        all: candidates, dupGrouped: 0, picker: null,
+    };
+    // Learn any example placeholder links not fingerprinted yet (bounded wait)
+    const sigsReady = Promise.race([wallLearnUnavail(), new Promise(r => setTimeout(r, 8000))]);
+
+    wallBindEvents();
+    wallUpdateToolbar();
+
+    if (!candidates.length) { wallLogStats(); wallShowEmpty('No torrents with images on this page.'); return; }
+
+    // Probe every image. Only real failures (broken link / tiny placeholder) are dropped;
+    // slow images are never dropped — after a short grace period the wall opens and
+    // those posters simply fill in as they finish downloading.
+    let settled = 0;
+    let started = false;
+    const $txt = $root.find('.vw-loading-text');
+    const $bar = $root.find('.vw-bar > div');
+    const update = () => {
+        $txt.text(`Loading posters… ${settled} / ${candidates.length}`);
+        $bar.css('width', (settled / candidates.length * 100) + '%');
+    };
+    update();
+
+    const startNow = () => {
+        if (started || !wall || wall.session !== session) return;
+        started = true;
+        clearTimeout(graceTimer);
+        $root.find('.vw-loading').remove();
+        if (!candidates.some(it => it.state !== 'failed')) { wallLogStats(); wallShowEmpty('None of the torrents on this page have a loadable image.'); return; }
+        wallStart();
+    };
+    const graceTimer = setTimeout(startNow, WALL_LOAD_GRACE_MS);
+
+    // Request the posters that will be on screen first: the browser only opens a few
+    // connections per image host, so issue order decides what appears first.
+    const firstView = [];
+    const S0 = wallRowShift(candidates.length);
+    for (let j = -1; j <= 4; j++) for (let i = -1; i <= WALL_COLS_VISIBLE + 1; i++) {
+        const k = (((i + j * S0) % candidates.length) + candidates.length) % candidates.length;
+        if (firstView.indexOf(k) < 0) firstView.push(k);
+    }
+    const order = firstView.concat(candidates.map((_, k) => k).filter(k => firstView.indexOf(k) < 0));
+
+    order.map(k => candidates[k]).forEach(item => {
+        wallProbeImage(item.src).then(res => !res.ok ? res : sigsReady
+            .then(() => wallLooksUnavailable(item.src, res.w, res.h))
+            .then(un => (un ? { ok: false, reason: 'unavailable' } : res))
+        ).then(res => {
+            if (!wall || wall.session !== session) return;
+            settled++;
+            wall.loading--;
+            if (res.ok) {
+                item.state = 'ok'; item.w = res.w; item.h = res.h;
+            } else {
+                item.state = 'failed';
+                wall[res.reason === 'placeholder' ? 'placeholder' : res.reason === 'unavailable' ? 'unavailable' : 'broken']++;
+                if (started) wallRebuild();
+            }
+            if (!started) {
+                update();
+                if (settled === candidates.length) startNow();
+            } else {
+                wallUpdateCount();
+                if (!wall.loading) wallLogStats();
+            }
+        });
+    });
+}
+
+function closePosterWall() {
+    if (!wall) return;
+    wallSession++;
+    cancelAnimationFrame(wall.raf);
+    jQuery(window).off('.vwall');
+    document.removeEventListener('keydown', wallOnKey, true);
+    wallRestorePage(wall.pageState);
+    document.documentElement.style.overflow = wall.prevOverflow;
+    const $root = wall.$root;
+    wall = null;
+    $root.removeClass('vw-open');
+    setTimeout(() => $root.remove(), 250);
+}
+
+function wallShowEmpty(msg) {
+    wall.$root.find('.vw-loading').remove();
+    wall.$root.append(jQuery('<div class="vw-empty">').text(msg));
+}
+
+// Work out what's on the wall from every collected torrent: failed images out,
+// and (when grouping) torrents sharing an image link folded into one poster.
+function wallBuildDisplay() {
+    const live = wall.all.filter(it => it.state !== 'failed');
+    live.forEach(it => { it.group = null; });
+    let display = live;
+    if (WALL_GROUP_DUP_IMAGES) {
+        const leaders = new Map();
+        display = [];
+        live.forEach(it => {
+            const lead = leaders.get(it.absSrc);
+            if (lead) { lead.group.push(it); return; }
+            it.group = [it];
+            leaders.set(it.absSrc, it);
+            display.push(it);
+        });
+    } else {
+        live.forEach(it => { it.group = [it]; });
+    }
+    wall.items = display;
+    wall.N     = display.length;
+    wall.S     = wallRowShift(display.length);
+    wall.dupGrouped = live.length - display.length;
+}
+
+// Re-flow after the set of posters changed (late failure, marked unavailable, grouping toggled)
+function wallRebuild() {
+    if (!wall || !wall.ready) return;
+    wallBuildDisplay();
+    wallUpdateCount();
+    if (!wall.N) { wall.ready = false; wallClosePicker(); wallShowEmpty('None of the torrents on this page have a loadable image.'); return; }
+    // Every cell's item may have shifted: recycle them all so they rebind
+    wall.cells.forEach(el => {
+        el.style.display = 'none';
+        el.dataset.idx = '';
+        el.classList.remove('vw-focus');
+        wall.pool.push(el);
+    });
+    wall.cells.clear();
+    wall.focusEl = null;
+    wall.focusKey = '';
+    wall.dirty = true;
+    wallKick();
+}
+
+function wallStart() {
+    wallBuildDisplay();
+    const items = wall.items;
+
+    // Auto cell shape: closest preset to the median ratio of the images loaded so far
+    const ratios = items.filter(it => it.w && it.h).map(it => it.w / it.h).sort((a, b) => a - b);
+    let best = 'portrait';
+    if (ratios.length) {
+        const median = ratios[Math.floor(ratios.length / 2)];
+        Object.keys(WALL_ASPECTS).forEach(k => {
+            if (Math.abs(Math.log(WALL_ASPECTS[k] / median)) < Math.abs(Math.log(WALL_ASPECTS[best] / median))) best = k;
+        });
+    }
+    wall.autoAspect = WALL_ASPECTS[best];
+
+    wallUpdateCount();
+    if (!wall.loading) wallLogStats();
+
+    wallLayout();
+    // Start with item 0 near the top-left, with the wrapped neighbours peeking in at the edges
+    wall.cu = window.innerWidth  / 2 / wall.pw - 0.35;
+    wall.cv = window.innerHeight / 2 / wall.ph - 0.25;
+    wall.focusI = 0; wall.focusJ = 0;
+    wall.ready = true;
+    wall.dirty = true;
+    wallUpdateToolbar();
+    wallKick();
+}
+
+function wallRowShift(n) {
+    return Math.max(1, Math.min(n, Math.ceil(Math.sqrt(n * 1.6))));
+}
+
+function wallUpdateCount() {
+    const parts = [wall.dupGrouped
+        ? `${wall.N} posters (${wall.N + wall.dupGrouped} torrents, ${wall.dupGrouped} sharing an image)`
+        : `${wall.N} torrents`];
+    if (wall.loading)     parts.push(`${wall.loading} still loading`);
+    if (wall.broken)      parts.push(`${wall.broken} broken image${wall.broken > 1 ? 's' : ''} skipped`);
+    if (wall.placeholder) parts.push(`${wall.placeholder} placeholder${wall.placeholder > 1 ? 's' : ''} skipped`);
+    const unav = wall.unavailable + wall.stats.blockedUrl;
+    if (unav)             parts.push(`${unav} "unavailable" image${unav > 1 ? 's' : ''} skipped`);
+    const noImg = wall.stats.noImage;
+    if (noImg)            parts.push(`${noImg} without an image`);
+    wall.$root.find('.vw-count').text(parts.join(' · ')).attr('title', parts.join('\n'));
+}
+
+function wallLogStats() {
+    const st = wall.stats;
+    console.log(`${LOG_PREFIX} Poster Wall: ${st.rows} rows → ${wall.N} shown | ` +
+        `blacklisted ${st.blacklisted}, no image ${st.noImage}, no title link ${st.noLink}, duplicates ${st.duplicate}, ` +
+        `grouped under a shared image ${wall.dupGrouped}, blocked links ${st.blockedUrl}, ` +
+        `broken ${wall.broken}, placeholder ${wall.placeholder}, unavailable ${wall.unavailable}, still loading ${wall.loading}`);
+}
+
+// ── Geometry ──
+function wallAspect() {
+    return WALL_ASPECT === 'auto' ? wall.autoAspect : (WALL_ASPECTS[WALL_ASPECT] || 2 / 3);
+}
+
+function wallLayout() {
+    const W = window.innerWidth;
+    wall.pw  = W / WALL_COLS_VISIBLE;
+    wall.gap = Math.max(6, Math.round(wall.pw * 0.045));
+    wall.ph  = (wall.pw - wall.gap) / wallAspect() + wall.gap;
+    // Cell sizes changed: resize every live cell
+    wall.cells.forEach(el => wallSizeCell(el));
+    wall.pool.forEach(el => wallSizeCell(el));
+    wall.relayout = true;
+    wall.dirty = true;
+    wallKick();
+}
+
+function wallSizeCell(el) {
+    const p = el.firstChild;
+    const half = wall.gap / 2;
+    p.style.left   = half + 'px';
+    p.style.top    = half + 'px';
+    p.style.width  = (wall.pw - wall.gap) + 'px';
+    p.style.height = (wall.ph - wall.gap) + 'px';
+}
+
+function wallIndex(i, j) {
+    const n = wall.N;
+    return (((i + j * wall.S) % n) + n) % n;
+}
+
+function wallMakeCell() {
+    const a = document.createElement('a');
+    a.className = 'vw-cell';
+    a.target = '_blank';
+    a.draggable = false;
+    const p = document.createElement('div');
+    p.className = 'vw-poster';
+    const img = document.createElement('img');
+    img.alt = '';
+    img.draggable = false;
+    img.decoding = 'async';
+    img.onload = () => { img.style.opacity = ''; };
+    p.appendChild(img);
+    const badge = document.createElement('span');
+    badge.className = 'vw-dup-badge';
+    p.appendChild(badge);
+    a.appendChild(p);
+    wallSizeCell(a);
+    return a;
+}
+
+// ── Render: place only the cells that intersect the viewport ──
+// Cells sit at fixed positions inside one layer; moving the camera only changes
+// that layer's transform (a single compositor update per frame). Cells are only
+// touched when they scroll into view.
+function wallPlaceCell(el, i, j) {
+    el.style.transform = `translate(${((i - wall.oi) * wall.pw).toFixed(2)}px, ${((j - wall.oj) * wall.ph).toFixed(2)}px)`;
+}
+
+function wallRender() {
+    const W = window.innerWidth, H = window.innerHeight;
+    const pw = wall.pw, ph = wall.ph;
+    const left = wall.cu * pw - W / 2;
+    const top  = wall.cv * ph - H / 2;
+    const i0 = Math.floor(left / pw) - 1, i1 = Math.floor((left + W) / pw) + 1;
+    const j0 = Math.floor(top  / ph) - 1, j1 = Math.floor((top  + H) / ph) + 1;
+
+    // Re-anchor the layer if we've travelled far, so pixel offsets stay small
+    if (Math.abs(i0 - wall.oi) > 500 || Math.abs(j0 - wall.oj) > 500) {
+        wall.oi = i0; wall.oj = j0; wall.relayout = true;
+    }
+    if (wall.relayout) {
+        wall.relayout = false;
+        wall.cells.forEach(el => wallPlaceCell(el, +el.dataset.i, +el.dataset.j));
+    }
+
+    const wanted = new Set();
+    for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+            const key = i + ',' + j;
+            wanted.add(key);
+            if (wall.cells.has(key)) continue;
+            const el   = wall.pool.pop() || wallMakeCell();
+            const idx  = wallIndex(i, j);
+            const item = wall.items[idx];
+            if (el.dataset.idx !== String(idx)) {
+                el.dataset.idx = idx;
+                el.href = item.href;
+                const img = el.firstChild.firstChild;
+                img.src = item.src;
+                // Hide until this poster's own image is ready (never flash the previous one)
+                img.style.opacity = (img.complete && img.naturalWidth) ? '' : '0';
+                el.classList.toggle('vw-fav', !!item.fav);
+                const n = item.group ? item.group.length : 1;
+                el.classList.toggle('vw-has-dups', n > 1);
+                img.nextSibling.textContent = n > 1 ? '×' + n : '';
+                if (item.fav) el.style.setProperty('--vw-fav', FAVORITE_GLOW_COLOR || '#f5c518');
+            }
+            el.dataset.i = i;
+            el.dataset.j = j;
+            el.style.display = '';
+            wallPlaceCell(el, i, j);
+            if (!el.parentNode) wall.layer.appendChild(el);
+            wall.cells.set(key, el);
+        }
+    }
+    // Recycle cells that scrolled out of view
+    wall.cells.forEach((el, key) => {
+        if (wanted.has(key)) return;
+        wall.cells.delete(key);
+        el.style.display = 'none';
+        if (el === wall.focusEl) { el.classList.remove('vw-focus'); wall.focusEl = null; }
+        wall.pool.push(el);
+    });
+
+    wall.layer.style.transform = `translate3d(${(wall.oi * pw - left).toFixed(2)}px, ${(wall.oj * ph - top).toFixed(2)}px, 0)`;
+
+    // Focus highlight — only touch the two cells that change
+    const fKey = wall.focusI + ',' + wall.focusJ;
+    const fEl  = wall.cells.get(fKey) || null;
+    if (fEl !== wall.focusEl) {
+        if (wall.focusEl) wall.focusEl.classList.remove('vw-focus');
+        if (fEl) fEl.classList.add('vw-focus');
+        wall.focusEl = fEl;
+    }
+    if (fKey !== wall.focusKey) {
+        wall.focusKey = fKey;
+        wallUpdateInfo();
+    }
+}
+
+function wallUpdateInfo() {
+    const $info = wall.$root.find('.vw-info');
+    if (!wall.ready) { $info.removeClass('vw-show'); return; }
+    const item = wall.items[wallIndex(wall.focusI, wall.focusJ)];
+    $info.find('.vw-info-title').text(item.title);
+    const $meta = $info.find('.vw-info-meta').empty();
+    const chip = (text, cls) => { if (text) $meta.append(jQuery('<span class="vw-chip">').addClass(cls || '').text(text)); };
+    chip(item.cat);
+    chip(item.size);
+    chip(item.time);
+    if (item.seeders)  chip('▲ ' + item.seeders,  'vw-seed');
+    if (item.leechers) chip('▼ ' + item.leechers, 'vw-leech');
+    if (item.fav)      chip('★ favorite tag');
+    if (item.group && item.group.length > 1) chip(`⧉ ${item.group.length} torrents share this image — click to choose`, 'vw-dupchip');
+    $info.addClass('vw-show');
+}
+
+// ── Animation loop: inertia, smooth wheel, keyboard tween, edge glide ──
+// Runs only while something moves; input handlers restart it with wallKick().
+function wallKick() {
+    if (wall && wall.ready && !wall.raf) wall.raf = requestAnimationFrame(wallTick);
+}
+
+function wallTick() {
+    if (!wall) return;
+    wall.raf = 0;
+    if (!wall.ready) return;
+
+    let moved = false;
+
+    if (!wall.drag) {
+        // Inertia after a fling
+        if (Math.abs(wall.vx) > 0.05 || Math.abs(wall.vy) > 0.05) {
+            wall.cu -= wall.vx / wall.pw;
+            wall.cv -= wall.vy / wall.ph;
+            wall.vx *= 0.94;
+            wall.vy *= 0.94;
+            moved = true;
+        } else { wall.vx = wall.vy = 0; }
+
+        // Smooth wheel: consume a fraction of the pending distance each frame
+        if (Math.abs(wall.wheelX) > 0.3 || Math.abs(wall.wheelY) > 0.3) {
+            const sx = wall.wheelX * 0.22, sy = wall.wheelY * 0.22;
+            wall.cu += sx / wall.pw;
+            wall.cv += sy / wall.ph;
+            wall.wheelX -= sx;
+            wall.wheelY -= sy;
+            moved = true;
+        } else { wall.wheelX = wall.wheelY = 0; }
+
+        // Keyboard step tween
+        if (wall.tween) {
+            const du = wall.tween.u - wall.cu, dv = wall.tween.v - wall.cv;
+            if (Math.abs(du) < 0.002 && Math.abs(dv) < 0.002) {
+                wall.cu = wall.tween.u; wall.cv = wall.tween.v; wall.tween = null;
+            } else {
+                wall.cu += du * 0.18; wall.cv += dv * 0.18;
+            }
+            moved = true;
+        }
+
+        // Edge glide
+        if (WALL_EDGE_PAN && wall.mouseIn && !wall.overUi) {
+            const W = window.innerWidth, H = window.innerHeight;
+            const zx = W * 0.09, zy = H * 0.11;
+            const ramp = (d, z) => (d < z ? (1 - d / z) : 0);
+            const gx = ramp(wall.mouseX, zx) * -1 + ramp(W - wall.mouseX, zx);
+            const gy = ramp(wall.mouseY, zy) * -1 + ramp(H - wall.mouseY, zy);
+            if (gx || gy) {
+                const speed = 14;   // px per frame at the very edge
+                wall.cu += gx * Math.abs(gx) * speed / wall.pw;
+                wall.cv += gy * Math.abs(gy) * speed / wall.ph;
+                moved = true;
+            }
+        }
+    }
+
+    if (moved) {
+        wall.dirty = true;
+        // Hover focus follows the content moving under a still mouse
+        if (!wall.drag && !wall.tween && wall.mouseIn && !wall.keyboardMode) wallFocusAtMouse();
+    }
+    if (wall.dirty) { wall.dirty = false; wallRender(); }
+    if (moved) wallKick();   // keep going until everything settles
+}
+
+function wallCellAt(x, y) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const wx = wall.cu * wall.pw - W / 2 + x;
+    const wy = wall.cv * wall.ph - H / 2 + y;
+    return { i: Math.floor(wx / wall.pw), j: Math.floor(wy / wall.ph) };
+}
+
+function wallFocusAtMouse() {
+    if (wall.mouseY < 0) return;
+    const c = wallCellAt(wall.mouseX, wall.mouseY);
+    if (c.i !== wall.focusI || c.j !== wall.focusJ) {
+        wall.focusI = c.i; wall.focusJ = c.j; wall.dirty = true;
+    }
+}
+
+function wallZoom(dir, anchorX, anchorY) {
+    const next = Math.max(WALL_MIN_COLS, Math.min(WALL_MAX_COLS, WALL_COLS_VISIBLE + (dir > 0 ? -1 : 1)));
+    if (next === WALL_COLS_VISIBLE) return;
+    // Keep the point under the anchor (mouse or centre) fixed while resizing
+    const W = window.innerWidth, H = window.innerHeight;
+    const ax = anchorX == null ? W / 2 : anchorX, ay = anchorY == null ? H / 2 : anchorY;
+    const au = wall.cu + (ax - W / 2) / wall.pw;
+    const av = wall.cv + (ay - H / 2) / wall.ph;
+    WALL_COLS_VISIBLE = next;
+    GM_setValue('WALL_COLS_VISIBLE', next);
+    wallLayout();
+    wall.cu = au - (ax - W / 2) / wall.pw;
+    wall.cv = av - (ay - H / 2) / wall.ph;
+    wall.tween = null; wall.wheelX = wall.wheelY = 0;
+}
+
+function wallStepFocus(di, dj) {
+    wall.focusI += di;
+    wall.focusJ += dj;
+    wall.keyboardMode = true;
+    wall.vx = wall.vy = 0;
+    wall.wheelX = wall.wheelY = 0;
+    // Glide so the focused poster sits in the middle of the screen
+    wall.tween = { u: wall.focusI + 0.5, v: wall.focusJ + 0.5 };
+    wall.dirty = true;
+}
+
+function wallUpdateToolbar() {
+    const $r = wall.$root;
+    const autoKey = Object.keys(WALL_ASPECTS).find(k => WALL_ASPECTS[k] === wall.autoAspect) || 'portrait';
+    const label = WALL_ASPECT === 'auto' && wall.ready
+        ? `Shape: Auto (${WALL_ASPECT_LABELS[autoKey]})`
+        : `Shape: ${WALL_ASPECT_LABELS[WALL_ASPECT] || 'Auto'}`;
+    $r.find('[data-act="aspect"]').text(label);
+    $r.find('[data-act="fit"]').text(WALL_FIT === 'cover' ? 'Fill' : 'Fit');
+    $r.find('[data-act="edge"]').toggleClass('vw-on', !!WALL_EDGE_PAN);
+    $r.find('[data-act="dups"]').text(WALL_GROUP_DUP_IMAGES ? 'Duplicates: Grouped' : 'Duplicates: Separate')
+        .toggleClass('vw-on', !!WALL_GROUP_DUP_IMAGES);
+    $r.toggleClass('vw-fit-contain', WALL_FIT === 'contain');
+}
+
+function wallCycleAspect() {
+    const k = WALL_ASPECT_ORDER[(WALL_ASPECT_ORDER.indexOf(WALL_ASPECT) + 1) % WALL_ASPECT_ORDER.length];
+    WALL_ASPECT = k;
+    GM_setValue('WALL_ASPECT', k);
+    if (wall.ready) {
+        const v = wall.cv;   // keep the same rows in view
+        wallLayout();
+        wall.cv = v;
+    }
+    wallUpdateToolbar();
+}
+
+function wallToggleFit() {
+    WALL_FIT = WALL_FIT === 'cover' ? 'contain' : 'cover';
+    GM_setValue('WALL_FIT', WALL_FIT);
+    wallUpdateToolbar();
+}
+
+function wallToast(msg) {
+    if (!wall) return;
+    let $t = wall.$root.find('.vw-toast');
+    if (!$t.length) $t = jQuery('<div class="vw-toast">').appendTo(wall.$root);
+    $t.text(msg).addClass('vw-show');
+    clearTimeout(wallToast.t);
+    wallToast.t = setTimeout(() => $t.removeClass('vw-show'), 4500);
+}
+
+function wallMarkUnavailable() {
+    if (!wall || !wall.ready) return;
+    const item = wall.items[wallIndex(wall.focusI, wall.focusJ)];
+    if (!item) return;
+    if (!confirm(`Mark this image as an "image unavailable" placeholder?\n\n${item.title}\n${item.src}\n\n` +
+                 `It, and any other poster showing the same placeholder, will be left out of the wall. ` +
+                 `You can undo this in Viewer Settings.`)) return;
+    const session = wall.session;
+    const w = item.w, h = item.h;
+    wall.all.forEach(it => {
+        if (it.absSrc === item.absSrc && it.state !== 'failed') { it.state = 'failed'; wall.unavailable++; }
+    });
+    wallRebuild();
+    wallToast('Learning this placeholder…');
+    wallAddUnavailUrl(item.src).then(sig => {
+        if (!wall || wall.session !== session) return;
+        if (!sig || (w && h && (sig.w !== w || sig.h !== h))) {
+            wallToast('Blocked this exact link. Could not fingerprint the image, so look-alikes are not detected.');
+            return;
+        }
+        const same = wall.all.filter(it => it.state === 'ok' && it.w === w && it.h === h);
+        Promise.all(same.map(it => wallLooksUnavailable(it.src, it.w, it.h).then(un => un && it))).then(hits => {
+            if (!wall || wall.session !== session) return;
+            const found = hits.filter(Boolean);
+            found.forEach(it => { if (it.state !== 'failed') { it.state = 'failed'; wall.unavailable++; } });
+            if (found.length) wallRebuild();
+            const n = found.length;
+            wallToast(n ? `Placeholder learned — ${n} more matching poster${n > 1 ? 's' : ''} removed.` : 'Placeholder learned.');
+        });
+    });
+}
+
+function wallToggleGroupDups() {
+    WALL_GROUP_DUP_IMAGES = !WALL_GROUP_DUP_IMAGES;
+    GM_setValue('WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES);
+    jQuery('#vsm-WALL_GROUP_DUP_IMAGES').prop('checked', WALL_GROUP_DUP_IMAGES);
+    wallUpdateToolbar();
+    wallRebuild();
+}
+
+function wallResolution(title) {
+    const m = (title || '').match(/\b(4320p|2160p|1440p|1080p|1080i|720p|576p|540p|480p|360p|8k|4k|uhd)\b/i);
+    if (!m) return '';
+    const r = m[1].toLowerCase();
+    return r === 'uhd' ? '4K' : (/k$/.test(r) ? r.toUpperCase() : r);
+}
+
+// Popup listing every torrent that uses this poster's image
+function wallOpenPicker(item) {
+    if (!wall || !item || !item.group || item.group.length < 2) return;
+    wallClosePicker();
+    const $back = jQuery(`
+        <div class="vw-picker-back">
+            <div class="vw-picker" role="dialog">
+                <div class="vw-picker-head">
+                    <img class="vw-picker-img" alt="">
+                    <div class="vw-picker-heading">
+                        <div class="vw-picker-title"></div>
+                        <div class="vw-picker-sub">Choose the torrent to open &middot; &uarr;&darr; to move &middot; Enter opens &middot; Esc closes</div>
+                    </div>
+                    <button class="vw-btn vw-close" type="button" title="Close (Esc)">&times;</button>
+                </div>
+                <div class="vw-picker-list"></div>
+            </div>
+        </div>`);
+    $back.find('.vw-picker-img').attr('src', item.src);
+    $back.find('.vw-picker-title').text(`${item.group.length} torrents share this image`);
+    const $list = $back.find('.vw-picker-list');
+    item.group.forEach((it, k) => {
+        const $row = jQuery('<a class="vw-pick-row" target="_blank" rel="noopener">').attr('href', it.href).attr('data-k', k);
+        jQuery('<div class="vw-pick-title">').text(it.title).appendTo($row);
+        const $meta = jQuery('<div class="vw-pick-meta">').appendTo($row);
+        const chip = (text, cls) => { if (text) jQuery('<span class="vw-chip">').addClass(cls || '').text(text).appendTo($meta); };
+        chip(wallResolution(it.title), 'vw-res');
+        chip(it.size);
+        chip(it.cat);
+        chip(it.time);
+        if (it.seeders)  chip('▲ ' + it.seeders,  'vw-seed');
+        if (it.leechers) chip('▼ ' + it.leechers, 'vw-leech');
+        $list.append($row);
+    });
+    $back.on('click', function (e) { if (e.target === this) wallClosePicker(); });
+    $back.find('.vw-close').on('click', function (e) { e.preventDefault(); wallClosePicker(); });
+    $back.on('mouseenter', '.vw-pick-row', function () { wallPickerSelect(+this.getAttribute('data-k')); });
+    // A plain click opens the torrent (new tab) and closes the picker; middle-click keeps it open
+    $back.on('click', '.vw-pick-row', function () { setTimeout(wallClosePicker, 0); });
+    wall.$root.append($back);
+    wall.picker = { $back, sel: 0, n: item.group.length };
+    wallPickerSelect(0);
+    requestAnimationFrame(() => $back.addClass('vw-show'));
+}
+
+function wallPickerSelect(k) {
+    const pk = wall && wall.picker;
+    if (!pk) return;
+    pk.sel = (k + pk.n) % pk.n;
+    const $rows = pk.$back.find('.vw-pick-row').removeClass('vw-sel');
+    const row = $rows.eq(pk.sel).addClass('vw-sel')[0];
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+}
+
+function wallClosePicker() {
+    if (!wall || !wall.picker) return;
+    wall.picker.$back.remove();
+    wall.picker = null;
+}
+
+function wallOpenFocused() {
+    const item = wall.items[wallIndex(wall.focusI, wall.focusJ)];
+    if (!item) return;
+    if (item.group && item.group.length > 1) wallOpenPicker(item);
+    else window.open(item.href, '_blank');
+}
+
+function wallToggleEdge() {
+    WALL_EDGE_PAN = !WALL_EDGE_PAN;
+    GM_setValue('WALL_EDGE_PAN', WALL_EDGE_PAN);
+    wallUpdateToolbar();
+}
+
+// ── Input ──
+function wallOnKey(e) {
+    if (!wall) return;
+    // Keep keys from reaching the page underneath
+    e.stopPropagation();
+    const k = e.key;
+    if (wall.picker) {   // picker open: its own keys only
+        const pk = wall.picker;
+        if (k === 'Escape')         { e.preventDefault(); wallClosePicker(); }
+        else if (k === 'ArrowDown') { e.preventDefault(); wallPickerSelect(pk.sel + 1); }
+        else if (k === 'ArrowUp')   { e.preventDefault(); wallPickerSelect(pk.sel - 1); }
+        else if (k === 'Enter') {
+            e.preventDefault();
+            const row = pk.$back.find('.vw-pick-row')[pk.sel];
+            if (row) window.open(row.getAttribute('href'), '_blank');
+            wallClosePicker();
+        }
+        return;
+    }
+    if (k === 'Escape') { e.preventDefault(); closePosterWall(); return; }
+    if (!wall.ready) return;
+    if      (k === 'ArrowLeft')  { e.preventDefault(); wallStepFocus(-1, 0); }
+    else if (k === 'ArrowRight') { e.preventDefault(); wallStepFocus(1, 0); }
+    else if (k === 'ArrowUp')    { e.preventDefault(); wallStepFocus(0, -1); }
+    else if (k === 'ArrowDown')  { e.preventDefault(); wallStepFocus(0, 1); }
+    else if (k === 'PageDown')   { e.preventDefault(); wall.wheelY += window.innerHeight * 0.8; }
+    else if (k === 'PageUp')     { e.preventDefault(); wall.wheelY -= window.innerHeight * 0.8; }
+    else if (k === 'Enter') { e.preventDefault(); wallOpenFocused(); }
+    else if (k === '+' || k === '=') { e.preventDefault(); wallZoom(1); }
+    else if (k === '-' || k === '_') { e.preventDefault(); wallZoom(-1); }
+    else if (k === 'a' || k === 'A') { wallCycleAspect(); }
+    else if (k === 'f' || k === 'F') { wallToggleFit(); }
+    else if (k === 'e' || k === 'E') { wallToggleEdge(); }
+    else if (k === 'u' || k === 'U') { wallMarkUnavailable(); }
+    else if (k === 'd' || k === 'D') { wallToggleGroupDups(); }
+    wallKick();
+}
+
+function wallBindEvents() {
+    const $r = wall.$root;
+    const stage = wall.stage;
+
+    document.addEventListener('keydown', wallOnKey, true);
+
+    $r.on('click', '.vw-btn', function (e) {
+        e.preventDefault();
+        const act = this.getAttribute('data-act');
+        if      (act === 'close')    closePosterWall();
+        else if (!wall.ready && act !== 'fit' && act !== 'edge' && act !== 'aspect') return;
+        else if (act === 'zoom-in')  wallZoom(1);
+        else if (act === 'zoom-out') wallZoom(-1);
+        else if (act === 'aspect')   wallCycleAspect();
+        else if (act === 'fit')      wallToggleFit();
+        else if (act === 'edge')     wallToggleEdge();
+        else if (act === 'dups')     wallToggleGroupDups();
+    });
+
+    // Wheel: smooth glide; Shift = sideways; Ctrl = resize
+    $r[0].addEventListener('wheel', function (e) {
+        if (wall && wall.picker) {   // let the picker list scroll natively, nothing else
+            if (!(e.target.closest && e.target.closest('.vw-picker-list'))) e.preventDefault();
+            return;
+        }
+        e.preventDefault();
+        if (!wall || !wall.ready) return;
+        if (e.ctrlKey) { wallZoom(e.deltaY < 0 ? 1 : -1, e.clientX, e.clientY); return; }
+        const unit = e.deltaMode === 1 ? 40 : (e.deltaMode === 2 ? window.innerHeight : 1);
+        let dx = e.deltaX * unit, dy = e.deltaY * unit;
+        if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+        wall.vx = wall.vy = 0;
+        wall.tween = null;
+        wall.wheelX += dx;
+        wall.wheelY += dy;
+        wallKick();
+    }, { passive: false });
+
+    // Drag to pan (window-level move/up so links still receive their click)
+    stage.addEventListener('pointerdown', function (e) {
+        if (e.button !== 0 || !wall.ready) return;
+        const wasMoving = Math.abs(wall.vx) > 1 || Math.abs(wall.vy) > 1 || wall.tween;
+        wall.vx = wall.vy = 0;
+        wall.wheelX = wall.wheelY = 0;
+        wall.tween = null;
+        wall.suppressClick = !!wasMoving;   // a tap that stops a fling shouldn't open anything
+        wall.drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false, samples: [] };
+    });
+
+    jQuery(window).on('pointermove.vwall', function (ev) {
+        const e = ev.originalEvent;
+        if (e.clientX !== wall.mouseX || e.clientY !== wall.mouseY) wall.keyboardMode = false;
+        wall.mouseX = e.clientX; wall.mouseY = e.clientY; wall.mouseIn = true;
+        wall.overUi = !!(e.target && e.target.closest && e.target.closest('.vw-topbar, .vw-picker-back'));
+        if (!wall.ready) return;
+        const d = wall.drag;
+        if (!d) { if (!wall.keyboardMode && !wall.overUi) wallFocusAtMouse(); wallKick(); return; }
+        const dx = e.clientX - d.x, dy = e.clientY - d.y;
+        if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 6) {
+            d.moved = true;
+            wall.$root.addClass('vw-dragging');
+        }
+        if (d.moved) {
+            wall.cu -= dx / wall.pw;
+            wall.cv -= dy / wall.ph;
+            wall.dirty = true;
+            wallKick();
+        }
+        const now = performance.now();
+        d.samples.push({ dx, dy, dt: Math.max(1, now - d.t) });
+        if (d.samples.length > 5) d.samples.shift();
+        d.x = e.clientX; d.y = e.clientY; d.t = now;
+    });
+
+    jQuery(window).on('pointerup.vwall pointercancel.vwall', function () {
+        const d = wall && wall.drag;
+        if (!d) return;
+        wall.drag = null;
+        wall.$root.removeClass('vw-dragging');
+        if (d.moved) {
+            wall.suppressClick = true;
+            // Fling velocity from the last few samples, scaled to px per 16ms frame
+            let sx = 0, sy = 0, st = 0;
+            d.samples.forEach(s => { sx += s.dx; sy += s.dy; st += s.dt; });
+            if (st > 0 && performance.now() - d.t < 80) {
+                wall.vx = Math.max(-80, Math.min(80, sx / st * 16));
+                wall.vy = Math.max(-80, Math.min(80, sy / st * 16));
+            }
+            wallKick();
+        }
+    });
+
+    // Block the link click that ends a drag (capture phase, before the <a> acts)
+    stage.addEventListener('click', function (e) {
+        if (!wall) return;
+        if (wall.suppressClick) {
+            e.preventDefault();
+            e.stopPropagation();
+            wall.suppressClick = false;
+            return;
+        }
+        const cell = e.target.closest && e.target.closest('.vw-cell');
+        const item = cell && wall.items[+cell.dataset.idx];
+        if (item && item.group && item.group.length > 1) {
+            e.preventDefault();
+            e.stopPropagation();
+            wallOpenPicker(item);
+        }
+    }, true);
+    stage.addEventListener('dragstart', e => e.preventDefault());
+
+    $r.on('mouseleave', function () { if (wall) wall.mouseIn = false; });
+    jQuery(window).on('blur.vwall', function () { if (wall) { wall.mouseIn = false; wall.drag = null; wall.$root.removeClass('vw-dragging'); } });
+    jQuery(window).on('resize.vwall', function () { if (wall && wall.ready) wallLayout(); });
 }
 
 
@@ -3467,7 +4871,7 @@ function LazyThumbnails(progress, backend, small_thumbnails, remove_categories, 
                     }
                     // Add ⛔ block button next to uploader name (where column exists)
                     addUploaderBlockBtnToRow($row);
-                    $row.data('thumbnail-attached', true);
+                    $row.data('thumbnail-attached', true).attr('data-thumbnail-attached', '1');
                 });
                 if (!self.$torrent_table.find(self.row_selector + ':not([data-thumbnail-attached])').length) {
                     clearInterval(interval);

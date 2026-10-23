@@ -4,6 +4,34 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.13 - 2026-10-23
+- Poster Wall groups torrents that share the same image link into one poster with a "×N" badge, instead of hiding the extra ones.
+- Clicking a grouped poster (or pressing Enter) opens a picker listing every torrent using that image, with resolution, size, category, age and seeders, so you can choose the version you want.
+- New "Duplicates: Grouped / Separate" toggle on the wall (or press D) to show every torrent as its own poster instead; also in Viewer Settings → Poster Wall.
+- The "Unavailable" toolbar button is replaced by an on-screen hint: hover the poster and press U, so the highlight never moves away while you reach for a button.
+
+## v3.12 - 2026-10-23
+- Poster Wall leaves out "image unavailable" placeholders that hosts like imgbox and imagebam serve at the original link. The script learns each placeholder from example links (exact size + content fingerprint), so any poster showing the same template is skipped.
+- Press U (or the "Unavailable" toolbar button) on the wall to mark the highlighted poster as a placeholder; matching posters are removed right away. Manage the example links in Viewer Settings → Poster Wall.
+- Poster Wall skips duplicate images: when several torrents use the same image link, only the first is shown (toggle in Viewer Settings → Poster Wall).
+- Tampermonkey may ask once for permission to connect to image hosts; this is needed to download and fingerprint images.
+
+## v3.11 - 2026-10-23
+- Poster Wall no longer drops torrents whose images are slow to download (previously anything not loaded within 15 seconds was treated as broken, so big pages often showed only about half).
+- The wall now opens after at most ~3 seconds; posters still downloading fill in as they arrive. Only genuinely broken images and tiny placeholders are left out.
+- The top bar shows how many posters are still loading and why any were skipped; a per-reason breakdown is also logged to the browser console.
+
+## v3.10 - 2026-10-23
+- Poster Wall is much lighter: while it's open, the page underneath is hidden and its images are unloaded, then everything is put back (with your scroll position) when you close it.
+- Poster Wall renders more efficiently: the whole wall moves as one layer, posters no longer use a CSS filter, and the animation loop stops when nothing is moving.
+- Fixed a background timer that kept re-scanning every torrent row 5 times a second forever, on every page.
+
+## v3.9 - 2026-10-23
+- New "Wall" button next to Viewer: opens a full-screen, endless poster wall of the torrents on the page that you can glide through in any direction (Kaleidescape-style).
+- Navigate by dragging (with fling), mouse wheel (Shift+wheel sideways), arrow keys, or optional edge glide; click, middle-click or Enter opens the torrent, Esc closes.
+- Torrents without an image, with a broken image, or with a tiny placeholder are left out; blacklisted items stay hidden and favorite-tag items are outlined.
+- Toolbar controls for poster size (+/− or Ctrl+wheel), cell shape (Auto/Poster/Square/Wide) and Fill/Fit; choices are remembered.
+
 ## v3.8 - 2026-10-22
 - Toned down the uploader name and button badges: muted dark teal/red backgrounds with softer text, no glow; they brighten slightly on hover.
 
