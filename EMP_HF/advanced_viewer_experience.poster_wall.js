@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Poster Wall: full-screen endless poster grid
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.15
+// Version 3.16
 
 // --------------------
 // POSTER WALL — endless 2D grid (Kaleidescape-style)
@@ -59,29 +59,232 @@ Object.keys(WALL_UNAVAIL_SIGS).forEach(u => { if (WALL_UNAVAIL_SIGS[u].px === un
 const wallUnavailStatus = {};      // url -> 'learning' | 'failed' (this page load only)
 const wallFpCache = {};            // src -> Promise<{ w, h, sha, dh } | null>
 
-const wallImageCache = {};   // src -> Promise<{ ok, w, h }>
 let wall = null;             // live state while the wall is open
 let wallSession = 0;         // bumps on every open/close so late image loads are ignored
 
 // ── Image probing (cached across opens; timeouts are retried next time) ──
-function wallProbeImage(src) {
-    if (wallImageCache[src]) return wallImageCache[src];
-    wallImageCache[src] = new Promise(resolve => {
-        const img = new Image();
-        img.onload = () => {
-            if (img.naturalWidth >= WALL_MIN_IMG_PX && img.naturalHeight >= WALL_MIN_IMG_PX) {
-                resolve({ ok: true, w: img.naturalWidth, h: img.naturalHeight });
-            } else {
-                resolve({ ok: false, reason: 'placeholder' });
-            }
-        };
-        img.onerror = () => {
-            delete wallImageCache[src];   // could be a network hiccup — retry on next open
-            resolve({ ok: false, reason: 'broken' });
-        };
-        img.src = src;
+// ── Image loader ──
+// One job per image link (torrents sharing an image share the job). Downloads go
+// through a queue with a limited number of slots (see WALL_SLOTS): on-screen posters
+// first, then the screen around them, then the rest. A
+// download is never cancelled. Once an image has loaded it is checked (size,
+// "unavailable" template), drawn once into a small copy sized for the poster, and
+// the full-size image is released — posters then just draw the small copy, so
+// scrolling never waits on decoding big (often animated) images again.
+// Download slots by priority: on-screen posters may use every slot, the screen around
+// them fewer, and background loading only a few — so whatever comes into view never
+// waits behind background downloads. The total stays under the browser's own limits
+// (about 10 image requests per page, 6 per host), otherwise the browser queues the
+// extra requests itself in arrival order and our priorities stop mattering.
+const WALL_SLOTS = [
+    { all: 10, host: 6 },   // 0: on screen
+    { all: 6,  host: 3 },   // 1: around the screen
+    { all: 3,  host: 2 },   // 2: everything else
+];
+const WALL_THUMB_BUDGET_PX = 40e6;   // small copies kept in memory (~160 MB); oldest off-screen ones are dropped
+
+function wallHost(src) {
+    try { return new URL(src, location.href).host; } catch (e) { return ''; }
+}
+
+function wallLoaderInit(candidates) {
+    const jobs = new Map();
+    candidates.forEach(item => {
+        let job = jobs.get(item.absSrc);
+        if (!job) {
+            job = { src: item.src, host: wallHost(item.src), state: 'queued', items: [],
+                    thumb: null, tw: 0, th: 0, w: 0, h: 0, verified: false, lastUse: 0, order: jobs.size };
+            jobs.set(item.absSrc, job);
+        }
+        job.items.push(item);
+        item.job = job;
     });
-    return wallImageCache[src];
+    wall.ld = { jobs, active: 0, perHost: {}, thumbPx: 0, viewJobs: new Set(), nearJobs: new Set(), dist: new Map(),
+                firstView: new Set(), settledJobs: 0, rangeKey: '' };
+}
+
+// Pixel size of a poster's drawing surface
+function wallCellPx() {
+    const dpr = window.devicePixelRatio || 1;
+    return { cw: Math.max(1, Math.round((wall.pw - wall.gap) * dpr)), ch: Math.max(1, Math.round((wall.ph - wall.gap) * dpr)) };
+}
+
+function wallJobRank(job) {
+    const ld = wall.ld;
+    if (ld.viewJobs.has(job)) return 0;
+    if (ld.nearJobs.has(job)) return 1;
+    if (!wall.ready && ld.firstView.has(job)) return 0;
+    return 2;
+}
+
+// Same priority tier: the poster nearest the middle of the screen first, then page order
+function wallJobBefore(a, b) {
+    const dist = wall.ld.dist, da = dist.has(a) ? dist.get(a) : 1e9, db = dist.has(b) ? dist.get(b) : 1e9;
+    return da !== db ? da < db : a.order < b.order;
+}
+
+function wallPump() {
+    if (!wall || !wall.ld) return;
+    const ld = wall.ld;
+    for (;;) {
+        let best = null, bestRank = 9;
+        ld.jobs.forEach(job => {
+            if (job.state !== 'queued') return;
+            const r = wallJobRank(job);
+            // A dropped or outgrown small copy is only rebuilt when it's needed near the screen
+            if (job.reloadWhenNear && r > 1) return;
+            if (ld.active >= WALL_SLOTS[r].all || (ld.perHost[job.host] || 0) >= WALL_SLOTS[r].host) return;
+            if (!best || r < bestRank || (r === bestRank && wallJobBefore(job, best))) { best = job; bestRank = r; }
+        });
+        if (!best) return;
+        wallStartJob(best);
+    }
+}
+
+function wallStartJob(job) {
+    const ld = wall.ld, session = wall.session;
+    job.state = 'loading';
+    ld.active++;
+    ld.perHost[job.host] = (ld.perHost[job.host] || 0) + 1;
+    const img = new Image();
+    img.decoding = 'async';
+    let netDone = false;
+    const releaseSlot = () => {
+        if (netDone) return;
+        netDone = true;
+        if (!wall || wall.session !== session) return;
+        ld.active--;
+        ld.perHost[job.host]--;
+        wallPump();
+    };
+    img.onerror = () => { releaseSlot(); if (wall && wall.session === session) wallJobFailed(job, 'broken'); };
+    img.onload = () => {
+        releaseSlot();
+        if (!wall || wall.session !== session) return;
+        const w = img.naturalWidth, h = img.naturalHeight;
+        if (w < WALL_MIN_IMG_PX || h < WALL_MIN_IMG_PX) { wallJobFailed(job, 'placeholder'); return; }
+        // Check against the placeholders known right now (saved from earlier visits);
+        // links still being learned re-check finished posters afterwards.
+        const check = job.verified ? Promise.resolve(false) : wallLooksUnavailable(job.src, w, h);
+        check.then(un => {
+            if (!wall || wall.session !== session) return;
+            if (un) { wallJobFailed(job, 'unavailable'); return; }
+            job.verified = true;
+            return wallMakeThumb(img, w, h).then(t => {
+                if (!wall || wall.session !== session) { wallFreeThumb(t); return; }
+                const first = !job.w;
+                if (job.thumb) { ld.thumbPx -= job.tw * job.th; wallFreeThumb(job.thumb); }
+                job.thumb = t.src; job.tw = t.w; job.th = t.h; job.w = w; job.h = h;
+                job.state = 'done';
+                job.reloadWhenNear = false;
+                job.lastUse = performance.now();
+                ld.thumbPx += t.w * t.h;
+                if (first) wallJobSettled(job, true);
+                wallRedrawJob(job, true);
+                wallEnforceBudget();
+            });
+        }).catch(err => {
+            console.error(`${LOG_PREFIX} Poster Wall: could not prepare ${job.src}`, err);
+            if (wall && wall.session === session) wallJobFailed(job, 'broken');
+        });
+    };
+    img.src = job.src;
+}
+
+// Small copy of the image, big enough to fill a poster at the current size
+function wallMakeThumb(img, w, h) {
+    const { cw, ch } = wallCellPx();
+    const s  = Math.min(1, Math.max(cw / w, ch / h) * 1.1);
+    const tw = Math.max(1, Math.round(w * s)), th = Math.max(1, Math.round(h * s));
+    const viaCanvas = () => {
+        // Step down by halves for a clean downscale, then draw the final size
+        let src = img, sw = w, sh = h;
+        while (sw / 2 >= tw && sh / 2 >= th) {
+            const c = document.createElement('canvas');
+            c.width = Math.round(sw / 2); c.height = Math.round(sh / 2);
+            const x = c.getContext('2d');
+            x.imageSmoothingQuality = 'high';
+            x.drawImage(src, 0, 0, c.width, c.height);
+            src = c; sw = c.width; sh = c.height;
+        }
+        const c = document.createElement('canvas');
+        c.width = tw; c.height = th;
+        const x = c.getContext('2d');
+        x.imageSmoothingQuality = 'high';
+        x.drawImage(src, 0, 0, tw, th);
+        return { src: c, w: tw, h: th };
+    };
+    if (typeof createImageBitmap === 'function') {
+        return createImageBitmap(img, { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high' })
+            .then(bm => ({ src: bm, w: tw, h: th }))
+            .catch(() => viaCanvas());
+    }
+    return Promise.resolve().then(viaCanvas);
+}
+
+function wallFreeThumb(t) {
+    const src = t && (t.src || t);
+    if (src && typeof src.close === 'function') { try { src.close(); } catch (e) {} }
+}
+
+// Keep the small copies under budget: drop the least recently shown off-screen ones.
+// They are rebuilt from the browser cache when needed again.
+function wallEnforceBudget() {
+    const ld = wall.ld;
+    if (ld.thumbPx <= WALL_THUMB_BUDGET_PX) return;
+    const victims = [];
+    ld.jobs.forEach(job => {
+        if (job.state === 'done' && !ld.viewJobs.has(job) && !ld.nearJobs.has(job)) victims.push(job);
+    });
+    victims.sort((a, b) => a.lastUse - b.lastUse);
+    for (const job of victims) {
+        if (ld.thumbPx <= WALL_THUMB_BUDGET_PX * 0.85) break;
+        ld.thumbPx -= job.tw * job.th;
+        wallFreeThumb(job.thumb);
+        job.thumb = null; job.tw = job.th = 0;
+        job.state = 'queued';   // reload (from cache) when it comes near the screen again
+        job.reloadWhenNear = true;
+    }
+}
+
+function wallJobFailed(job, reason) {
+    if (job.state === 'failed') return;
+    const wasSettled = !!job.w;
+    if (job.thumb) { wall.ld.thumbPx -= job.tw * job.th; wallFreeThumb(job.thumb); job.thumb = null; }
+    job.state = 'failed';
+    job.items.forEach(it => {
+        if (it.state === 'failed') return;
+        it.state = 'failed';
+        wall[reason === 'placeholder' ? 'placeholder' : reason === 'unavailable' ? 'unavailable' : 'broken']++;
+    });
+    if (!wasSettled) wallJobSettled(job, false);
+    wallScheduleRebuild();
+}
+
+// New "unavailable" examples were learned after posters were shown: check those posters again
+function wallRecheckUnavailable() {
+    const session = wall.session;
+    wall.ld.jobs.forEach(job => {
+        if (!job.w || job.state === 'failed') return;
+        wallLooksUnavailable(job.src, job.w, job.h).then(un => {
+            if (un && wall && wall.session === session) wallJobFailed(job, 'unavailable');
+        });
+    });
+}
+
+// First result for a job: update item states and progress
+function wallJobSettled(job, ok) {
+    const ld = wall.ld;
+    ld.settledJobs++;
+    job.items.forEach(it => {
+        wall.loading--;
+        if (ok) { it.state = 'ok'; it.w = job.w; it.h = job.h; }
+    });
+    if (wall.onProgress) wall.onProgress();
+    if (wall.ready) {
+        wallUpdateCount();
+        if (!wall.loading) wallLogStats();
+    }
 }
 
 // ── "Image unavailable" placeholder detection ──
@@ -313,8 +516,8 @@ function wallCollectItems() {
 }
 
 // ── Page suspend / restore ──
-// While the wall is open, every page image is swapped for a 1x1 blank (freeing its
-// decoded pixels) and the page content is hidden (no layout / paint / observers).
+// While the wall is open, every loaded page image is swapped for a 1x1 blank (freeing
+// its decoded pixels) and the page content is hidden (no layout / paint / observers).
 // Everything is put back on close; the images come straight from the browser cache.
 const WALL_BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
@@ -324,6 +527,9 @@ function wallSuspendPage() {
         if (img.closest('#vw-wall')) return;
         const src = img.getAttribute('src');
         if (!src || src === WALL_BLANK_IMG) return;
+        // Still downloading: leave it alone. Cancelling would throw away the partial
+        // download, and the wall's own request for the same image joins this one.
+        if (!img.complete) return;
         saved.imgs.push([img, src, img.getAttribute('srcset')]);
         if (img.hasAttribute('srcset')) img.removeAttribute('srcset');
         img.setAttribute('src', WALL_BLANK_IMG);
@@ -411,25 +617,34 @@ function openPosterWall() {
     WALL_ACTIVITY_EVENTS.forEach(t => window.addEventListener(t, wallActivity, true));
     wall.idleTimer = setInterval(wallIdleCheck, 1000);
     // Learn any example placeholder links not fingerprinted yet (bounded wait)
-    const sigsReady = Promise.race([wallLearnUnavail(), new Promise(r => setTimeout(r, 8000))]);
+    const sigCountBefore = Object.keys(WALL_UNAVAIL_SIGS).length;
+    wallLearnUnavail().then(() => {
+        if (!wall || wall.session !== session || Object.keys(WALL_UNAVAIL_SIGS).length === sigCountBefore) return;
+        wallRecheckUnavailable();
+    });
 
     wallBindEvents();
     wallUpdateToolbar();
 
     if (!candidates.length) { wallLogStats(); wallShowEmpty('No torrents with images on this page.'); return; }
 
-    // Probe every image. Only real failures (broken link / tiny placeholder) are dropped;
-    // slow images are never dropped — after a short grace period the wall opens and
-    // those posters simply fill in as they finish downloading.
-    let settled = 0;
+    // Load every image through the queue. Only real failures (broken link, tiny
+    // placeholder, "unavailable" template) are dropped; slow images never are. The wall
+    // opens once the first screen is ready (or after a short grace period) and the
+    // rest fill in as they arrive.
+    wallLoaderInit(candidates);
+    const ld = wall.ld;
     let started = false;
     const $txt = $root.find('.vw-loading-text');
     const $bar = $root.find('.vw-bar > div');
-    const update = () => {
-        $txt.text(`Loading posters… ${settled} / ${candidates.length}`);
-        $bar.css('width', (settled / candidates.length * 100) + '%');
-    };
-    update();
+    const S0 = wallRowShift(candidates.length);
+    // Roughly the posters that fit on the first screen (cell shape isn't known yet: assume square)
+    const rowsGuess = Math.ceil(window.innerHeight / (window.innerWidth / WALL_COLS_VISIBLE));
+    const viewIdx = [];
+    for (let j = 0; j <= rowsGuess; j++) for (let i = 0; i <= WALL_COLS_VISIBLE; i++) {
+        viewIdx.push((((i + j * S0) % candidates.length) + candidates.length) % candidates.length);
+    }
+    viewIdx.forEach(k => ld.firstView.add(candidates[k].job));
 
     const startNow = () => {
         if (started || !wall || wall.session !== session) return;
@@ -441,41 +656,17 @@ function openPosterWall() {
         wallStart();
     };
     const graceTimer = setTimeout(startNow, WALL_LOAD_GRACE_MS);
-
-    // Request the posters that will be on screen first: the browser only opens a few
-    // connections per image host, so issue order decides what appears first.
-    const firstView = [];
-    const S0 = wallRowShift(candidates.length);
-    for (let j = -1; j <= 4; j++) for (let i = -1; i <= WALL_COLS_VISIBLE + 1; i++) {
-        const k = (((i + j * S0) % candidates.length) + candidates.length) % candidates.length;
-        if (firstView.indexOf(k) < 0) firstView.push(k);
-    }
-    const order = firstView.concat(candidates.map((_, k) => k).filter(k => firstView.indexOf(k) < 0));
-
-    order.map(k => candidates[k]).forEach(item => {
-        wallProbeImage(item.src).then(res => !res.ok ? res : sigsReady
-            .then(() => wallLooksUnavailable(item.src, res.w, res.h))
-            .then(un => (un ? { ok: false, reason: 'unavailable' } : res))
-        ).then(res => {
-            if (!wall || wall.session !== session) return;
-            settled++;
-            wall.loading--;
-            if (res.ok) {
-                item.state = 'ok'; item.w = res.w; item.h = res.h;
-            } else {
-                item.state = 'failed';
-                wall[res.reason === 'placeholder' ? 'placeholder' : res.reason === 'unavailable' ? 'unavailable' : 'broken']++;
-                if (started) wallRebuild();
-            }
-            if (!started) {
-                update();
-                if (settled === candidates.length) startNow();
-            } else {
-                wallUpdateCount();
-                if (!wall.loading) wallLogStats();
-            }
-        });
-    });
+    wall.onProgress = () => {
+        if (started) return;
+        const total = ld.jobs.size;
+        $txt.text(`Loading posters… ${ld.settledJobs} / ${total}`);
+        $bar.css('width', (ld.settledJobs / total * 100) + '%');
+        let firstDone = true;
+        ld.firstView.forEach(job => { if (!job.w && job.state !== 'failed') firstDone = false; });
+        if (firstDone || ld.settledJobs === total) startNow();
+    };
+    wall.onProgress();
+    wallPump();
 }
 
 function closePosterWall() {
@@ -488,6 +679,9 @@ function closePosterWall() {
     document.removeEventListener('keydown', wallOnKey, true);
     wallRestorePage(wall.pageState);
     document.documentElement.style.overflow = wall.prevOverflow;
+    clearTimeout(wall.rebuildTimer);
+    clearTimeout(wall.liveTimer);
+    if (wall.ld) wall.ld.jobs.forEach(job => { if (job.thumb) wallFreeThumb(job.thumb); job.thumb = null; });
     const $root = wall.$root;
     wall = null;
     $root.removeClass('vw-open');
@@ -596,8 +790,17 @@ function wallBuildDisplay() {
 }
 
 // Re-flow after the set of posters changed (late failure, marked unavailable, grouping toggled)
+// Failures arrive one by one while loading; re-flow at most every 700 ms
+function wallScheduleRebuild() {
+    if (!wall || !wall.ready || wall.rebuildTimer) return;
+    wall.rebuildTimer = setTimeout(() => { if (wall) { wall.rebuildTimer = 0; wallRebuild(); } }, 700);
+}
+
 function wallRebuild() {
     if (!wall || !wall.ready) return;
+    clearTimeout(wall.rebuildTimer);
+    wall.rebuildTimer = 0;
+    const focusItem = wall.items[wallIndex(wall.focusI, wall.focusJ)];
     wallBuildDisplay();
     wallUpdateCount();
     if (!wall.N) { wall.ready = false; wallClosePicker(); wallShowEmpty('None of the torrents on this page have a loadable image.'); return; }
@@ -611,6 +814,16 @@ function wallRebuild() {
     wall.cells.clear();
     wall.focusEl = null;
     wall.focusKey = '';
+    wall.ld.rangeKey = '';
+    // Keep the focused poster where it was on screen (its neighbours may shift)
+    const k = focusItem ? wall.items.indexOf(focusItem) : -1;
+    if (k >= 0) {
+        const n = wall.N, cur = wallIndex(wall.focusI, wall.focusJ);
+        let d = (((k - cur) % n) + n) % n;
+        if (d > n / 2) d -= n;
+        wall.focusI += d;
+        wall.cu += d;
+    }
     wall.dirty = true;
     wallKick();
 }
@@ -664,7 +877,10 @@ function wallUpdateCount() {
 
 function wallLogStats() {
     const st = wall.stats;
-    console.log(`${LOG_PREFIX} Poster Wall: ${st.rows} rows → ${wall.N} shown | ` +
+    // Count from the items themselves: a batched re-flow may still be pending
+    const live = wall.all.filter(it => it.state !== 'failed');
+    const shown = WALL_GROUP_DUP_IMAGES ? new Set(live.map(it => it.absSrc)).size : live.length;
+    console.log(`${LOG_PREFIX} Poster Wall: ${st.rows} rows → ${shown} shown | ` +
         `blacklisted ${st.blacklisted}, no image ${st.noImage}, no title link ${st.noLink}, duplicates ${st.duplicate}, ` +
         `grouped under a shared image ${wall.dupGrouped}, blocked links ${st.blockedUrl}, ` +
         `broken ${wall.broken}, placeholder ${wall.placeholder}, unavailable ${wall.unavailable}, still loading ${wall.loading}`);
@@ -681,7 +897,7 @@ function wallLayout() {
     wall.gap = Math.max(6, Math.round(wall.pw * 0.045));
     wall.ph  = (wall.pw - wall.gap) / wallAspect() + wall.gap;
     // Cell sizes changed: resize every live cell
-    wall.cells.forEach(el => wallSizeCell(el));
+    wall.cells.forEach(el => { wallSizeCell(el); wallDrawCell(el); });
     wall.pool.forEach(el => wallSizeCell(el));
     wall.relayout = true;
     wall.dirty = true;
@@ -695,6 +911,76 @@ function wallSizeCell(el) {
     p.style.top    = half + 'px';
     p.style.width  = (wall.pw - wall.gap) + 'px';
     p.style.height = (wall.ph - wall.gap) + 'px';
+    const { cw, ch } = wallCellPx();
+    const c = p.firstChild;
+    if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+}
+
+// Paint a poster's small copy into its canvas (Fill = crop to cover, Fit = letterbox)
+function wallDrawCell(el, fade) {
+    const item = wall.items[+el.dataset.idx];
+    const c = el.firstChild.firstChild;
+    const job = item && item.job;
+    if (!job || !job.thumb) { c.style.transition = 'none'; c.classList.remove('vw-shown'); return; }
+    const ctx = c.getContext('2d');
+    const cw = c.width, ch = c.height, tw = job.tw, th = job.th;
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.imageSmoothingQuality = 'high';
+    if (WALL_FIT === 'contain') {
+        const s = Math.min(cw / tw, ch / th), dw = tw * s, dh = th * s;
+        ctx.drawImage(job.thumb, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+    } else {
+        const s = Math.max(cw / tw, ch / th), sw = cw / s, sh = ch / s;
+        ctx.drawImage(job.thumb, (tw - sw) / 2, (th - sh) / 2, sw, sh, 0, 0, cw, ch);
+    }
+    c.style.transition = fade ? '' : 'none';
+    c.classList.add('vw-shown');
+    job.lastUse = performance.now();
+    // Poster grew past its small copy (zoomed in): rebuild a sharper one from cache
+    if (job.state === 'done' && Math.max(cw / tw, ch / th) > 1.35 && tw < job.w && th < job.h) {
+        job.state = 'queued';
+        job.reloadWhenNear = true;
+        wallPump();
+    }
+}
+
+function wallRedrawJob(job, fade) {
+    wall.cells.forEach(el => {
+        const item = wall.items[+el.dataset.idx];
+        if (item && item.job === job) wallDrawCell(el, fade);
+    });
+    if (wall.focusEl && wall.items[+wall.focusEl.dataset.idx] && wall.items[+wall.focusEl.dataset.idx].job === job) wallScheduleLive();
+}
+
+// The highlighted poster shows the original image on top (sharp, and animated if it is)
+function wallScheduleLive() {
+    clearTimeout(wall.liveTimer);
+    wall.liveTimer = setTimeout(wallUpdateLive, 160);
+}
+
+function wallUpdateLive() {
+    if (!wall) return;
+    const el = wall.focusEl;
+    if (wall.liveEl && wall.liveEl !== el) wallClearLive(wall.liveEl);
+    wall.liveEl = null;
+    if (!el) return;
+    const item = wall.items[+el.dataset.idx];
+    if (!item || !item.job || !item.job.thumb) return;
+    const live = el.firstChild.children[1];
+    if (live.getAttribute('src') !== item.src) {
+        live.classList.remove('vw-shown');
+        live.onload = () => live.classList.add('vw-shown');
+        live.src = item.src;
+        if (live.complete && live.naturalWidth) live.classList.add('vw-shown');
+    }
+    wall.liveEl = el;
+}
+
+function wallClearLive(el) {
+    const live = el.firstChild.children[1];
+    live.onload = null;
+    live.classList.remove('vw-shown');
+    live.removeAttribute('src');
 }
 
 function wallIndex(i, j) {
@@ -709,12 +995,15 @@ function wallMakeCell() {
     a.draggable = false;
     const p = document.createElement('div');
     p.className = 'vw-poster';
-    const img = document.createElement('img');
-    img.alt = '';
-    img.draggable = false;
-    img.decoding = 'async';
-    img.onload = () => { img.style.opacity = ''; };
-    p.appendChild(img);
+    const canvas = document.createElement('canvas');
+    canvas.className = 'vw-canvas';
+    p.appendChild(canvas);
+    const live = document.createElement('img');
+    live.className = 'vw-live';
+    live.alt = '';
+    live.draggable = false;
+    live.decoding = 'async';
+    p.appendChild(live);
     const badge = document.createElement('span');
     badge.className = 'vw-dup-badge';
     p.appendChild(badge);
@@ -760,15 +1049,13 @@ function wallRender() {
             if (el.dataset.idx !== String(idx)) {
                 el.dataset.idx = idx;
                 el.href = item.href;
-                const img = el.firstChild.firstChild;
-                img.src = item.src;
-                // Hide until this poster's own image is ready (never flash the previous one)
-                img.style.opacity = (img.complete && img.naturalWidth) ? '' : '0';
+                if (el === wall.liveEl) { wallClearLive(el); wall.liveEl = null; }
                 el.classList.toggle('vw-fav', !!item.fav);
                 const n = item.group ? item.group.length : 1;
                 el.classList.toggle('vw-has-dups', n > 1);
-                img.nextSibling.textContent = n > 1 ? '×' + n : '';
+                el.firstChild.children[2].textContent = n > 1 ? '×' + n : '';
                 if (item.fav) el.style.setProperty('--vw-fav', FAVORITE_GLOW_COLOR || '#f5c518');
+                wallDrawCell(el, false);
             }
             el.dataset.i = i;
             el.dataset.j = j;
@@ -784,8 +1071,34 @@ function wallRender() {
         wall.cells.delete(key);
         el.style.display = 'none';
         if (el === wall.focusEl) { el.classList.remove('vw-focus'); wall.focusEl = null; }
+        if (el === wall.liveEl) { wallClearLive(el); wall.liveEl = null; }
         wall.pool.push(el);
     });
+
+    // Download priorities follow the view: posters actually visible first (nearest the
+    // middle of the screen first), then about half a screen around them
+    const vi0 = Math.floor(left / pw), vi1 = Math.floor((left + W - 1) / pw);
+    const vj0 = Math.floor(top / ph),  vj1 = Math.floor((top + H - 1) / ph);
+    const rangeKey = vi0 + ',' + vi1 + ',' + vj0 + ',' + vj1 + ',' + wall.N;
+    if (rangeKey !== wall.ld.rangeKey) {
+        wall.ld.rangeKey = rangeKey;
+        const view = new Set(), near = new Set(), dist = new Map();
+        const ci = Math.ceil((vi1 - vi0 + 1) / 2), cj = Math.ceil((vj1 - vj0 + 1) / 2);
+        const mi = wall.cu - 0.5, mj = wall.cv - 0.5;   // cell at the middle of the screen
+        for (let j = vj0 - cj; j <= vj1 + cj; j++) {
+            for (let i = vi0 - ci; i <= vi1 + ci; i++) {
+                const job = wall.items[wallIndex(i, j)].job;
+                const d = Math.hypot(i - mi, j - mj);
+                if (!dist.has(job) || d < dist.get(job)) dist.set(job, d);
+                if (i >= vi0 && i <= vi1 && j >= vj0 && j <= vj1) view.add(job); else near.add(job);
+            }
+        }
+        view.forEach(job => near.delete(job));
+        wall.ld.viewJobs = view;
+        wall.ld.nearJobs = near;
+        wall.ld.dist = dist;
+        wallPump();
+    }
 
     wall.layer.style.transform = `translate3d(${(wall.oi * pw - left).toFixed(2)}px, ${(wall.oj * ph - top).toFixed(2)}px, 0)`;
 
@@ -796,6 +1109,7 @@ function wallRender() {
         if (wall.focusEl) wall.focusEl.classList.remove('vw-focus');
         if (fEl) fEl.classList.add('vw-focus');
         wall.focusEl = fEl;
+        wallScheduleLive();
     }
     if (fKey !== wall.focusKey) {
         wall.focusKey = fKey;
@@ -961,6 +1275,7 @@ function wallToggleFit() {
     WALL_FIT = WALL_FIT === 'cover' ? 'contain' : 'cover';
     GM_setValue('WALL_FIT', WALL_FIT);
     wallUpdateToolbar();
+    if (wall && wall.ready) wall.cells.forEach(el => wallDrawCell(el, false));
 }
 
 function wallToast(msg) {

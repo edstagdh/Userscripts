@@ -838,12 +838,18 @@
     background: #000; opacity: .18; transition: opacity .22s ease;
 }
 #vw-wall .vw-cell.vw-focus .vw-poster::after { opacity: 0; }
-#vw-wall .vw-poster img {
-    width: 100%; height: 100%; display: block;
-    object-fit: cover; pointer-events: none;
-    transition: opacity .3s ease;
+/* Posters paint a small cached copy into a canvas; the highlighted one shows the original on top */
+#vw-wall .vw-poster .vw-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    pointer-events: none; opacity: 0; transition: opacity .3s ease;
 }
-#vw-wall.vw-fit-contain .vw-poster img { object-fit: contain; }
+#vw-wall .vw-poster .vw-canvas.vw-shown { opacity: 1; }
+#vw-wall .vw-poster .vw-live {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    object-fit: cover; pointer-events: none; opacity: 0; transition: opacity .2s ease;
+}
+#vw-wall.vw-fit-contain .vw-poster .vw-live { object-fit: contain; }
+#vw-wall .vw-poster .vw-live.vw-shown { opacity: 1; }
 #vw-wall .vw-cell.vw-fav .vw-poster { outline: 2px solid var(--vw-fav, #f5c518); outline-offset: -2px; }
 #vw-wall .vw-cell.vw-focus { z-index: 2; }
 #vw-wall .vw-cell.vw-focus .vw-poster {

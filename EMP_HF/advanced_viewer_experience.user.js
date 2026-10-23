@@ -26,16 +26,16 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     3.15
+// @version     3.16
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // @require     https://code.jquery.com/jquery-2.1.1.min.js
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.settings.js?v=3.15
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.gallery.js?v=3.15
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.poster_wall.js?v=3.15
-// @resource    AVE_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.styles.css?v=3.15
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.settings.js?v=3.16
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.gallery.js?v=3.16
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.poster_wall.js?v=3.16
+// @resource    AVE_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.styles.css?v=3.16
 // @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.user.js
 // @installURL  https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.user.js
 // @grant       GM_addStyle
@@ -68,7 +68,7 @@ let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
 // --------------------
-const SCRIPT_VERSION = '3.15';
+const SCRIPT_VERSION = '3.16';
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/AVE_Changelog.md';
 let changelogCache = null;
 const CHANGELOG_HISTORY_DEPTH = 3; // how many versions to show in the manual "Show Changelog" view

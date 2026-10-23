@@ -4,6 +4,13 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.16 - 2026-10-23
+- Poster Wall loads images through a queue instead of requesting all of them at once (500 at once on big top-10 pages): posters on screen load first, nearest the middle first, then the area around them, then the rest in the background with only a few connections, so whatever you scroll to never waits behind background downloads.
+- No more cancelled image requests: opening the wall no longer interrupts page thumbnails that are still downloading (the wall reuses those downloads), and scrolling no longer cancels posters that were still loading.
+- Scrolling is smooth even over big or animated images: each image is decoded once into a small copy sized for its poster and the full-size image is released, so posters that scroll back into view appear instantly and memory use is much lower. The highlighted poster shows the original image (sharp, and animated if it is).
+- Posters no longer wait for the "image unavailable" examples to be learned; they're checked against the saved placeholders right away and re-checked if a new example is learned later.
+- When posters are removed because their image failed, the highlighted poster stays in place instead of the whole wall jumping.
+
 ## v3.15 - 2026-10-23
 - Poster Wall shows a short notice when it opens: it can be heavy on some PCs and shouldn't be left open while idle, images come from third-party image hosts (not from the site), and big images (usually animated WebP/GIF, rarely very high-resolution ones) take longer to load. Reopen it anytime with the ⓘ button; "Don't show this again" hides it on open.
 - Poster Wall closes itself after 10 minutes without mouse, wheel or keyboard activity, with a 30-second warning first. Change the delay or turn it off in Viewer Settings → Poster Wall.
