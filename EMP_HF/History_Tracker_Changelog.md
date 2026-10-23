@@ -4,6 +4,10 @@ All notable changes to History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v3.0 - 2026-10-23
+- Fixed: torrents hidden by Advanced Viewer Experience's blacklists (tags, uploaders, uploader + tag rules) were still counted in "🙈 N visited hidden". Anything another script or the site already hides is no longer counted, in list and grid view.
+- The count updates right away when you blacklist (or un-blacklist) something while the page is open.
+
 ## v2.9 - 2026-10-23
 - Console logging with a level setting (🕘 History → Settings & data → Advanced): Off, Errors only, Warnings and errors (default), Info, or Debug.
 - Messages start with the same "[TM]" prefix as Advanced Viewer Experience, followed by "History Tracker:", so you can filter all the scripts' output together or this one alone.

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         History Tracker
-// @version      2.9
+// @version      3.0
 // @description  Remembers the torrent pages you open and the searches you run (stored locally in Tampermonkey), marks torrents you've already visited, keeps a searchable search history and, optionally, each torrent's presentation as BBCode
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -35,6 +35,7 @@
  *  • Torrent links you've opened get a 👁 badge; hovering it shows when you last visited.
  *  • Optionally hides torrents you've opened from the site's lists (rows and Advanced Viewer Experience grid cards),
  *    with a "🙈 N visited hidden · show" switch at the bottom left to bring them back on the current page.
+ *    Items another script already hides (Advanced Viewer Experience's blacklists) aren't counted.
  *  • "🕘 History" at the end of the site menu: past searches (filter, run again, or search for something new),
  *    torrents you've opened (hover a cover to enlarge it, copy a saved presentation), and Settings & data.
  *
@@ -140,7 +141,7 @@
     var ZOOM_MARGIN = 16;
 
     var SCRIPT_NAME = 'History Tracker';
-    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '2.9';
+    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.0';
 
     // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -1455,6 +1456,16 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 
     function hidingActive() { return !!getSetting('hideVisited') && !CURRENT_TORRENT; }
 
+    /**
+     * Hidden by someone else — Advanced Viewer Experience's blacklists (tags, uploaders, uploader + tag rules) mark
+     * rows with "vg-bl-hidden" and hide them; the site and other scripts hide rows with an inline display:none.
+     * Those aren't counted as "visited hidden": you wouldn't see them anyway. (Userscripts can't read each other's
+     * storage, so the page is the only place to learn what another script decided.)
+     */
+    function hiddenByOthers(item) {
+        return item.classList.contains('vg-bl-hidden') || item.style.display === 'none';
+    }
+
     function itemTorrentId(item) {
         if (itemIds.has(item)) return itemIds.get(item);
         var id = 0;
@@ -1473,7 +1484,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             var id = itemTorrentId(item);
             var e = id ? torrents().get(id) : null;
             var visited = !!(e && e.f < PAGE_LOADED_AT);
-            if (visited) hiddenIds.add(id);
+            if (visited && !hiddenByOthers(item)) hiddenIds.add(id);
             var hide = visited && !showVisitedThisPage;
             if (item.classList.contains('ht-hidden-visited') !== hide) item.classList.toggle('ht-hidden-visited', hide);
         });
@@ -1518,21 +1529,45 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         remarkTimer = setTimeout(refreshMarks, 200);
     }
 
+    var rehideTimer = null;
+    function rehideSoon() {
+        clearTimeout(rehideTimer);
+        rehideTimer = setTimeout(applyHiding, 30);
+    }
+
+    /** a list item was hidden / shown by someone else (e.g. a blacklist applied while the page is open) */
+    function othersVisibilityChanged(m) {
+        var t = m.target;
+        if (t.nodeType !== 1 || !t.matches(ITEM_SELECTOR) || isOurs(t)) return false;
+        if (m.attributeName === 'style') return true;
+        return /(^|\s)vg-bl-hidden(\s|$)/.test(m.oldValue || '') !== t.classList.contains('vg-bl-hidden');
+    }
+
     function watchDom() {
         new MutationObserver(function (mutations) {
+            var added = false;
+            var visibility = false;
             for (var i = 0; i < mutations.length; i++) {
-                var nodes = mutations[i].addedNodes;
-                for (var j = 0; j < nodes.length; j++) {
-                    var n = nodes[j];
+                var m = mutations[i];
+                if (m.type === 'attributes') {
+                    if (!visibility && hidingActive() && othersVisibilityChanged(m)) visibility = true;
+                    continue;
+                }
+                if (added) continue;
+                for (var j = 0; j < m.addedNodes.length; j++) {
+                    var n = m.addedNodes[j];
                     if (n.nodeType !== 1 || isOurs(n)) continue;
-                    if (n.matches('a[href*="torrents.php"]') || n.querySelector('a[href*="torrents.php"]')) {
-                        applyHiding();   // right away, so new grid cards of visited torrents never flash on screen
-                        remarkSoon();
-                        return;
-                    }
+                    if (n.matches('a[href*="torrents.php"]') || n.querySelector('a[href*="torrents.php"]')) { added = true; break; }
                 }
             }
-        }).observe(document.body, { childList: true, subtree: true });
+            if (added) {
+                applyHiding();   // right away, so new grid cards of visited torrents never flash on screen
+                remarkSoon();
+            } else if (visibility) {
+                log.debug('A list item was hidden / shown by another script — recounting');
+                rehideSoon();
+            }
+        }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'], attributeOldValue: true });
     }
 
     /** another tab recorded a visit → update this tab's marks right away */
