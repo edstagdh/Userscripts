@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         History Tracker
-// @version      3.0
+// @version      3.1
 // @description  Remembers the torrent pages you open and the searches you run (stored locally in Tampermonkey), marks torrents you've already visited, keeps a searchable search history and, optionally, each torrent's presentation as BBCode
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -141,7 +141,7 @@
     var ZOOM_MARGIN = 16;
 
     var SCRIPT_NAME = 'History Tracker';
-    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.0';
+    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.1';
 
     // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -1214,6 +1214,9 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
     padding: 12px 18px 16px; border-top: 1px solid #2e2e2e;
 }
 #ht-modal .ht-github-link { font-size: 11px; color: #5a7a9a; font-weight: 600; }
+#ht-modal .ht-footer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+#ht-modal .ht-ok.ht-discard { background: #2a2a2a; border-color: #555; color: #bbb; }
+#ht-modal .ht-ok.ht-discard:hover { background: #3a2222; border-color: #8a4a4a; color: #d09090; }
 #ht-modal .ht-github-link:hover { color: #7aa0c8; text-decoration: underline; }
 
 #ht-modal .ht-btn {
@@ -1713,6 +1716,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 
     var modalKeyHandler = null;
     var modalEscHook = null;   // set while a sub-view (torrent details) is open: Esc goes back instead of closing
+    var modalCloseGuard = null; // set while settings have unsaved changes: returns false to keep the window open
 
     function closeModal() {
         var bg = document.getElementById('ht-backdrop');
@@ -1721,9 +1725,16 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         if (modalKeyHandler) document.removeEventListener('keydown', modalKeyHandler, true);
         modalKeyHandler = null;
         modalEscHook = null;
+        modalCloseGuard = null;
     }
 
-    /** opts: { title, subtitle, tabs (element), headerButtons: [el] } → { body } */
+    /** ✕, Esc and clicking outside the window: ask first when there are unsaved settings */
+    function requestCloseModal() {
+        if (modalCloseGuard && !modalCloseGuard()) return;
+        closeModal();
+    }
+
+    /** opts: { title, subtitle, tabs (element), headerButtons: [el] } → { body, actions (footer buttons), okBtn } */
     function openModal(opts) {
         closeModal();
         var bg = el('div', { id: 'ht-backdrop', 'data-ht-ui': '' });
@@ -1737,24 +1748,25 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         ]);
         var body = el('div', { className: 'ht-body' });
         var okBtn = el('button', { type: 'button', className: 'ht-ok', text: 'Close' });
+        var actions = el('div', { className: 'ht-footer-actions' }, [okBtn]);
         var footer = el('div', { className: 'ht-footer' }, [
             el('a', { className: 'ht-github-link', href: 'https://github.com/edstagdh/Userscripts', target: '_blank', rel: 'noopener noreferrer', text: '🔗 View on GitHub' }),
-            okBtn,
+            actions,
         ]);
         var modal = el('div', { id: 'ht-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title },
             [header, opts.tabs || null, body, footer]);
         bg.appendChild(modal);
-        closeBtn.addEventListener('click', closeModal);
-        okBtn.addEventListener('click', closeModal);
-        bg.addEventListener('mousedown', function (ev) { if (ev.target === bg) closeModal(); });
+        closeBtn.addEventListener('click', requestCloseModal);
+        okBtn.addEventListener('click', closeModal);   // also when it reads "Close without saving": that's the explicit choice
+        bg.addEventListener('mousedown', function (ev) { if (ev.target === bg) requestCloseModal(); });
         modalKeyHandler = function (ev) {
             if (ev.key !== 'Escape' || document.querySelector('#ht-cl-backdrop.active')) return;
             ev.stopPropagation();
-            if (modalEscHook) modalEscHook(); else closeModal();
+            if (modalEscHook) modalEscHook(); else requestCloseModal();
         };
         document.addEventListener('keydown', modalKeyHandler, true);
         document.body.appendChild(bg);
-        return { body: body };
+        return { body: body, actions: actions, okBtn: okBtn };
     }
 
     // ── Shared list pieces ───────────────────────────────────────────────────
@@ -1976,6 +1988,21 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         m.body.append(pane, detail);
         var listScroll = 0;
 
+        // Settings: "Save & reload" shows up next to Close once something differs from what's saved
+        var saveBtn = el('button', { type: 'button', className: 'ht-ok ht-hidden', text: '💾 Save & reload' });
+        m.actions.insertBefore(saveBtn, m.okBtn);
+        var settingsDirty = false;
+        var saveSettings = null;
+        saveBtn.addEventListener('click', function () { if (saveSettings) saveSettings(); });
+        function setSettingsDirty(dirty, saveFn) {
+            settingsDirty = dirty;
+            saveSettings = saveFn || saveSettings;
+            saveBtn.classList.toggle('ht-hidden', !dirty);
+            m.okBtn.textContent = dirty ? 'Close without saving' : 'Close';
+            m.okBtn.classList.toggle('ht-discard', dirty);
+            modalCloseGuard = dirty ? function () { return confirm('You have unsaved settings. Close without saving them?'); } : null;
+        }
+
         function counts() {
             var nS = 0;
             var nT = 0;
@@ -2010,6 +2037,11 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         }
 
         function show(name, f) {
+            if (settingsDirty) {
+                if (name === 'settings') return;
+                if (!confirm('You have unsaved settings. Leave Settings without saving them?')) return;
+                setSettingsDirty(false);
+            }
             closeDetails();
             Object.keys(buttons).forEach(function (k) { buttons[k].setAttribute('aria-selected', String(k === name)); });
             hideZoom();
@@ -2017,7 +2049,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             m.body.scrollTop = 0;
             if (name === 'searches') renderSearchesTab(pane, f || '', counts);
             else if (name === 'torrents') renderTorrentsTab(pane, f || '', counts, openDetails);
-            else renderSettingsTab(pane);
+            else renderSettingsTab(pane, setSettingsDirty);
         }
 
         TABS.forEach(function (t) {
@@ -2256,7 +2288,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         return { input: input, field: el('label', { className: 'ht-field' }, [el('span', { text: label }), input]) };
     }
 
-    function renderSettingsTab(body) {
+    function renderSettingsTab(body, setDirty) {
         var boxes = {};
         function checks(group) {
             body.appendChild(el('div', { className: 'ht-label', text: group[0] }));
@@ -2313,20 +2345,43 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             el('label', { className: 'ht-field' }, [el('span', { text: 'Console logging (browser dev tools, messages start with ' + LOG_PREFIX + ')' }), logSel]),
         ]));
 
-        var save = el('button', { type: 'button', className: 'ht-ok', text: 'Save & reload' });
-        save.addEventListener('click', function () {
-            Object.keys(boxes).forEach(function (k) { setSetting(k, boxes[k].checked); });
-            setSetting('logLevel', logSel.value);
-            setSetting('markStyle', styleSel.value);
-            setSetting('presentationMode', modeSel.value);
-            [[dedupe, 'dedupeSeconds'], [versions, 'presentationVersions'], [maxT, 'presentationMaxTorrents']].forEach(function (x) {
-                var n = parseInt(x[0].input.value, 10);
-                setSetting(x[1], isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS[x[1]]);
-            });
-            log.info('Settings saved — reloading');
+        function numberValue(f, name) {
+            var n = parseInt(f.input.value, 10);
+            return isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS[name];
+        }
+
+        /** everything the form would save, as one comparable value */
+        function formState() {
+            var st = {};
+            Object.keys(boxes).forEach(function (k) { st[k] = boxes[k].checked; });
+            st.markStyle = styleSel.value;
+            st.presentationMode = modeSel.value;
+            st.logLevel = logSel.value;
+            st.dedupeSeconds = numberValue(dedupe, 'dedupeSeconds');
+            st.presentationVersions = numberValue(versions, 'presentationVersions');
+            st.presentationMaxTorrents = numberValue(maxT, 'presentationMaxTorrents');
+            return st;
+        }
+
+        function saveAndReload() {
+            var st = formState();
+            Object.keys(st).forEach(function (k) { setSetting(k, st[k]); });
+            log.info('Settings saved — reloading', st);
+            modalCloseGuard = null;
             location.reload();
-        });
-        body.appendChild(el('div', { className: 'ht-buttons', style: 'justify-content:flex-end' }, [save]));
+        }
+
+        var saved = JSON.stringify(formState());
+        var formArea = el('div');
+        while (body.firstChild) formArea.appendChild(body.firstChild);   // the settings form built above
+        body.appendChild(formArea);
+        function checkDirty() {
+            var dirty = JSON.stringify(formState()) !== saved;
+            if (setDirty) setDirty(dirty, saveAndReload);
+        }
+        formArea.addEventListener('input', checkDirty);
+        formArea.addEventListener('change', checkDirty);
+        body.appendChild(el('p', { className: 'ht-note', text: 'Changes are applied with "💾 Save & reload" at the bottom of this window.' }));
 
         // data
         var keys = groupKeys();
