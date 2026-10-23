@@ -4,6 +4,10 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.15 - 2026-10-23
+- Poster Wall shows a short notice when it opens: it can be heavy on some PCs and shouldn't be left open while idle, images come from third-party image hosts (not from the site), and big images (usually animated WebP/GIF, rarely very high-resolution ones) take longer to load. Reopen it anytime with the ⓘ button; "Don't show this again" hides it on open.
+- Poster Wall closes itself after 10 minutes without mouse, wheel or keyboard activity, with a 30-second warning first. Change the delay or turn it off in Viewer Settings → Poster Wall.
+
 ## v3.14 - 2026-10-23
 - The script is now split into several files so it's easier to maintain (no change in behavior): settings + nav buttons, gallery view and Poster Wall moved to their own files, and all CSS moved to a stylesheet. Tampermonkey downloads them once and caches them.
 - Switched to the minified build of the same jQuery version (2.1.1), cutting the code parsed on every page by roughly a third.

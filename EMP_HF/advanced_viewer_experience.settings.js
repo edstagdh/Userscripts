@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Viewer Settings overlay and the nav-bar buttons (Grid/List, Wall, Viewer)
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.14
+// Version 3.15
 
 // --------------------
 // SETTINGS OVERLAY — BUILD & INJECT
@@ -107,6 +107,14 @@ function buildSettingsOverlay() {
                     ${row('Group Duplicate Images',
                           'Torrents that use the same image link (usually different resolutions) appear as one poster; clicking it lets you pick which torrent to open. Also switchable on the wall with D.',
                           toggle('vsm-WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES))}
+                    ${row('Auto-close When Idle',
+                          'Closes the Poster Wall after this long without mouse, wheel or keyboard activity (a 30-second warning appears first). The wall can be heavy on some PCs, so it is best not left open in the background.',
+                          select('vsm-WALL_IDLE_CLOSE_MIN',
+                                 [['0','Never'],['5','After 5 minutes'],['10','After 10 minutes'],['15','After 15 minutes'],['30','After 30 minutes']],
+                                 String(WALL_IDLE_CLOSE_MIN)))}
+                    ${row('Show Notice on Open',
+                          'Show the note about resource use and image hosts when the Poster Wall opens. It is always available from the ⓘ button on the wall.',
+                          toggle('vsm-WALL_NOTICE_SHOW', WALL_NOTICE_SHOW))}
                     <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
                         <span class="vsm-label">"Image unavailable" examples</span>
                         <span class="vsm-hint">Links to images the host has replaced with an "image unavailable" template. Each one is downloaded once to learn the template; posters showing the same template are left out of the wall. Press U on the wall to add the highlighted poster. Changes apply without saving.</span>
@@ -214,6 +222,14 @@ function buildSettingsOverlay() {
     jQuery(document).on('change', '#vsm-WALL_GROUP_DUP_IMAGES', function () {
         WALL_GROUP_DUP_IMAGES = this.checked;
         GM_setValue('WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES);
+    });
+    jQuery(document).on('change', '#vsm-WALL_IDLE_CLOSE_MIN', function () {
+        WALL_IDLE_CLOSE_MIN = parseInt(this.value, 10) || 0;
+        GM_setValue('WALL_IDLE_CLOSE_MIN', WALL_IDLE_CLOSE_MIN);
+    });
+    jQuery(document).on('change', '#vsm-WALL_NOTICE_SHOW', function () {
+        WALL_NOTICE_SHOW = this.checked;
+        GM_setValue('WALL_NOTICE_SHOW', WALL_NOTICE_SHOW);
     });
     const addUnavail = function () {
         const urls = (jQuery('#vsm-unavail-add-input').val() || '').split(/\s+/).filter(u => /^https?:\/\//i.test(u));

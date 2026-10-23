@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Poster Wall: full-screen endless poster grid
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.14
+// Version 3.15
 
 // --------------------
 // POSTER WALL — endless 2D grid (Kaleidescape-style)
@@ -31,6 +31,12 @@ let WALL_COLS_VISIBLE = GM_getValue('WALL_COLS_VISIBLE', 7);        // zoom: col
 let WALL_EDGE_PAN     = GM_getValue('WALL_EDGE_PAN', false);        // glide when the mouse nears an edge
 // Torrents sharing one image link become one poster with a picker (usually different resolutions)
 let WALL_GROUP_DUP_IMAGES = GM_getValue('WALL_GROUP_DUP_IMAGES', GM_getValue('WALL_SKIP_DUP_IMAGES', true));
+// Close the wall after this many minutes without mouse / wheel / keyboard activity (0 = never)
+let WALL_IDLE_CLOSE_MIN = GM_getValue('WALL_IDLE_CLOSE_MIN', 10);
+const WALL_IDLE_WARN_S  = 30;      // countdown shown before an idle close
+// The notice about resource use / image hosts shown when the wall opens
+let WALL_NOTICE_SHOW    = GM_getValue('WALL_NOTICE_SHOW', true);
+const WALL_ACTIVITY_EVENTS = ['pointermove', 'pointerdown', 'wheel', 'keydown'];
 
 // "Image unavailable" placeholders: hosts like imgbox / imagebam keep the original
 // link but serve a generic template once an image is removed. We learn what those
@@ -361,15 +367,18 @@ function openPosterWall() {
                     <button class="vw-btn" data-act="dups"   title="Group torrents that share an image into one poster (D)"></button>
                     <span class="vw-sep"></span>
                     <span class="vw-kbd-hint" title="Hover a poster showing an 'image unavailable' template and press U. No clicking needed, so the highlight stays on that poster."><kbd>U</kbd> mark hovered as unavailable</span>
+                    <button class="vw-btn" data-act="notice" title="About the Poster Wall: resource use, image hosts, auto-close">&#9432;</button>
                     <button class="vw-btn vw-close" data-act="close" title="Close (Esc)">&times;</button>
                 </div>
             </div>
             <div class="vw-info"><div class="vw-info-title"></div><div class="vw-info-meta"></div></div>
             <div class="vw-help">Drag or scroll to glide &middot; Shift+wheel sideways &middot; Ctrl+wheel to resize &middot; Arrows step &middot; Enter opens &middot; D groups duplicates &middot; Esc closes</div>
             <div class="vw-loading"><div class="vw-loading-text">Loading posters&hellip;</div><div class="vw-bar"><div></div></div></div>
+            <div class="vw-idle"></div>
         </div>
     `);
     jQuery('body').append($root);
+    if (WALL_NOTICE_SHOW) wallShowNotice(false);
     const prevOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';
     const pageState = wallSuspendPage();
@@ -397,7 +406,10 @@ function openPosterWall() {
         dirty: true, raf: 0, ready: false, autoAspect: 2 / 3,
         stats: collected.stats, broken: 0, placeholder: 0, unavailable: 0, loading: candidates.length,
         all: candidates, dupGrouped: 0, picker: null,
+        lastActive: Date.now(), idleTimer: 0, idleWarned: false,
     };
+    WALL_ACTIVITY_EVENTS.forEach(t => window.addEventListener(t, wallActivity, true));
+    wall.idleTimer = setInterval(wallIdleCheck, 1000);
     // Learn any example placeholder links not fingerprinted yet (bounded wait)
     const sigsReady = Promise.race([wallLearnUnavail(), new Promise(r => setTimeout(r, 8000))]);
 
@@ -424,6 +436,7 @@ function openPosterWall() {
         started = true;
         clearTimeout(graceTimer);
         $root.find('.vw-loading').remove();
+        $root.find('.vw-notice').addClass('vw-notice-docked');
         if (!candidates.some(it => it.state !== 'failed')) { wallLogStats(); wallShowEmpty('None of the torrents on this page have a loadable image.'); return; }
         wallStart();
     };
@@ -469,6 +482,8 @@ function closePosterWall() {
     if (!wall) return;
     wallSession++;
     cancelAnimationFrame(wall.raf);
+    clearInterval(wall.idleTimer);
+    WALL_ACTIVITY_EVENTS.forEach(t => window.removeEventListener(t, wallActivity, true));
     jQuery(window).off('.vwall');
     document.removeEventListener('keydown', wallOnKey, true);
     wallRestorePage(wall.pageState);
@@ -477,6 +492,77 @@ function closePosterWall() {
     wall = null;
     $root.removeClass('vw-open');
     setTimeout(() => $root.remove(), 250);
+}
+
+// ── Notice: resource use, where images come from, auto-close ──
+function wallSiteName() {
+    const h = location.hostname;
+    if (/happyfappy/i.test(h)) return 'HappyFappy';
+    if (/emparadise/i.test(h)) return 'EMParadise';
+    if (/empornium/i.test(h))  return 'Empornium';
+    return 'this site';
+}
+
+function wallShowNotice(docked) {
+    if (!wall && !jQuery('#vw-wall').length) return;
+    const $root = wall ? wall.$root : jQuery('#vw-wall');
+    $root.find('.vw-notice').remove();
+    const site = wallSiteName();
+    const idleText = WALL_IDLE_CLOSE_MIN > 0
+        ? `To be safe it closes itself after ${WALL_IDLE_CLOSE_MIN} minutes without any mouse or keyboard activity (with a ${WALL_IDLE_WARN_S}-second warning first).`
+        : 'Auto-close is turned off in Viewer Settings, so remember to close it yourself.';
+    const $n = jQuery(`
+        <div class="vw-notice" role="note">
+            <div class="vw-notice-title">&#9432; Before you browse</div>
+            <ul>
+                <li><b>It can be heavy on your PC.</b> The wall shows many large images at once (animated ones especially), which can use a lot of memory and CPU on some computers. Close it when you're done and don't leave it open while idle. <span class="vw-notice-idle"></span></li>
+                <li><b>Images come from image hosts, not from <span class="vw-notice-site"></span>.</b> Uploaders keep their posters on third-party image sites, so slow or missing posters are down to those hosts, not <span class="vw-notice-site"></span>.</li>
+                <li><b>Big images take longer.</b> The slowest posters are usually animated WebP or GIF files, and in rare cases a very high-resolution picture.</li>
+            </ul>
+            <div class="vw-notice-actions">
+                <label><input type="checkbox" class="vw-notice-never"> Don't show this again</label>
+                <button class="vw-btn vw-notice-ok" type="button">Got it</button>
+            </div>
+        </div>`);
+    $n.find('.vw-notice-site').text(site);
+    $n.find('.vw-notice-idle').text(idleText);
+    $n.find('.vw-notice-never').prop('checked', !WALL_NOTICE_SHOW);
+    if (docked || (wall && wall.ready)) $n.addClass('vw-notice-docked');
+    $n.find('.vw-notice-ok').on('click', function (e) {
+        e.preventDefault();
+        WALL_NOTICE_SHOW = !$n.find('.vw-notice-never').is(':checked');
+        GM_setValue('WALL_NOTICE_SHOW', WALL_NOTICE_SHOW);
+        jQuery('#vsm-WALL_NOTICE_SHOW').prop('checked', WALL_NOTICE_SHOW);
+        $n.remove();
+    });
+    $root.append($n);
+}
+
+// ── Inactivity auto-close ──
+function wallActivity() {
+    if (!wall) return;
+    wall.lastActive = Date.now();
+    if (wall.idleWarned) {
+        wall.idleWarned = false;
+        wall.$root.find('.vw-idle').removeClass('vw-show');
+    }
+}
+
+function wallIdleCheck() {
+    if (!wall) return;
+    if (!(WALL_IDLE_CLOSE_MIN > 0)) { wallActivity(); return; }
+    const left = WALL_IDLE_CLOSE_MIN * 60000 - (Date.now() - wall.lastActive);
+    if (left <= 0) {
+        console.log(`${LOG_PREFIX} Poster Wall closed after ${WALL_IDLE_CLOSE_MIN} minutes of inactivity.`);
+        closePosterWall();
+        return;
+    }
+    if (left <= WALL_IDLE_WARN_S * 1000) {
+        wall.idleWarned = true;
+        wall.$root.find('.vw-idle')
+            .text(`The Poster Wall will close in ${Math.ceil(left / 1000)}s because it has been idle. Move the mouse or press a key to keep it open.`)
+            .addClass('vw-show');
+    }
 }
 
 function wallShowEmpty(msg) {
@@ -1054,6 +1140,7 @@ function wallBindEvents() {
         e.preventDefault();
         const act = this.getAttribute('data-act');
         if      (act === 'close')    closePosterWall();
+        else if (act === 'notice')   wallShowNotice(true);
         else if (!wall.ready && act !== 'fit' && act !== 'edge' && act !== 'aspect') return;
         else if (act === 'zoom-in')  wallZoom(1);
         else if (act === 'zoom-out') wallZoom(-1);

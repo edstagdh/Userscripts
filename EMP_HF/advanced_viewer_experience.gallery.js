@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Gallery (grid) view: cards built from the torrent table rows
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.14
+// Version 3.15
 
 // --------------------
 // GALLERY — TOGGLE

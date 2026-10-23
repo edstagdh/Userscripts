@@ -950,6 +950,32 @@
 #vw-wall .vw-pick-row.vw-sel { background: rgba(124,184,255,.14); border-color: rgba(124,184,255,.45); }
 #vw-wall .vw-pick-title { font-size: 13px; color: #f0f0f0; word-break: break-word; }
 #vw-wall .vw-pick-meta { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; }
+#vw-wall .vw-notice {
+    position: absolute; z-index: 6; left: 50%; top: calc(50% + 40px); transform: translateX(-50%);
+    width: 520px; max-width: calc(100vw - 32px);
+    background: rgba(22,24,29,.97); border: 1px solid rgba(255,255,255,.14); border-radius: 8px;
+    box-shadow: 0 14px 40px rgba(0,0,0,.6);
+    padding: 14px 18px 12px; color: #c9ced8; font-size: 12px; line-height: 1.5;
+}
+#vw-wall .vw-notice.vw-notice-docked {
+    left: 18px; top: auto; bottom: 92px; transform: none; width: 440px;
+}
+#vw-wall .vw-notice-title { font-weight: 700; color: #f0f0f0; font-size: 13px; margin-bottom: 6px; }
+#vw-wall .vw-notice ul { margin: 0; padding-left: 18px; }
+#vw-wall .vw-notice li { margin: 0 0 6px; }
+#vw-wall .vw-notice b { color: #f0f0f0; }
+#vw-wall .vw-notice-actions {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px;
+}
+#vw-wall .vw-notice-actions label { display: flex; align-items: center; gap: 6px; color: #8a8f99; font-size: 11px; cursor: pointer; }
+#vw-wall .vw-idle {
+    position: absolute; left: 50%; top: 64px; z-index: 7; transform: translateX(-50%);
+    max-width: calc(100vw - 32px);
+    background: rgba(70,40,10,.96); border: 1px solid rgba(255,170,80,.5); border-radius: 6px;
+    padding: 9px 16px; color: #ffe2bf; font-size: 13px; pointer-events: none;
+    opacity: 0; transition: opacity .2s ease;
+}
+#vw-wall .vw-idle.vw-show { opacity: 1; }
 #vw-wall .vw-toast {
     position: absolute; left: 50%; top: 62px; z-index: 7; transform: translateX(-50%);
     background: rgba(20,22,27,.95); border: 1px solid rgba(255,255,255,.15); border-radius: 5px;
