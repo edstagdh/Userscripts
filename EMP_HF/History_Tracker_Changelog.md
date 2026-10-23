@@ -1,8 +1,14 @@
 # Changelog
 
-All notable changes to History Tracker are documented here.
+All notable changes to [HF][EMP] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
+
+## v3.2 - 2026-10-23
+- Advanced Viewer Experience's Poster Wall: the info pane under the poster in focus now shows a "👁 Visited 3× · last 2 days ago" chip for torrents you've opened, like the badge in list and grid view (grey when the last visit is over 30 days ago).
+- Poster Wall: the outline on visited posters now follows the right torrent as the wall reuses posters while you glide, and the hover card no longer pops up over the wall.
+- Renamed to "[HF][EMP] History Tracker", like the other EMP_HF scripts.
+- The script is now split into files, like Advanced Viewer Experience: history_tracker.user.js plus history_tracker.presentation.js, history_tracker.window.js, history_tracker.changelog.js and history_tracker.styles.css, all loaded and cached by Tampermonkey.
 
 ## v3.1 - 2026-10-23
 - Settings: "💾 Save & reload" now appears next to the Close button at the bottom of the window as soon as you change something (and disappears if you change it back). While there are unsaved changes, "Close" reads "Close without saving".
@@ -68,4 +74,4 @@ each version as a `## vX.Y` header followed by a bullet list of changes.
 - Notice when you repeat a search, and a "searched before" hint next to the site's search box.
 
 ## v1.0 - 2026-10-22
-- First version: recorded visits to a self-hosted Cloudflare app (not released).
+- First version: recorded visits to localstorage.
