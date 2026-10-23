@@ -4,6 +4,13 @@ All notable changes to History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v2.8 - 2026-10-23
+- New option: hide torrents you've already opened from the site's lists — search results, notifications, top 10, user pages, user history and collages. Turn it on in 🕘 History → Settings & data or from the Tampermonkey menu ("Hide Visited Torrents in Lists"). Off by default.
+- Works in both list and grid view of Advanced Viewer Experience, including when you switch between them: visited cards are hidden as soon as they're built.
+- A "🙈 N visited hidden · show" switch at the bottom left shows how many are hidden and brings them back on the current page with one click.
+- Torrents you open from the page you're on stay visible until the next page load, so the list doesn't shift while you're going through it.
+- Fixed: with "Dim the link" chosen as the marking style, dimmed links weren't updated again after the first pass.
+
 ## v2.7 - 2026-10-23
 - Fixed: the title of the History and What's New windows sat between left and center, because the site's own heading style (centered) leaked in. Titles and subtitles are now aligned to the left.
 
@@ -48,4 +55,4 @@ each version as a `## vX.Y` header followed by a bullet list of changes.
 - Notice when you repeat a search, and a "searched before" hint next to the site's search box.
 
 ## v1.0 - 2026-10-22
-- First version: recorded visits to a localstorage.
+- First version: recorded visits to a self-hosted Cloudflare app (not released).

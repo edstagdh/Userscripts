@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         [HF][EMP] History Tracker
-// @version      2.7
+// @name         History Tracker
+// @version      2.8
 // @description  Remembers the torrent pages you open and the searches you run (stored locally in Tampermonkey), marks torrents you've already visited, keeps a searchable search history and, optionally, each torrent's presentation as BBCode
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -25,6 +25,32 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // ==/UserScript==
 
+/*
+ * History Tracker: everything is kept in this script's Tampermonkey storage; nothing leaves the browser.
+ *
+ *  • Torrent pages (torrents.php?id=N): each visit is recorded (time, title, cover URL, active time on the page and,
+ *    optionally, the presentation as BBCode). A 👁 button next to the title shows your earlier visits.
+ *  • Searches (torrents.php with search text / tags / title / file list): each run is recorded. "The same search"
+ *    = same text, tags, title and file list, whatever the sort order, page or size filters.
+ *  • Torrent links you've opened get a 👁 badge; hovering it shows when you last visited.
+ *  • Optionally hides torrents you've opened from the site's lists (rows and Advanced Viewer Experience grid cards),
+ *    with a "🙈 N visited hidden · show" switch at the bottom left to bring them back on the current page.
+ *  • "🕘 History" at the end of the site menu: past searches (filter, run again, or search for something new),
+ *    torrents you've opened (hover a cover to enlarge it, copy a saved presentation), and Settings & data.
+ *
+ * Sites: HappyFappy keeps its own history; empornium.sx and emparadise.rs (same tracker, two domains) share one.
+ * The History window, search hint and repeat-search notice can show both sites together (setting "crossSite"),
+ * with an HF / EMP tag on each entry. 👁 badges stay per site: torrent ids aren't shared between the trackers.
+ *
+ * Storage (per site group G = hf | emp), kept small so page loads stay fast:
+ *   ht_G_tor_0 … ht_G_tor_15  torrents, split by id % 16: { id: { c: visits, f: first, l: last, t: title,
+ *                             cv: cover url, v: [[time, seconds on page], …] (last 200) } }
+ *   ht_G_searches             { key: { c, f, l, lb: label, tx: search text, u: last url, v: [time, …] (last 200) } }
+ *   ht_G_log_YYYY-MM          every visit of that month: [visitId, time, 't'|'s', torrent id | search key, seconds]
+ *   ht_G_pres_<id>            saved presentations: [{ t: first seen, l: last seen, h: hash, n: chars, z: 1 = gzip, d: data }]
+ *   ht_last                   last page recorded (reloads within a few seconds aren't counted twice)
+ */
+
 (function () {
     'use strict';
 
@@ -41,6 +67,7 @@
         timeOnPage: true,             // record active (visible) time on torrent pages
         saveCover: true,              // remember the torrent's cover image URL (shown in History → Torrents)
         coverZoom: true,              // hovering a cover in the History window shows it enlarged
+        hideVisited: false,           // hide torrents you've already opened from the site's lists (rows and grid cards)
         crossSite: true,              // History window, search hint and notices include the other site (HappyFappy ↔ Empornium)
         historySite: 'all',           // History window site filter last used: 'all' | 'hf' | 'emp'
         savePresentation: true,       // save the torrent's presentation as BBCode
@@ -91,7 +118,7 @@
     var ZOOM_MARGIN = 16;
 
     var SCRIPT_NAME = 'History Tracker';
-    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '2.7';
+    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '2.8';
 
     // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -168,9 +195,10 @@
         return e;
     }
 
+    /** an element of History Tracker's own interface (not a site element we've only added a class to) */
     function isOurs(node) {
         if (!node || node.nodeType !== 1) return false;
-        if (typeof node.className === 'string' && /(^|\s)ht-/.test(node.className)) return true;
+        if (node.classList.contains('ht-badge') || node.classList.contains('ht-stats-added')) return true;
         return !!node.closest('[data-ht-ui]');
     }
 
@@ -1048,6 +1076,15 @@
     font-size: 8pt; font-weight: 700; line-height: 14px; white-space: nowrap; text-decoration: none !important; cursor: help;
 }
 .ht-badge.ht-old { background: #29374F; color: #89a0b8 !important; border-color: #4a6080; }
+.ht-hidden-visited { display: none !important; }
+.ht-hidepill {
+    position: fixed; left: 14px; bottom: 14px; z-index: 2147483000; padding: 4px 12px;
+    border: 1px solid #4a6080; border-radius: 4px; background: #29374F; color: #bcd;
+    font-family: inherit; font-size: 9pt; font-weight: 700; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.5);
+    transition: background 0.15s, color 0.15s;
+}
+.ht-hidepill:hover { background: #354a68; color: #e0ecf8; }
+.ht-hidepill.ht-active { background: #1a4a7a; color: #7ecfff; border-color: #4a9fd4; }
 .ht-badge.ht-badge-before { margin-left: 0; margin-right: 5px; }
 .ht-badge.ht-badge-chip {
     display: inline-flex; align-items: center; gap: 3px; margin: 0; padding: 2px 6px; border-radius: 3px;
@@ -1363,10 +1400,77 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         });
     }
 
+    // ── Hiding visited torrents from lists ───────────────────────────────────
+    // An "item" is one entry of a list: a table row (search results, notifications, top 10, user history, collages),
+    // a card of Advanced Viewer Experience's grid view, or a card of the site's collage grid. Hiding is a CSS class
+    // with display:none !important, so it survives Advanced Viewer Experience showing / hiding tables and rows when
+    // you switch list ↔ grid, and grid cards are hidden as soon as they're built (the observer runs before the
+    // browser paints them). Torrents you open from the page you're on stay visible until the next page load, so
+    // the list doesn't shift under your mouse while you middle-click through it.
+
+    var ITEM_SELECTOR = 'tr.torrent, .vg-card, .torrent_grid__torrent';
+    var PAGE_LOADED_AT = Date.now();
+    var showVisitedThisPage = false;
+    var itemIds = new WeakMap();
+    var hidePill = null;
+
+    function hidingActive() { return !!getSetting('hideVisited') && !CURRENT_TORRENT; }
+
+    function itemTorrentId(item) {
+        if (itemIds.has(item)) return itemIds.get(item);
+        var id = 0;
+        var links = item.querySelectorAll('a[href*="torrents.php"]');
+        for (var i = 0; i < links.length && !id; i++) id = linkTorrentId(links[i]);
+        itemIds.set(item, id);
+        return id;
+    }
+
+    /** hide (or show again) every list item whose torrent you'd opened before this page loaded */
+    function applyHiding() {
+        if (!hidingActive()) return;
+        var hiddenIds = new Set();
+        document.querySelectorAll(ITEM_SELECTOR).forEach(function (item) {
+            if (isOurs(item)) return;
+            var id = itemTorrentId(item);
+            var e = id ? torrents().get(id) : null;
+            var visited = !!(e && e.f < PAGE_LOADED_AT);
+            if (visited) hiddenIds.add(id);
+            var hide = visited && !showVisitedThisPage;
+            if (item.classList.contains('ht-hidden-visited') !== hide) item.classList.toggle('ht-hidden-visited', hide);
+        });
+        updateHidePill(hiddenIds.size);
+    }
+
+    /** small switch at the bottom left: how many are hidden, and show / hide them on this page */
+    function updateHidePill(n) {
+        if (!hidePill) {
+            hidePill = el('button', { type: 'button', className: 'ht-hidepill', 'data-ht-ui': '' });
+            hidePill.addEventListener('click', function () {
+                showVisitedThisPage = !showVisitedThisPage;
+                applyHiding();
+            });
+            document.body.appendChild(hidePill);
+            if (document.querySelector('.ht-navfloat')) hidePill.style.left = '130px';
+        }
+        hidePill.classList.toggle('ht-hidden', !n);
+        hidePill.classList.toggle('ht-active', showVisitedThisPage);
+        hidePill.textContent = showVisitedThisPage
+            ? '👁 Showing ' + n + ' visited · hide them'
+            : '🙈 ' + n + ' visited hidden · show';
+        hidePill.title = showVisitedThisPage
+            ? 'Hide the torrents you\'ve opened before (History Tracker)'
+            : 'Show them on this page (History Tracker). To stop hiding: 🕘 History → Settings & data.';
+    }
+
+    function refreshMarks() {
+        markLinks();
+        applyHiding();
+    }
+
     var remarkTimer = null;
     function remarkSoon() {
         clearTimeout(remarkTimer);
-        remarkTimer = setTimeout(markLinks, 200);
+        remarkTimer = setTimeout(refreshMarks, 200);
     }
 
     function watchDom() {
@@ -1376,7 +1480,11 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
                 for (var j = 0; j < nodes.length; j++) {
                     var n = nodes[j];
                     if (n.nodeType !== 1 || isOurs(n)) continue;
-                    if (n.matches('a[href*="torrents.php"]') || n.querySelector('a[href*="torrents.php"]')) { remarkSoon(); return; }
+                    if (n.matches('a[href*="torrents.php"]') || n.querySelector('a[href*="torrents.php"]')) {
+                        applyHiding();   // right away, so new grid cards of visited torrents never flash on screen
+                        remarkSoon();
+                        return;
+                    }
                 }
             }
         }).observe(document.body, { childList: true, subtree: true });
@@ -2052,6 +2160,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         ]],
         ['Show', [
             ['markVisited', 'Mark torrent links I\'ve opened'],
+            ['hideVisited', 'Hide torrents I\'ve opened from lists (results, top 10, collages, user pages)'],
             ['torrentButton', '👁 history button on torrent pages'],
             ['searchToast', 'Notice when I repeat a search'],
             ['searchBoxHint', '"Searched before" hint by the search box'],
@@ -2528,6 +2637,11 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             (markOn ? '✅' : '⬜') + ' Mark Visited Torrent Links (click to ' + (markOn ? 'disable' : 'enable') + ', reloads page)',
             function () { setSetting('markVisited', !markOn); location.reload(); }
         );
+        var hideOn = getSetting('hideVisited');
+        GM_registerMenuCommand(
+            (hideOn ? '✅' : '⬜') + ' Hide Visited Torrents in Lists (click to ' + (hideOn ? 'disable' : 'enable') + ', reloads page)',
+            function () { setSetting('hideVisited', !hideOn); location.reload(); }
+        );
     }
 
     // ── Start ────────────────────────────────────────────────────────────────
@@ -2583,8 +2697,8 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             }
         }
 
-        if (getSetting('markVisited')) {
-            markLinks();
+        if (getSetting('markVisited') || hidingActive()) {
+            refreshMarks();
             watchDom();
             watchOtherTabs();
         }
