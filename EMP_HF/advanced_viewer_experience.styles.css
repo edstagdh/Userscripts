@@ -914,6 +914,11 @@
 #vw-wall .vw-brand, #vw-wall .vw-btn { white-space: nowrap; flex: none; }
 #vw-wall .vw-count { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #vw-wall .vw-controls { flex: none; }
+#vw-wall .vw-pager { display: flex; align-items: center; gap: 4px; flex: none; }
+#vw-wall .vw-pager[hidden] { display: none; }
+#vw-wall .vw-pager .vw-page-label { min-width: 120px; }
+#vw-wall .vw-btn:disabled { opacity: .35; cursor: default; }
+#vw-wall .vw-btn:disabled:hover { background: rgba(255,255,255,.08); color: #ddd; }
 #vw-wall .vw-kbd-hint { font-size: 11px; color: #9aa1ad; white-space: nowrap; cursor: help; }
 #vw-wall kbd {
     display: inline-block; min-width: 16px; padding: 1px 5px; margin-right: 3px;

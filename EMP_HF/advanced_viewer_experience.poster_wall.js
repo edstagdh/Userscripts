@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Poster Wall: full-screen endless poster grid
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.17
+// Version 3.18
 
 // --------------------
 // POSTER WALL — endless 2D grid (Kaleidescape-style)
@@ -472,13 +472,13 @@ function refreshUnavailSettingsPanel() {
 }
 
 // ── Gather torrents from every table on the page (respects blacklists) ──
-function wallCollectItems() {
+function wallCollectItems(root) {
     const cols  = getGalleryColOffsets();
     const items = [];
     const seen  = new Set();
     const stats = { rows: 0, blacklisted: 0, noImage: 0, noLink: 0, duplicate: 0, blockedUrl: 0 };
 
-    jQuery('.torrent_table tr.torrent').each(function () {
+    jQuery(root || document).find('.torrent_table tr.torrent').each(function () {
         const $row = jQuery(this);
         stats.rows++;
         if (rowIsBlacklisted($row)) { stats.blacklisted++; return; }
@@ -572,6 +572,11 @@ function openPosterWall() {
             <div class="vw-topbar">
                 <span class="vw-brand">&#9638; Poster Wall</span>
                 <span class="vw-count"></span>
+                <div class="vw-pager" hidden>
+                    <button class="vw-btn" data-act="prev" title="Previous page ([)">&lsaquo;</button>
+                    <button class="vw-btn vw-page-label" data-act="page" title="Go to a page"></button>
+                    <button class="vw-btn" data-act="next" title="Next page (])">&rsaquo;</button>
+                </div>
                 <div class="vw-controls">
                     <button class="vw-btn" data-act="zoom-out" title="Smaller (−)">&minus;</button>
                     <button class="vw-btn" data-act="zoom-in"  title="Larger (+)">+</button>
@@ -587,8 +592,8 @@ function openPosterWall() {
                 </div>
             </div>
             <div class="vw-info"><div class="vw-info-title"></div><div class="vw-info-meta"></div></div>
-            <div class="vw-help">Drag or scroll to glide &middot; Shift+wheel sideways &middot; Ctrl+wheel to resize &middot; Arrows step &middot; Enter opens &middot; D groups duplicates &middot; P plays/pauses animations &middot; Esc closes</div>
-            <div class="vw-loading"><div class="vw-loading-text">Loading posters&hellip;</div><div class="vw-bar"><div></div></div></div>
+            <div class="vw-help">Drag or scroll to glide &middot; Shift+wheel sideways &middot; Ctrl+wheel to resize &middot; Arrows step &middot; Enter opens &middot; [ ] change page &middot; D groups duplicates &middot; P plays/pauses animations &middot; Esc closes</div>
+            ${WALL_LOADING_HTML}
             <div class="vw-idle"></div>
         </div>
     `);
@@ -628,14 +633,22 @@ function openPosterWall() {
     // Learn any example placeholder links not fingerprinted yet (bounded wait)
     const sigCountBefore = Object.keys(WALL_UNAVAIL_SIGS).length;
     wallLearnUnavail().then(() => {
-        if (!wall || wall.session !== session || Object.keys(WALL_UNAVAIL_SIGS).length === sigCountBefore) return;
+        if (!wall || !wall.ld || Object.keys(WALL_UNAVAIL_SIGS).length === sigCountBefore) return;
         wallRecheckUnavailable();
     });
 
     wallBindEvents();
     wallUpdateToolbar();
+    wall.pager = wallPagerInfo(document, location.href);
+    wall.startPage = wall.pager ? wall.pager.cur : 0;
+    wallUpdatePager();
+    wallBeginLoad();
+}
 
-    if (!candidates.length) { wallLogStats(); wallShowEmpty('No torrents with images on this page.'); return; }
+// Load the posters of the current page (wall.all) — on open and after every page change
+function wallBeginLoad() {
+    const session = wall.session, $root = wall.$root, candidates = wall.all;
+    if (!candidates.length) { wallLogStats(); wallShowEmpty('No torrents with images on this page.'); wallAfterStart(); return; }
 
     // Load every image through the queue. Only real failures (broken link, tiny
     // placeholder, "unavailable" template) are dropped; slow images never are. The wall
@@ -661,8 +674,9 @@ function openPosterWall() {
         clearTimeout(graceTimer);
         $root.find('.vw-loading').remove();
         $root.find('.vw-notice').addClass('vw-notice-docked');
-        if (!candidates.some(it => it.state !== 'failed')) { wallLogStats(); wallShowEmpty('None of the torrents on this page have a loadable image.'); return; }
+        if (!candidates.some(it => it.state !== 'failed')) { wallLogStats(); wallShowEmpty('None of the torrents on this page have a loadable image.'); wallAfterStart(); return; }
         wallStart();
+        wallAfterStart();
     };
     const graceTimer = setTimeout(startNow, WALL_LOAD_GRACE_MS);
     wall.onProgress = () => {
@@ -693,9 +707,165 @@ function closePosterWall() {
     wall.cells.forEach(el => wallDetachLive(el));   // overlays still loading finish quietly
     if (wall.ld) wall.ld.jobs.forEach(job => { if (job.thumb) wallFreeThumb(job.thumb); job.thumb = null; });
     const $root = wall.$root;
+    const goTo = (wall.pager && wall.pager.cur !== wall.startPage) ? wallPageUrl(wall.pager.cur) : null;
     wall = null;
     $root.removeClass('vw-open');
     setTimeout(() => $root.remove(), 250);
+    // Paged inside the wall: land on the page you were viewing
+    if (goTo) location.assign(goTo);
+}
+
+// ── Pagination ──
+// The list pages have a ".linkbox pager" with numbered links plus "Next" / "Last".
+// The current page comes from the address (?page=N, default 1), the last page from the
+// highest page number linked; previous / next addresses are the current address with
+// only ?page changed, so search filters and sorting are kept.
+const WALL_LOADING_HTML = '<div class="vw-loading"><div class="vw-loading-text">Loading posters&hellip;</div><div class="vw-bar"><div></div></div></div>';
+const WALL_PREFETCH_DELAY_MS = 1500;   // fetch the next page's list after this long on a page
+const wallPageCache = new Map();       // url -> Promise<Document> (a few recent pages)
+
+function wallPagerInfo(doc, url) {
+    const u = new URL(url, location.href);
+    const cur = parseInt(u.searchParams.get('page'), 10) || 1;
+    let last = cur, linked = false;
+    doc.querySelectorAll('.linkbox.pager a[href]').forEach(a => {
+        try {
+            const p = parseInt(new URL(a.getAttribute('href'), location.href).searchParams.get('page'), 10);
+            if (p) { linked = true; if (p > last) last = p; }
+        } catch (e) { /* ignore odd links */ }
+    });
+    if (!linked && cur === 1) return null;          // single page, or a page without pagination
+    return { cur, last, base: u.pathname + u.search };
+}
+
+function wallPageUrl(n) {
+    const u = new URL(wall.pager.base, location.href);
+    u.searchParams.set('page', String(n));
+    return u.pathname + u.search;
+}
+
+function wallUpdatePager() {
+    const $p = wall.$root.find('.vw-pager');
+    const pg = wall.pager;
+    $p.prop('hidden', !pg);
+    if (!pg) return;
+    const shown = wall.pageTarget || pg.cur;
+    $p.find('.vw-page-label').text(`Page ${shown.toLocaleString()} of ${pg.last.toLocaleString()}${wall.pageBusy ? '…' : ''}`);
+    $p.find('[data-act="prev"]').prop('disabled', shown <= 1);
+    $p.find('[data-act="next"]').prop('disabled', shown >= pg.last);
+}
+
+function wallFetchPage(url) {
+    if (wallPageCache.has(url)) return wallPageCache.get(url);
+    const p = new Promise((resolve, reject) => {
+        jQuery.ajax({ url, method: 'GET', dataType: 'text' })
+            .done(html => resolve(new DOMParser().parseFromString(html, 'text/html')))
+            .fail((xhr) => reject(new Error('HTTP ' + (xhr && xhr.status))));
+    });
+    wallPageCache.set(url, p);
+    p.catch(() => wallPageCache.delete(url));
+    while (wallPageCache.size > 4) wallPageCache.delete(wallPageCache.keys().next().value);
+    return p;
+}
+
+// Step relative to the page you're heading to, so quick presses add up while one loads
+function wallStepPage(delta) {
+    const pg = wall && wall.pager;
+    if (pg) wallGoToPage((wall.pageTarget || pg.cur) + delta);
+}
+
+function wallGoToPage(n) {
+    const pg = wall && wall.pager;
+    if (!pg) return;
+    n = Math.max(1, Math.min(pg.last, n));
+    wall.pageTarget = n === pg.cur ? 0 : n;
+    if (wall.pageBusy) { wallUpdatePager(); return; }   // picked up when the current load finishes
+    if (n === pg.cur) { wallUpdatePager(); return; }
+    const url = wallPageUrl(n);
+    wall.pageBusy = true;
+    wallUpdatePager();
+    wallToast(`Loading page ${n.toLocaleString()}…`);
+    const token = wall;
+    wallFetchPage(url).then(doc => {
+        if (wall !== token) return;
+        wall.pageBusy = false;
+        // Pressed further while this page was loading: skip straight to where you're heading
+        if (wall.pageTarget && wall.pageTarget !== n) { const t = wall.pageTarget; wall.pageTarget = 0; wallGoToPage(t); return; }
+        wall.pageTarget = 0;
+        const collected = wallCollectItems(doc);
+        if (!collected.stats.rows) {
+            wallToast(`Page ${n.toLocaleString()} has no torrents (or couldn't be read) — staying here.`);
+            wallUpdatePager();
+            return;
+        }
+        wallResetForPage();
+        wall.all = collected.items;
+        wall.stats = collected.stats;
+        wall.loading = collected.items.length;
+        wall.pager = wallPagerInfo(doc, url) || { cur: n, last: Math.max(n, pg.last), base: pg.base };
+        wallUpdatePager();
+        wall.$root.find('.vw-toast').removeClass('vw-show');
+        wallBeginLoad();
+    }).catch(err => {
+        if (wall !== token) return;
+        wall.pageBusy = false;
+        wall.pageTarget = 0;
+        wallUpdatePager();
+        console.error(`${LOG_PREFIX} Poster Wall: could not load page ${n}`, err);
+        wallToast(`Couldn't load page ${n.toLocaleString()} (${err.message}). Are you still logged in?`);
+    });
+}
+
+function wallPromptPage() {
+    const pg = wall && wall.pager;
+    if (!pg) return;
+    const v = prompt(`Go to page (1–${pg.last.toLocaleString()}):`, String(pg.cur));
+    const n = parseInt(String(v || '').replace(/[^0-9]/g, ''), 10);
+    if (n) wallGoToPage(n);
+}
+
+// Clear the wall for another page (downloads still running finish quietly)
+function wallResetForPage() {
+    wall.session = ++wallSession;
+    wall.ready = false;
+    cancelAnimationFrame(wall.raf);
+    wall.raf = 0;
+    clearTimeout(wall.rebuildTimer);
+    wall.rebuildTimer = 0;
+    clearTimeout(wall.liveTimer);
+    clearTimeout(wall.prefetchTimer);
+    wallClosePicker();
+    wall.cells.forEach(el => {
+        wallDetachLive(el);
+        el.style.display = 'none';
+        el.dataset.idx = '';
+        el.classList.remove('vw-focus');
+        wall.pool.push(el);
+    });
+    wall.cells.clear();
+    wall.focusEl = null;
+    wall.focusKey = '';
+    if (wall.ld) wall.ld.jobs.forEach(job => { if (job.thumb) wallFreeThumb(job.thumb); job.thumb = null; });
+    wall.ld = null;
+    wall.items = []; wall.N = 0;
+    wall.broken = wall.placeholder = wall.unavailable = wall.dupGrouped = 0;
+    wall.vx = wall.vy = wall.wheelX = wall.wheelY = 0;
+    wall.tween = null; wall.drag = null;
+    wall.$root.find('.vw-empty, .vw-loading').remove();
+    wall.$root.find('.vw-info').removeClass('vw-show');
+    wall.$root.find('.vw-count').text('');
+    wall.$root.append(WALL_LOADING_HTML);
+}
+
+// After a page is up: quietly fetch the next page's list (not its images) so Next is instant
+function wallAfterStart() {
+    const pg = wall && wall.pager;
+    clearTimeout(wall.prefetchTimer);
+    if (!pg || pg.cur >= pg.last) return;
+    const session = wall.session, next = wallPageUrl(pg.cur + 1);
+    wall.prefetchTimer = setTimeout(() => {
+        if (wall && wall.session === session) wallFetchPage(next).catch(() => {});
+    }, WALL_PREFETCH_DELAY_MS);
 }
 
 // ── Notice: resource use, where images come from, auto-close ──
@@ -1482,6 +1652,11 @@ function wallOnKey(e) {
         return;
     }
     if (k === 'Escape') { e.preventDefault(); closePosterWall(); return; }
+    if (wall.pager && (k === '[' || k === ']')) {   // page keys work even while a page is loading
+        e.preventDefault();
+        wallStepPage(k === ']' ? 1 : -1);
+        return;
+    }
     if (!wall.ready) return;
     if      (k === 'ArrowLeft')  { e.preventDefault(); wallStepFocus(-1, 0); }
     else if (k === 'ArrowRight') { e.preventDefault(); wallStepFocus(1, 0); }
@@ -1512,6 +1687,9 @@ function wallBindEvents() {
         const act = this.getAttribute('data-act');
         if      (act === 'close')    closePosterWall();
         else if (act === 'notice')   wallShowNotice(true);
+        else if (act === 'prev')     wallStepPage(-1);
+        else if (act === 'next')     wallStepPage(1);
+        else if (act === 'page')     wallPromptPage();
         else if (!wall.ready && act !== 'fit' && act !== 'edge' && act !== 'aspect') return;
         else if (act === 'zoom-in')  wallZoom(1);
         else if (act === 'zoom-out') wallZoom(-1);

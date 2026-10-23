@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Viewer Settings overlay and the nav-bar buttons (Grid/List, Wall, Viewer)
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.17
+// Version 3.18
 
 // --------------------
 // SETTINGS OVERLAY — BUILD & INJECT

@@ -4,6 +4,13 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.18 - 2026-10-23
+- Poster Wall pagination: on paged lists, the toolbar shows "‹ Page 2 of 1,672 ›". Use the arrows or the [ and ] keys to load the previous / next page into the wall, or click the page label to jump to any page. Search filters and sorting are kept.
+- Quick presses add up: pressing ] three times moves three pages, even while a page is still loading.
+- While you browse a page, the next page's list (not its images) is fetched quietly in the background, so Next is instant.
+- Closing the wall after paging takes you to the page you were viewing; closing without paging leaves you where you were.
+- Pages without pagination (e.g. top-10 lists) don't show the page controls.
+
 ## v3.17 - 2026-10-23
 - Animated posters (GIF / WebP) on screen now play by themselves once scrolling stops — no need to hover them. Posters that leave the screen stop and release the image. Turn it off in Viewer Settings → Poster Wall ("Play Animated Posters") or press P on the wall.
 - Fixed the remaining aborted image requests (NS_BINDING_ABORTED): images still downloading are no longer dropped by the browser's memory cleanup, including when the wall is closed mid-load, and an animated poster that scrolls away while still loading is left to finish instead of being cancelled.
