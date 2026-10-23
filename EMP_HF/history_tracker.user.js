@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         History Tracker
-// @version      2.8
+// @version      2.9
 // @description  Remembers the torrent pages you open and the searches you run (stored locally in Tampermonkey), marks torrents you've already visited, keeps a searchable search history and, optionally, each torrent's presentation as BBCode
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -75,6 +75,7 @@
         presentationVersions: 10,     // 'every' mode: copies kept per torrent
         presentationMaxTorrents: 300, // presentations kept for this many most recently visited torrents (0 = no limit)
         dedupeSeconds: 30,            // a reload of the same page within this many seconds isn't counted again
+        logLevel: 'warn',             // console output: 'off' | 'error' | 'warn' | 'info' | 'debug'
     };
     var SETTINGS_KEY_PREFIX = 'ht_setting_';
 
@@ -87,6 +88,27 @@
         if (typeof GM_setValue === 'undefined') return;
         GM_setValue(SETTINGS_KEY_PREFIX + name, value);
     }
+
+    // ── Logging ──────────────────────────────────────────────────────────────
+    // Same prefix as Advanced Viewer Experience, so all of these scripts' console output can be filtered on "[TM]".
+    // Level is set in 🕘 History → Settings & data; messages above it are dropped.
+
+    const LOG_PREFIX = '[TM]';
+    var LOG_SOURCE = 'History Tracker:';
+    var LOG_LEVELS = { off: 0, error: 1, warn: 2, info: 3, debug: 4 };
+    var logLevelNow = LOG_LEVELS[getSetting('logLevel')];
+    if (logLevelNow === undefined) logLevelNow = LOG_LEVELS.warn;
+
+    function logAt(level, method, args) {
+        if (logLevelNow < level) return;
+        console[method].apply(console, [LOG_PREFIX, LOG_SOURCE].concat(Array.prototype.slice.call(args)));
+    }
+    var log = {
+        error: function () { logAt(1, 'error', arguments); },
+        warn: function () { logAt(2, 'warn', arguments); },
+        info: function () { logAt(3, 'info', arguments); },
+        debug: function () { logAt(4, 'debug', arguments); },
+    };
 
     // ── Sites ────────────────────────────────────────────────────────────────
 
@@ -118,7 +140,7 @@
     var ZOOM_MARGIN = 16;
 
     var SCRIPT_NAME = 'History Tracker';
-    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '2.8';
+    var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '2.9';
 
     // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -458,6 +480,8 @@
             return e;
         });
         appendLog([visit.id, now, 't', tid, 0]);
+        var e = torrents().get(tid);
+        log.info('Recorded torrent visit #' + tid + ' "' + title + '" (visit ' + (e ? e.c : 1) + ')' + (cover ? '' : ' — no cover found'));
         return visit;
     }
 
@@ -476,6 +500,7 @@
             return e;
         });
         appendLog([visit.id, now, 's', info.key, 0]);
+        log.info('Recorded search "' + info.label + '"' + (visit.prev ? ' (run ' + (visit.prev.c + 1) + ')' : ' (first time)'), info.key);
         return visit;
     }
 
@@ -497,6 +522,7 @@
                 return e;
             });
             updateLog(visit.id, visit.ts, function (row) { row[4] = sec; });
+            log.debug('Time on page for #' + tid + ': ' + fmtDur(sec));
         }
         document.addEventListener('visibilitychange', function () {
             if (document.visibilityState === 'hidden') save();
@@ -854,10 +880,10 @@
 
     function savePresentation(tid, now) {
         var box = document.getElementById('descbox');
-        if (!box) return;
+        if (!box) { log.debug('No #descbox on this page — presentation not saved'); return; }
         var text;
-        try { text = presentationToBBCode(box); } catch (e) { console.warn('[History Tracker] presentation → BBCode failed', e); return; }
-        if (!text || !text.trim()) return;
+        try { text = presentationToBBCode(box); } catch (e) { log.warn('Presentation → BBCode failed for #' + tid, e); return; }
+        if (!text || !text.trim()) { log.debug('Presentation of #' + tid + ' is empty — not saved'); return; }
         var h = hashText(text);
         var key = KEY.pres + tid;
         var arr = readPresentations(tid);
@@ -865,6 +891,7 @@
         if (lastV && lastV.h === h) {           // unchanged since the last saved copy: just note we saw it again
             lastV.l = now;
             GM_setValue(key, arr);
+            log.debug('Presentation of #' + tid + ' unchanged since ' + fmtDateTime(lastV.t));
             return;
         }
         encodeText(text).then(function (enc) {
@@ -878,8 +905,10 @@
                 list = [v];
             }
             GM_setValue(key, list);
+            log.info('Saved presentation of #' + tid + ': ' + fmtBytes(text.length) + ' of BBCode, stored as ' +
+                fmtBytes(enc.d.length) + (enc.z ? ' (gzip)' : ' (uncompressed)') + ' · ' + list.length + ' cop' + (list.length === 1 ? 'y' : 'ies') + ' kept');
             prunePresentations(tid);
-        });
+        }).catch(function (e) { log.error('Saving the presentation of #' + tid + ' failed', e); });
     }
 
     /** keep presentations only for the N most recently seen torrents */
@@ -894,14 +923,18 @@
             return [k, last];
         }).filter(function (x) { return x[0] !== KEY.pres + keepId; });
         dated.sort(function (a, b) { return a[1] - b[1]; });
-        dated.slice(0, keys.length - max).forEach(function (x) { GM_deleteValue(x[0]); });
+        var drop = dated.slice(0, keys.length - max);
+        drop.forEach(function (x) { GM_deleteValue(x[0]); });
+        log.info('Removed ' + drop.length + ' old saved presentation(s) (keeping the ' + max + ' most recent torrents)');
     }
 
     function copyText(text, what) {
         try {
             GM_setClipboard(text, 'text');
             showToast('📋 ' + (what || 'BBCode') + ' copied', fmtBytes(text.length) + ' of text');
+            log.info('Copied ' + (what || 'BBCode') + ' (' + fmtBytes(text.length) + ')');
         } catch (e) {
+            log.error('Copy to clipboard failed', e);
             showToast('Copy failed', e.message);
         }
     }
@@ -910,7 +943,7 @@
         var arr = readPresentations(tid, g);
         if (!arr.length) { showToast('No presentation saved for this torrent'); return; }
         decodeVersion(arr[arr.length - 1]).then(function (t) { copyText(t, 'Presentation BBCode'); })
-            .catch(function () { showToast('Couldn\'t read the saved presentation'); });
+            .catch(function (e) { log.error('Reading the saved presentation of #' + tid + ' failed', e); showToast('Couldn\'t read the saved presentation'); });
     }
 
     // ── BBCode → preview ─────────────────────────────────────────────────────
@@ -1393,11 +1426,17 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 
     function markLinks() {
         if (!getSetting('markVisited')) return;
+        var seen = 0;
+        var total = 0;
         document.querySelectorAll('a[href*="torrents.php"]').forEach(function (a) {
             if (isOurs(a)) return;
             var id = linkTorrentId(a);
-            if (id && id !== CURRENT_TORRENT) markLink(a, id);
+            if (!id || id === CURRENT_TORRENT) return;
+            total++;
+            if (torrents().has(id)) seen++;
+            markLink(a, id);
         });
+        log.debug('Marked ' + seen + ' of ' + total + ' torrent links as visited');
     }
 
     // ── Hiding visited torrents from lists ───────────────────────────────────
@@ -1438,8 +1477,13 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             var hide = visited && !showVisitedThisPage;
             if (item.classList.contains('ht-hidden-visited') !== hide) item.classList.toggle('ht-hidden-visited', hide);
         });
+        if (hiddenIds.size !== lastHiddenCount) {
+            lastHiddenCount = hiddenIds.size;
+            log.debug((showVisitedThisPage ? 'Showing ' : 'Hiding ') + hiddenIds.size + ' visited torrent(s) in lists');
+        }
         updateHidePill(hiddenIds.size);
     }
+    var lastHiddenCount = -1;
 
     /** small switch at the bottom left: how many are hidden, and show / hide them on this page */
     function updateHidePill(n) {
@@ -1447,6 +1491,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             hidePill = el('button', { type: 'button', className: 'ht-hidepill', 'data-ht-ui': '' });
             hidePill.addEventListener('click', function () {
                 showVisitedThisPage = !showVisitedThisPage;
+                log.info(showVisitedThisPage ? 'Showing visited torrents on this page' : 'Hiding visited torrents again');
                 applyHiding();
             });
             document.body.appendChild(hidePill);
@@ -1497,6 +1542,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             (function (shard) {
                 GM_addValueChangeListener(KEY.shard + shard, function (name, oldV, newV, remote) {
                     if (!remote) return;
+                    log.debug('Another tab recorded a visit (shard ' + shard + ') — updating marks');
                     refreshShard(shard);
                     remarkSoon();
                 });
@@ -2221,15 +2267,28 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             'Presentations are stored compressed (about a quarter of their size). Tampermonkey loads all of this script\'s storage on every page, ' +
             'so keep the total under a few MB — the limit above keeps it in check.' }));
 
+        body.appendChild(el('div', { className: 'ht-label', text: 'Advanced' }));
+        var logSel = el('select');
+        [['off', 'Off'], ['error', 'Errors only'], ['warn', 'Warnings and errors (default)'], ['info', 'Info — what was recorded and saved'], ['debug', 'Debug — everything']].forEach(function (o) {
+            var opt = el('option', { value: o[0], text: o[1] });
+            if ((getSetting('logLevel') || 'warn') === o[0]) opt.selected = true;
+            logSel.appendChild(opt);
+        });
+        body.appendChild(el('div', { className: 'ht-grid' }, [
+            el('label', { className: 'ht-field' }, [el('span', { text: 'Console logging (browser dev tools, messages start with ' + LOG_PREFIX + ')' }), logSel]),
+        ]));
+
         var save = el('button', { type: 'button', className: 'ht-ok', text: 'Save & reload' });
         save.addEventListener('click', function () {
             Object.keys(boxes).forEach(function (k) { setSetting(k, boxes[k].checked); });
+            setSetting('logLevel', logSel.value);
             setSetting('markStyle', styleSel.value);
             setSetting('presentationMode', modeSel.value);
             [[dedupe, 'dedupeSeconds'], [versions, 'presentationVersions'], [maxT, 'presentationMaxTorrents']].forEach(function (x) {
                 var n = parseInt(x[0].input.value, 10);
                 setSetting(x[1], isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS[x[1]]);
             });
+            log.info('Settings saved — reloading');
             location.reload();
         });
         body.appendChild(el('div', { className: 'ht-buttons', style: 'justify-content:flex-end' }, [save]));
@@ -2288,6 +2347,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         document.body.appendChild(a);
         a.click();
         setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        log.info('Exported ' + Object.keys(values).length + ' storage entries');
     }
 
     /** old "[HF] Visit Tracker" 2.0 export keys → History Tracker keys (that script was HappyFappy only) */
@@ -2304,8 +2364,9 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         var reader = new FileReader();
         reader.onload = function () {
             var data;
-            try { data = JSON.parse(reader.result); } catch (e) { alert('That file isn\'t valid JSON.'); return; }
+            try { data = JSON.parse(reader.result); } catch (e) { log.error('Import: not valid JSON', e); alert('That file isn\'t valid JSON.'); return; }
             if (!data || !data.values || typeof data.values !== 'object' || (data.app !== 'history-tracker' && data.app !== 'hf-visit-tracker')) {
+                log.error('Import: not a History Tracker export', data && data.app);
                 alert('That isn\'t a History Tracker export.');
                 return;
             }
@@ -2331,8 +2392,10 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
                 if (m && groups[m[1]] && DATA_KEY_RE.test(k)) GM_deleteValue(k);
             });
             Object.keys(values).forEach(function (k) { GM_setValue(k, values[k]); });
+            log.info('Imported ' + nT + ' torrents and ' + nS + ' searches (' + names.join(' + ') + ')' + (data.app === 'hf-visit-tracker' ? ' from an old [HF] Visit Tracker export' : ''));
             location.reload();
         };
+        reader.onerror = function () { log.error('Import: couldn\'t read the file', reader.error); };
         reader.readAsText(f);
     }
 
@@ -2345,6 +2408,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         if (uls.length) {
             uls[uls.length - 1].appendChild(el('li', { id: 'nav_ht', 'data-ht-ui': '' }, [a]));
         } else {
+            log.info('No #menu on this page — showing the History button at the bottom left instead');
             var b = el('button', { type: 'button', className: 'ht-navfloat', 'data-ht-ui': '', text: '🕘 History' });
             b.addEventListener('click', function () { openHistory('searches'); });
             document.body.appendChild(b);
@@ -2445,6 +2509,14 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
             ontimeout: function () { callback(null, 'Timed out fetching changelog'); },
         });
     }
+    // log every failed changelog fetch once, wherever it was asked for
+    var fetchChangelogRaw = fetchChangelog;
+    fetchChangelog = function (callback) {
+        fetchChangelogRaw(function (entries, err) {
+            if (err) log.warn('Couldn\'t load the changelog: ' + err);
+            callback(entries, err);
+        });
+    };
 
     function injectChangelogStyle() {
         if (document.getElementById('ht-cl-style')) return;
@@ -2620,6 +2692,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
                 if (!toShow.length && available.length) toShow = [available[0]];
             }
             if (!toShow.length) return;
+            log.info('Updated ' + (lastVersion ? 'from v' + lastVersion + ' ' : '') + 'to v' + SCRIPT_VERSION + ' — showing what\'s new');
             openChangelog();
             renderChangelogBody(toShow, null, currentIdx > 0 ? entries[0].version : null);
         });
@@ -2662,6 +2735,9 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
         var dedupeMs = (parseInt(getSetting('dedupeSeconds'), 10) || 0) * 1000;
         var isReload = !!(last && last.u === norm && now - last.ts < dedupeMs);
         if (info.type === 'torrent' || info.type === 'search') GM_setValue(KEY.last, { u: norm, ts: now });
+        log.debug('v' + SCRIPT_VERSION + ' on ' + GROUP_NAMES[GROUP] + ' (' + HOST + ') — page type: ' + info.type +
+            (info.torrent_id ? ' #' + info.torrent_id : '') + (info.key ? ' "' + info.key + '"' : ''));
+        if (isReload) log.debug('Reload of the same page within ' + (dedupeMs / 1000) + 's — not counted as a new visit');
 
         if (info.type === 'torrent') {
             var tid = info.torrent_id;

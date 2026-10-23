@@ -4,6 +4,11 @@ All notable changes to History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v2.9 - 2026-10-23
+- Console logging with a level setting (🕘 History → Settings & data → Advanced): Off, Errors only, Warnings and errors (default), Info, or Debug.
+- Messages start with the same "[TM]" prefix as Advanced Viewer Experience, followed by "History Tracker:", so you can filter all the scripts' output together or this one alone.
+- Info shows what was recorded and saved (visits, searches, presentations with their stored size, imports / exports); Debug adds page detection, reload skipping, time on page, link marking, hiding counts and updates from other tabs.
+
 ## v2.8 - 2026-10-23
 - New option: hide torrents you've already opened from the site's lists — search results, notifications, top 10, user pages, user history and collages. Turn it on in 🕘 History → Settings & data or from the Tampermonkey menu ("Hide Visited Torrents in Lists"). Off by default.
 - Works in both list and grid view of Advanced Viewer Experience, including when you switch between them: visited cards are hidden as soon as they're built.

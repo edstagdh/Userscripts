@@ -5,3 +5,4 @@ config*.json
 
 !/.pixeldrain_L_folder_bypasser.js
 !/SC/*
+!/Telegram/example_consumer.user.js
