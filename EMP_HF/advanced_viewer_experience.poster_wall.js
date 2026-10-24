@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Poster Wall: full-screen endless poster grid
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.18
+// Version 3.19
 
 // --------------------
 // POSTER WALL — endless 2D grid (Kaleidescape-style)
@@ -90,6 +90,128 @@ const WALL_SLOTS = [
 ];
 const WALL_THUMB_BUDGET_PX = 40e6;   // small copies kept in memory (~160 MB); oldest off-screen ones are dropped
 
+// ── Light first, heavy last ──
+// Within the same priority tier, still images (JPG / PNG / still WebP) download before
+// heavy ones (animated WebP / GIF), so more posters appear sooner. Whether a WebP is
+// animated is read from its first 32 bytes (a range request — the "VP8X" header has an
+// animation flag); a GIF is assumed heavy. Heavy downloads are limited per host so they
+// can't fill every slot while still images are waiting.
+const WALL_HEAVY_PER_HOST  = 2;
+const WALL_PROBE_PARALLEL  = 6;
+const WALL_PROBE_BYTES     = 32;
+const WALL_PROBE_WAIT_MS   = 600;    // an unchecked WebP gives way to other images this long
+const WALL_PROBE_BAD_DAYS  = 7;      // hosts that don't allow the check are skipped this long
+const wallProbeCache = new Map();    // absolute src -> 'still' | 'anim' (kept across pages and opens)
+// host -> failures (no CORS / no range support): stop probing after 2. Remembered for a week.
+const wallProbeBadHost = {};
+const wallProbeHostOk  = {};         // host -> true once a check has worked there
+try {
+    const saved = JSON.parse(GM_getValue('WALL_PROBE_BAD_HOSTS', '{}')) || {};
+    Object.keys(saved).forEach(h => { if (Date.now() - saved[h] < WALL_PROBE_BAD_DAYS * 864e5) wallProbeBadHost[h] = 2; });
+} catch (e) { /* ignore */ }
+function wallMarkProbeBad(host, hard) {
+    wallProbeBadHost[host] = hard ? 2 : (wallProbeBadHost[host] || 0) + 1;
+    if (wallProbeBadHost[host] < 2) return;
+    try {
+        const saved = JSON.parse(GM_getValue('WALL_PROBE_BAD_HOSTS', '{}')) || {};
+        saved[host] = Date.now();
+        GM_setValue('WALL_PROBE_BAD_HOSTS', JSON.stringify(saved));
+    } catch (e) { /* ignore */ }
+}
+
+// 0 = light (still), 1 = unknown (WebP not checked yet), 2 = heavy (animated)
+function wallJobWeight(job) {
+    if (job.kind === 'still') return 0;
+    if (job.kind === 'anim' || job.kind === 'gif') return 2;
+    return job.kind === 'webp' ? 1 : 0;
+}
+
+function wallJobKind(src) {
+    const ext = (String(src).split(/[?#]/)[0].match(/\.([a-z0-9]+)$/i) || [])[1];
+    const e = ext ? ext.toLowerCase() : '';
+    if (e === 'gif') return 'gif';
+    if (e === 'webp') return wallProbeCache.get(wallAbsUrl(src)) || 'webp';
+    return 'still';
+}
+
+// Read the first bytes of every unchecked WebP (a few at a time) to learn if it's animated
+function wallProbeStart() {
+    const ld = wall.ld, session = wall.session;
+    ld.probeQueue = [];
+    ld.probing = 0;
+    // On-screen posters first, then page order
+    const jobs = [...ld.jobs.values()].filter(j => j.kind === 'webp');
+    jobs.sort((a, b) => (ld.firstView.has(b) - ld.firstView.has(a)) || (a.order - b.order));
+    ld.probeQueue = jobs;
+    const waitUntil = performance.now() + WALL_PROBE_WAIT_MS;
+    jobs.forEach(j => { if ((wallProbeBadHost[j.host] || 0) < 2) j.probeWait = waitUntil; });
+    setTimeout(() => { if (wall && wall.session === session) wallPump(); }, WALL_PROBE_WAIT_MS + 20);
+    const perHost = {};
+    const next = () => {
+        if (!wall || wall.session !== session) return;
+        for (let k = 0; k < ld.probeQueue.length && ld.probing < WALL_PROBE_PARALLEL; ) {
+            const job = ld.probeQueue[k];
+            if (job.kind !== 'webp' || job.state === 'failed' || (wallProbeBadHost[job.host] || 0) >= 2) {
+                job.probeWait = 0;
+                ld.probeQueue.splice(k, 1);
+                continue;
+            }
+            // A host not confirmed yet gets one trial probe at a time, so a host that
+            // doesn't allow the check costs a single failed request, not a burst
+            if (!wallProbeHostOk[job.host] && (perHost[job.host] || 0) >= 1) { k++; continue; }
+            ld.probeQueue.splice(k, 1);
+            ld.probing++;
+            perHost[job.host] = (perHost[job.host] || 0) + 1;
+            wallProbeWebp(job.src, job.host).then(kind => {
+                ld.probing--;
+                perHost[job.host]--;
+                job.probeWait = 0;
+                if (!wall || wall.session !== session) return;
+                if (kind && job.kind === 'webp') {
+                    job.kind = kind;
+                    if (job.state === 'queued') wallPump();
+                    else if (kind === 'still' && job.state === 'done') wallScheduleLive();   // stop playing a still image
+                }
+                next();
+            });
+        }
+    };
+    next();
+}
+
+function wallProbeWebp(src, host) {
+    const abs = wallAbsUrl(src);
+    if (wallProbeCache.has(abs)) return Promise.resolve(wallProbeCache.get(abs));
+    // No timeout: a slow check just waits (the image loads meanwhile) — cancelling it
+    // would only add an aborted request to the console
+    const fail = () => { wallMarkProbeBad(host, !wallProbeHostOk[host]); return null; };
+    return fetch(abs, {
+        headers: { Range: `bytes=0-${WALL_PROBE_BYTES - 1}` },
+        mode: 'cors', credentials: 'omit', referrerPolicy: 'strict-origin-when-cross-origin',
+        // Ask the host itself (not the browser cache, which answers ranges for any host),
+        // so the one trial request tells whether the host really supports this check
+        cache: 'no-store',
+    }).then(res => {
+        if (res.status !== 206) {
+            // Host ignored the range and is sending the whole file: stop it, don't probe this host again
+            if (res.body && res.body.cancel) res.body.cancel().catch(() => {});
+            wallMarkProbeBad(host, true);
+            return null;
+        }
+        return res.arrayBuffer().then(buf => {
+            wallProbeHostOk[host] = true;
+            const b = new Uint8Array(buf);
+            const tag = (o) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+            if (b.length < 21 || tag(0) !== 'RIFF' || tag(8) !== 'WEBP') return null;
+            const chunk = tag(12);
+            const kind = chunk === 'VP8X' ? ((b[20] & 0x02) ? 'anim' : 'still')
+                       : (chunk === 'VP8 ' || chunk === 'VP8L') ? 'still' : null;
+            if (kind) wallProbeCache.set(abs, kind);
+            return kind;
+        });
+    }).catch(fail);
+}
+
 function wallHost(src) {
     try { return new URL(src, location.href).host; } catch (e) { return ''; }
 }
@@ -99,20 +221,27 @@ function wallLoaderInit(candidates) {
     candidates.forEach(item => {
         let job = jobs.get(item.absSrc);
         if (!job) {
-            job = { src: item.src, host: wallHost(item.src), state: 'queued', items: [],
+            job = { src: item.src, host: wallHost(item.src), kind: wallJobKind(item.src), state: 'queued', items: [],
                     thumb: null, tw: 0, th: 0, w: 0, h: 0, verified: false, lastUse: 0, order: jobs.size };
             jobs.set(item.absSrc, job);
         }
         job.items.push(item);
         item.job = job;
     });
-    wall.ld = { jobs, active: 0, perHost: {}, thumbPx: 0, viewJobs: new Set(), nearJobs: new Set(), dist: new Map(),
+    wall.ld = { jobs, active: 0, perHost: {}, heavyPerHost: {}, thumbPx: 0, viewJobs: new Set(), nearJobs: new Set(), dist: new Map(),
                 firstView: new Set(), settledJobs: 0, rangeKey: '' };
 }
 
 // Pixel size of a poster's drawing surface
 function wallCellPx() {
     const dpr = window.devicePixelRatio || 1;
+    if (!wall.ready) {
+        // Layout not settled yet (images loading before the wall or a new page opens): size for the
+        // tallest cell shape at the current zoom, so the copy is never too small
+        const pw = window.innerWidth / WALL_COLS_VISIBLE, gap = Math.max(6, Math.round(pw * 0.045));
+        const tallest = WALL_ASPECT === 'auto' ? WALL_ASPECTS.portrait : wallAspect();
+        return { cw: Math.max(1, Math.round((pw - gap) * dpr)), ch: Math.max(1, Math.round(((pw - gap) / tallest) * dpr)) };
+    }
     return { cw: Math.max(1, Math.round((wall.pw - wall.gap) * dpr)), ch: Math.max(1, Math.round((wall.ph - wall.gap) * dpr)) };
 }
 
@@ -124,8 +253,11 @@ function wallJobRank(job) {
     return 2;
 }
 
-// Same priority tier: the poster nearest the middle of the screen first, then page order
+// Same priority tier: lighter images first, then the poster nearest the middle of the
+// screen, then page order
 function wallJobBefore(a, b) {
+    const wa = wallJobWeight(a), wb = wallJobWeight(b);
+    if (wa !== wb) return wa < wb;
     const dist = wall.ld.dist, da = dist.has(a) ? dist.get(a) : 1e9, db = dist.has(b) ? dist.get(b) : 1e9;
     return da !== db ? da < db : a.order < b.order;
 }
@@ -134,15 +266,32 @@ function wallPump() {
     if (!wall || !wall.ld) return;
     const ld = wall.ld;
     for (;;) {
+        // Hosts that still have light images waiting near the screen
+        const lightWaiting = {};
+        ld.jobs.forEach(job => {
+            if (job.state === 'queued' && wallJobWeight(job) < 2 && wallJobRank(job) <= 1) lightWaiting[job.host] = true;
+        });
+        const now = performance.now();
+        const pick = (allowWaiting) => {
         let best = null, bestRank = 9;
         ld.jobs.forEach(job => {
             if (job.state !== 'queued') return;
+            // WebP still being checked: let other images go first for a moment
+            if (!allowWaiting && job.probeWait && now < job.probeWait) return;
             const r = wallJobRank(job);
             // A dropped or outgrown small copy is only rebuilt when it's needed near the screen
             if (job.reloadWhenNear && r > 1) return;
             if (ld.active >= WALL_SLOTS[r].all || (ld.perHost[job.host] || 0) >= WALL_SLOTS[r].host) return;
+            // Heavy images: a few per host, so light ones always find a free slot. An
+            // all-animated screen may use more slots once nothing light is waiting there.
+            if (wallJobWeight(job) === 2 && (ld.heavyPerHost[job.host] || 0) >= WALL_HEAVY_PER_HOST &&
+                (r > 0 || lightWaiting[job.host])) return;
             if (!best || r < bestRank || (r === bestRank && wallJobBefore(job, best))) { best = job; bestRank = r; }
         });
+        return best;
+        };
+        // Never leave a slot idle: if only waiting WebPs are left, start them anyway
+        const best = pick(false) || pick(true);
         if (!best) return;
         wallStartJob(best);
     }
@@ -153,6 +302,8 @@ function wallStartJob(job) {
     job.state = 'loading';
     ld.active++;
     ld.perHost[job.host] = (ld.perHost[job.host] || 0) + 1;
+    const heavy = wallJobWeight(job) === 2;
+    if (heavy) ld.heavyPerHost[job.host] = (ld.heavyPerHost[job.host] || 0) + 1;
     const img = new Image();
     img.decoding = 'async';
     wallInflight.add(img);
@@ -164,6 +315,7 @@ function wallStartJob(job) {
         if (!wall || wall.session !== session) return;
         ld.active--;
         ld.perHost[job.host]--;
+        if (heavy) ld.heavyPerHost[job.host]--;
         wallPump();
     };
     img.onerror = () => { releaseSlot(); if (wall && wall.session === session) wallJobFailed(job, 'broken'); };
@@ -667,6 +819,7 @@ function wallBeginLoad() {
         viewIdx.push((((i + j * S0) % candidates.length) + candidates.length) % candidates.length);
     }
     viewIdx.forEach(k => ld.firstView.add(candidates[k].job));
+    wallProbeStart();
 
     const startNow = () => {
         if (started || !wall || wall.session !== session) return;
@@ -1137,7 +1290,9 @@ function wallRedrawJob(job, fade) {
 // image may be animated (GIF / WebP) show the original on top while scrolling is at
 // rest. Off-screen posters drop it again. Still images never need the original.
 function wallIsAnimCandidate(item) {
-    return !!item && WALL_ANIM_RE.test(item.src);
+    if (!item || !WALL_ANIM_RE.test(item.src)) return false;
+    // A WebP checked and found to be still has nothing to play
+    return !(item.job && item.job.kind === 'still');
 }
 
 function wallScheduleLive() {
