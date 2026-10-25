@@ -2,14 +2,19 @@
 // @name        [Pornolab] Advanced Viewer Experience
 // @description Adds a Grid/List toggle, image previews pulled from inside each topic, download buttons, forum & uploader blacklist/favorites with glow highlighting, and a settings panel to Pornolab's tracker search results.
 // @namespace   https://github.com/edstagdh/Userscripts
-// @version     1.4
+// @version     1.5
 // @author      edstagdh
 // @match       https://pornolab.net/forum/tracker.php*
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=pornolab.net
 // @updateURL   https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PLAB/plab_advanced_viewer.user.js
 // @installURL  https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PLAB/plab_advanced_viewer.user.js
-// @require     https://code.jquery.com/jquery-2.1.1.js
+// @require     https://code.jquery.com/jquery-2.1.1.min.js
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PLAB/plab_advanced_viewer.settings.js?v=1.5
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PLAB/plab_advanced_viewer.gallery.js?v=1.5
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PLAB/plab_advanced_viewer.changelog.js?v=1.5
+// @resource    PLAB_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PLAB/plab_advanced_viewer.styles.css?v=1.5
 // @grant       GM_addStyle
+// @grant       GM_getResourceText
 // @grant       GM_setValue
 // @grant       GM_getValue
 // @grant       GM_registerMenuCommand
@@ -19,20 +24,22 @@
 
 "use strict";
 
+// Code is split across files (all in PLAB/, cached by Tampermonkey, refreshed on each
+// version bump through the ?v= on their URLs):
+//   plab_advanced_viewer.settings.js    settings overlay + nav buttons
+//   plab_advanced_viewer.gallery.js     gallery (grid) view
+//   plab_advanced_viewer.changelog.js   "What's New" popup
+//   plab_advanced_viewer.styles.css     all CSS
+// When bumping @version, update the ?v= on those @require / @resource lines too.
+
 this.$ = this.jQuery = jQuery.noConflict(true);
 
 const LOG_PREFIX = '[PL-VIEWER]';
 
 // --------------------
-// VERSION / CHANGELOG
+// VERSION
 // --------------------
-const SCRIPT_VERSION = '1.4';
-
-// Changelog is no longer stored inline (kept the script file lean) — it's fetched
-// on demand from this repo's CHANGELOG.md, either when the version changes or when
-// the user manually requests it via the GM menu command.
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/PLAB/Changelog.md';
-let changelogCache = null; // parsed [{version, changes:[...]}] once fetched this session
+const SCRIPT_VERSION = '1.5';
 
 // --------------------
 // CONFIG DEFAULTS
@@ -46,6 +53,7 @@ const DEFAULTS = {
     FETCH_CONCURRENCY_LIMIT: 4,        // max simultaneous topic-page fetches
     FETCH_STAGGER_MS:        120,      // delay (ms) between dequeuing new requests
     FETCH_TIMEOUT_MS:        12000,    // per-request timeout (ms) so a hung request can't jam the queue forever
+    REMEMBER_PREVIEWS:       true,     // keep found preview images between visits (no topic re-fetch)
 };
 const MIN_VALID_IMAGE_SIZE = 150; // px — reject tiny placeholder images found inside topics
 const FALLBACK_IMG = '//static.pornolab.net/templates/default/images/icon_minipost.gif';
@@ -61,6 +69,7 @@ let TABLE_THUMB_SIZE       = GM_getValue('TABLE_THUMB_SIZE',       DEFAULTS.TABL
 let FETCH_CONCURRENCY_LIMIT = GM_getValue('FETCH_CONCURRENCY_LIMIT', DEFAULTS.FETCH_CONCURRENCY_LIMIT);
 let FETCH_STAGGER_MS        = GM_getValue('FETCH_STAGGER_MS',        DEFAULTS.FETCH_STAGGER_MS);
 let FETCH_TIMEOUT_MS        = GM_getValue('FETCH_TIMEOUT_MS',        DEFAULTS.FETCH_TIMEOUT_MS);
+let REMEMBER_PREVIEWS       = GM_getValue('REMEMBER_PREVIEWS',       DEFAULTS.REMEMBER_PREVIEWS);
 
 function loadListSetting(key) {
     try {
@@ -92,275 +101,28 @@ const CAT_BADGE_BG   = GRID_DARK_MODE ? 'rgba(0,0,0,0.78)' : 'rgba(255,255,255,0
 const CAT_BADGE_COLOR= GRID_DARK_MODE ? '#e0e0e0' : '#333333';
 
 // --------------------
-// CSS
+// CSS — stylesheet (plab_advanced_viewer.styles.css, via @resource PLAB_STYLES)
+// Settings-dependent values are passed in as CSS variables.
 // --------------------
-GM_addStyle(`
-.viewer-gallery-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(${GALLERY_CARD_MIN_WIDTH}px, 1fr));
-    gap: 14px;
-    padding: 14px 0;
+(function loadStyles() {
+    let css = '';
+    try { css = GM_getResourceText('PLAB_STYLES') || ''; } catch (e) { /* handled below */ }
+    if (!css) console.error(`${LOG_PREFIX} Stylesheet resource PLAB_STYLES is missing — check the @resource line / reinstall the script.`);
+    GM_addStyle(`:root {
+    --plab-card-min-width: ${GALLERY_CARD_MIN_WIDTH}px;
+    --plab-card-bg: ${CARD_BG};
+    --plab-card-border: ${CARD_BORDER};
+    --plab-image-bg: ${IMAGE_BG};
+    --plab-cat-badge-bg: ${CAT_BADGE_BG};
+    --plab-cat-badge-color: ${CAT_BADGE_COLOR};
+    --plab-title-color: ${TITLE_COLOR};
+    --plab-title-hover: ${TITLE_HOVER};
+    --plab-footer-color: ${FOOTER_COLOR};
+    --plab-footer-border: ${FOOTER_BORDER};
+    --plab-time-color: ${TIME_COLOR};
 }
-.vg-card {
-    background: ${CARD_BG};
-    border: 1px solid ${CARD_BORDER};
-    border-radius: 7px;
-    overflow: visible;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    z-index: 1;
-    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.15s ease;
-}
-.vg-card:hover { border-color: #505050; transform: translateY(-3px); }
-.vg-card:hover:not(.vg-fav-match) { box-shadow: 0 8px 24px rgba(0,0,0,0.55); }
-.vg-img-wrap {
-    position: relative; overflow: hidden; background: ${IMAGE_BG};
-    height: 210px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.vg-img-wrap > a.vg-img-link {
-    display: flex; align-items: center; justify-content: center;
-    width: 100%; height: 100%; text-decoration: none;
-}
-.vg-img {
-    max-width: 100%; max-height: 210px; width: auto; height: auto;
-    object-fit: contain; display: block; transition: transform 0.25s ease;
-}
-.vg-card:hover .vg-img { transform: scale(1.04); }
-.vg-cat-badge { position: absolute; top: 7px; left: 7px; z-index: 3; pointer-events: auto; }
-.vg-cat-badge a {
-    display: inline-block; background: ${CAT_BADGE_BG}; color: ${CAT_BADGE_COLOR} !important;
-    font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
-    padding: 3px 7px; border-radius: 3px; text-decoration: none !important;
-    border: 1px solid rgba(255,255,255,0.1); transition: background 0.15s; white-space: nowrap;
-}
-.vg-cat-badge a:hover { background: rgba(40,40,40,0.92); }
-.vg-forum-fav-btn, .vg-forum-bl-btn {
-    background: rgba(0,0,0,0.55); border: none; color: #ddd; cursor: pointer;
-    font-size: 10px; line-height: 1; border-radius: 3px; padding: 3px 5px;
-    opacity: 0.35; transition: opacity 0.15s;
-}
-.vg-cat-badge:hover .vg-forum-fav-btn, .vg-cat-badge:hover .vg-forum-bl-btn { opacity: 1; }
-.vg-info { padding: 9px 11px 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
-.vg-title { line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.vg-title a { color: ${TITLE_COLOR}; text-decoration: none; font-size: 10px; font-weight: 600; transition: color 0.12s; }
-.vg-title a:hover { color: ${TITLE_HOVER}; text-decoration: underline; }
-.vg-stats { display: flex; flex-wrap: wrap; gap: 4px; }
-.vg-stat {
-    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700;
-    padding: 2px 6px; border-radius: 3px; white-space: nowrap; letter-spacing: 0.01em;
-}
-.vg-stat-seed   { background: #132213; color: #5dc85d; border: 1px solid #254825; }
-.vg-stat-leech  { background: #221313; color: #c85d5d; border: 1px solid #482525; }
-.vg-stat-snatch { background: #131c26; color: #5d9dc8; border: 1px solid #253648; }
-.vg-footer {
-    display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    font-size: 10px; color: ${FOOTER_COLOR}; margin-top: auto; padding-top: 2px;
-    border-top: 1px solid ${FOOTER_BORDER}; flex-wrap: wrap;
-}
-.vg-footer a { color: #5a7a9a; text-decoration: none; font-weight: 600; }
-.vg-footer a:hover { text-decoration: underline; color: #7aa0c8; }
-.vg-time { font-size: 9px; color: ${TIME_COLOR}; white-space: nowrap; flex-shrink: 0; }
-.vg-dl-row { display: flex; margin-top: 1px; }
-.vg-download-btn {
-    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700;
-    color: #7dc4ff !important; text-decoration: none; white-space: nowrap; background: #0d1e2e;
-    border: 1px solid #1e3a55; border-radius: 3px; padding: 2px 7px;
-    transition: background 0.15s, border-color 0.15s;
-}
-.vg-download-btn:hover { background: #152840; border-color: #3a6a9a; text-decoration: none !important; }
-.vg-uploader-block-btn {
-    background: none; border: none; cursor: pointer; font-size: 10px; padding: 0 1px;
-    margin-left: 5px; opacity: 0.25; transition: opacity 0.15s; vertical-align: middle; line-height: 1; color: inherit;
-}
-.vg-uploader-block-btn:hover { opacity: 1; }
-.vg-uploader-bl { color: #c05050 !important; text-decoration: line-through !important; opacity: 0.7; }
-.vg-footer-block-btn {
-    background: none; border: none; cursor: pointer; font-size: 10px; padding: 0 1px;
-    margin-left: 3px; opacity: 0.2; transition: opacity 0.15s; line-height: 1; color: inherit; vertical-align: middle;
-}
-.vg-footer:hover .vg-footer-block-btn { opacity: 0.6; }
-.vg-footer-block-btn:hover { opacity: 1 !important; }
-@keyframes vg-glow-pulse {
-    0%, 100% { box-shadow: 0 0 7px 2px var(--vg-glow-c), 0 2px 8px rgba(0,0,0,0.5); }
-    50%       { box-shadow: 0 0 20px 6px var(--vg-glow-c), 0 2px 8px rgba(0,0,0,0.5); }
-}
-.vg-fav-match { position: relative; background: ${CARD_BG} !important; }
-
-/* ── Nav buttons ── */
-#pl_viewer_nav_wrap a { cursor: pointer; text-decoration: none; }
-#pl_viewer_nav_wrap a:hover { text-decoration: underline; }
-
-/* ── Table view extras ── */
-.pl-preview-cell { text-align: center; }
-.pl-preview-cell img { cursor: zoom-in; display: inline-block; }
-.pl-download-btn {
-    display: inline-block; padding: 3px 8px; background: #2d4a2d; border: 1px solid #4a7a4a;
-    color: #8fc88f !important; text-decoration: none; border-radius: 4px; font-size: 11px; font-weight: 700;
-}
-.pl-download-btn:hover { background: #3a5e3a; color: #aedaae !important; }
-tr.pl-bl-hidden { display: none !important; }
-`);
-
-// --------------------
-// CSS — settings overlay + changelog
-// --------------------
-GM_addStyle(`
-#viewer-settings-backdrop {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.72);
-    z-index: 99998; backdrop-filter: blur(2px);
-}
-#viewer-settings-backdrop.active { display: flex; align-items: center; justify-content: center; }
-#viewer-settings-modal {
-    position: relative; background: #1e1e1e; border: 1px solid #444; border-radius: 6px;
-    width: 520px; max-width: 95vw; max-height: 88vh; overflow-y: auto; color: #d0d0d0;
-    font-family: inherit; font-size: 12px; box-shadow: 0 8px 40px rgba(0,0,0,0.7); z-index: 99999;
-}
-#viewer-settings-modal .vsm-header {
-    display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 10px;
-    border-bottom: 1px solid #3a3a3a; position: sticky; top: 0; background: #1e1e1e; z-index: 1;
-}
-#viewer-settings-modal .vsm-header h2 {
-    margin: 0; font-size: 13px; font-weight: 700; color: #e8e8e8; letter-spacing: 0.03em; text-transform: uppercase;
-}
-#viewer-settings-modal .vsm-header .vsm-close {
-    background: none; border: none; color: #888; font-size: 18px; line-height: 1; cursor: pointer;
-    padding: 0 2px; transition: color 0.15s;
-}
-#viewer-settings-modal .vsm-header .vsm-close:hover { color: #e0e0e0; }
-#viewer-settings-modal .vsm-body { padding: 14px 16px 8px; }
-#viewer-settings-modal .vsm-section { margin-bottom: 16px; }
-#viewer-settings-modal .vsm-section-title {
-    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #888;
-    margin: 0 0 8px; padding-bottom: 4px; border-bottom: 1px solid #2e2e2e;
-}
-#viewer-settings-modal .vsm-row {
-    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-    padding: 6px 0; border-bottom: 1px solid #272727;
-}
-#viewer-settings-modal .vsm-row:last-child { border-bottom: none; }
-#viewer-settings-modal .vsm-label-wrap { flex: 1; min-width: 0; }
-#viewer-settings-modal .vsm-label { display: block; font-weight: 600; color: #ccc; font-size: 12px; line-height: 1.4; }
-#viewer-settings-modal .vsm-hint { display: block; font-size: 10px; color: #666; margin-top: 2px; line-height: 1.3; }
-#viewer-settings-modal .vsm-control { flex-shrink: 0; display: flex; align-items: center; }
-#viewer-settings-modal select, #viewer-settings-modal input[type="number"] {
-    background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0; padding: 3px 6px; border-radius: 3px;
-    font-size: 11px; outline: none; transition: border-color 0.15s;
-}
-#viewer-settings-modal select:hover, #viewer-settings-modal input[type="number"]:hover { border-color: #666; }
-#viewer-settings-modal select:focus, #viewer-settings-modal input[type="number"]:focus { border-color: #888; }
-#viewer-settings-modal input[type="number"] { width: 66px; text-align: center; }
-#viewer-settings-modal select { min-width: 160px; }
-#viewer-settings-modal .vsm-toggle { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
-#viewer-settings-modal .vsm-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-#viewer-settings-modal .vsm-toggle-slider {
-    position: absolute; inset: 0; background: #3a3a3a; border-radius: 20px; cursor: pointer;
-    transition: background 0.2s; border: 1px solid #505050;
-}
-#viewer-settings-modal .vsm-toggle-slider::before {
-    content: ''; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px;
-    background: #888; border-radius: 50%; transition: transform 0.2s, background 0.2s;
-}
-#viewer-settings-modal .vsm-toggle input:checked + .vsm-toggle-slider { background: #3d6e3d; border-color: #5a9e5a; }
-#viewer-settings-modal .vsm-toggle input:checked + .vsm-toggle-slider::before { transform: translateX(16px); background: #7ec87e; }
-#viewer-settings-modal .vsm-footer {
-    display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 14px;
-    border-top: 1px solid #3a3a3a; margin-top: 4px; position: sticky; bottom: 0; background: #1e1e1e;
-}
-#viewer-settings-modal .vsm-footer-note { font-size: 10px; color: #555; }
-#viewer-settings-modal .vsm-footer-btns { display: flex; gap: 8px; }
-#viewer-settings-modal .vsm-btn {
-    padding: 5px 14px; font-size: 11px; font-weight: 600; border-radius: 3px; cursor: pointer;
-    border: 1px solid; transition: background 0.15s, color 0.15s; letter-spacing: 0.02em;
-}
-#viewer-settings-modal .vsm-btn-reset { background: #2a2a2a; border-color: #444; color: #888; }
-#viewer-settings-modal .vsm-btn-reset:hover { background: #333; color: #bbb; border-color: #666; }
-#viewer-settings-modal .vsm-btn-save { background: #2d4a2d; border-color: #4a7a4a; color: #8fc88f; }
-#viewer-settings-modal .vsm-btn-save:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
-#viewer-settings-modal .vsm-saved-msg { font-size: 10px; color: #7ec87e; opacity: 0; transition: opacity 0.3s; margin-right: 8px; }
-#viewer-settings-modal .vsm-saved-msg.visible { opacity: 1; }
-#vsm-forum-chips-container, #vsm-fav-chips-container, #vsm-uploader-chips-container {
-    padding: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 3px; min-height: 24px;
-}
-#vsm-forum-chips-container .vsm-bl-chip, #vsm-uploader-chips-container .vsm-bl-chip {
-    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600;
-    padding: 2px 4px 2px 7px; border-radius: 3px; background: #2e1010; color: #e06060; border: 1px solid #602020;
-}
-#vsm-forum-chips-container .vsm-bl-chip button, #vsm-uploader-chips-container .vsm-bl-chip button {
-    background: none; border: none; color: #c05050; font-size: 13px; line-height: 1; cursor: pointer;
-    padding: 0 1px; margin-left: 1px; transition: color 0.12s;
-}
-#vsm-forum-chips-container .vsm-bl-chip button:hover, #vsm-uploader-chips-container .vsm-bl-chip button:hover { color: #ff8888; }
-#vsm-fav-chips-container .vsm-fav-chip {
-    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600;
-    padding: 2px 4px 2px 7px; border-radius: 3px; background: #2e2500; color: #f5c518; border: 1px solid #7a6000;
-}
-#vsm-fav-chips-container .vsm-fav-chip button {
-    background: none; border: none; color: #b09000; font-size: 13px; line-height: 1; cursor: pointer;
-    padding: 0 1px; margin-left: 1px; transition: color 0.12s;
-}
-#vsm-fav-chips-container .vsm-fav-chip button:hover { color: #ffd740; }
-#vsm-forum-add-row, #vsm-fav-add-row, #vsm-uploader-add-row { display: flex; gap: 6px; align-items: center; padding: 6px 0; }
-#vsm-forum-add-input, #vsm-fav-add-input, #vsm-uploader-add-input {
-    flex: 1; background: #2b2b2b; border: 1px solid #404040; color: #d0d0d0; padding: 3px 7px;
-    border-radius: 3px; font-size: 11px; outline: none; transition: border-color 0.15s;
-}
-#vsm-forum-add-input:focus, #vsm-fav-add-input:focus, #vsm-uploader-add-input:focus { border-color: #888; }
-.vsm-glow-swatches { display: flex; flex-wrap: wrap; gap: 7px; padding: 6px 0 4px; }
-.vsm-glow-swatch {
-    width: 26px; height: 26px; border-radius: 50%; cursor: pointer; border: 2px solid transparent;
-    transition: transform 0.12s, border-color 0.12s; position: relative; flex-shrink: 0;
-}
-.vsm-glow-swatch:hover { transform: scale(1.18); }
-.vsm-glow-swatch.selected { border-color: #ffffff; box-shadow: 0 0 0 1px rgba(255,255,255,0.3); }
-.vsm-glow-swatch.selected::after {
-    content: '✓'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 900; color: #000; text-shadow: 0 0 3px #fff;
-}
-#vcl-backdrop {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.78); z-index: 999997; backdrop-filter: blur(2px);
-}
-#vcl-backdrop.active { display: flex; align-items: center; justify-content: center; }
-#vcl-modal {
-    position: relative; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 8px;
-    width: 560px; max-width: 96vw; max-height: 86vh; overflow-y: auto; color: #d0d0d0;
-    font-family: inherit; font-size: 12px; box-shadow: 0 10px 50px rgba(0,0,0,0.8); z-index: 999998;
-}
-#vcl-modal .vcl-header {
-    display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 12px;
-    border-bottom: 1px solid #2e2e2e; position: sticky; top: 0; background: #1a1a1a; z-index: 1; gap: 10px;
-}
-#vcl-modal .vcl-header-left { display: flex; flex-direction: column; gap: 2px; }
-#vcl-modal .vcl-header h2 { margin: 0; font-size: 14px; font-weight: 800; color: #f0f0f0; letter-spacing: 0.04em; text-transform: uppercase; }
-#vcl-modal .vcl-header .vcl-subtitle { font-size: 10px; color: #666; letter-spacing: 0.02em; }
-#vcl-modal .vcl-body { padding: 14px 18px 6px; }
-#vcl-modal .vcl-version-block { margin-bottom: 18px; }
-#vcl-modal .vcl-version-block:last-child { margin-bottom: 0; }
-#vcl-modal .vcl-version-label {
-    display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
-    color: #7ec87e; background: #1a2e1a; border: 1px solid #2e5e2e; padding: 2px 8px; border-radius: 3px; margin-bottom: 8px;
-}
-#vcl-modal .vcl-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
-#vcl-modal .vcl-changes li { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: #c0c0c0; line-height: 1.5; }
-#vcl-modal .vcl-changes li::before { content: '→'; color: #5a8a5a; font-weight: 700; flex-shrink: 0; margin-top: 0px; }
-#vcl-modal .vcl-footer {
-    display: flex; align-items: center; justify-content: space-between; padding: 12px 18px 16px;
-    border-top: 1px solid #2e2e2e; margin-top: 10px; position: sticky; bottom: 0; background: #1a1a1a; gap: 10px; flex-wrap: wrap;
-}
-#vcl-modal .vcl-github-link { font-size: 11px; color: #5a7a9a; text-decoration: none; font-weight: 600; }
-#vcl-modal .vcl-github-link:hover { color: #7aa0c8; text-decoration: underline; }
-#vcl-modal .vcl-ok-btn {
-    padding: 6px 22px; font-size: 12px; font-weight: 700; border-radius: 4px; cursor: pointer;
-    background: #2d4a2d; border: 1px solid #4a7a4a; color: #8fc88f; transition: background 0.15s, color 0.15s; letter-spacing: 0.03em;
-}
-#vcl-modal .vcl-ok-btn:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
-#vcl-modal .vcl-error { font-size: 11px; color: #c88; padding: 8px 0; }
-#vcl-modal .vcl-loading { font-size: 11px; color: #888; padding: 8px 0; }
-#vcl-modal .vcl-update-banner {
-    display: flex; align-items: center; gap: 8px; font-size: 11px; color: #f0d080;
-    background: #2e2810; border: 1px solid #6a5a1a; border-radius: 4px; padding: 8px 10px; margin-bottom: 14px;
-}
-`);
+` + css);
+})();
 
 // --------------------
 // ROW PARSING HELPERS — Pornolab's #tor-tbl structure
@@ -531,16 +293,49 @@ function drainFetchQueue() {
 // --------------------
 // PREVIEW IMAGE FETCH — pulls the first valid image out of the topic page
 // (ported from the Pornolab preview script's var.postImg / size-validation logic).
-// Requests are routed through the fetch queue above, and always carry a timeout,
-// so a slow/rate-limited response can't hold a connection slot forever and jam
-// every other pending preview.
+// - Topic pages go through the fetch queue above (with a timeout), and the queue slot
+//   is freed as soon as the page's HTML has arrived.
+// - The HTML is parsed with DOMParser: an inert document, so none of the topic's own
+//   images (avatars, smilies, banners, signatures) are downloaded and no scripts run.
+// - Checking the candidate images' sizes happens in its own small queue — those are
+//   on image hosts, not on Pornolab, so they don't hold up the next topic fetch.
+// - Results are remembered between visits (PREVIEW CACHE below).
 // --------------------
-const imagePreviewCache = {};     // topicId -> src string | null
+const imagePreviewCache = {};     // topicId -> src string | null (this page view)
 const pendingImageFetches = {};   // topicId -> [callback, ...]
+const IMAGE_CHECK_LIMIT = 6;      // topics whose candidate images are being size-checked at once
+let activeImageChecks = 0;
+const imageCheckQueue = [];
+
+function enqueueImageCheck(taskFn) {
+    imageCheckQueue.push(taskFn);
+    drainImageCheckQueue();
+}
+
+function drainImageCheckQueue() {
+    while (activeImageChecks < IMAGE_CHECK_LIMIT && imageCheckQueue.length) {
+        const task = imageCheckQueue.shift();
+        activeImageChecks++;
+        task(function done() { activeImageChecks--; drainImageCheckQueue(); });
+    }
+}
+
+// The image links in a topic page, in page order (var.postImg title="…")
+function extractPostImageUrls(html) {
+    try {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        return Array.prototype.map.call(doc.querySelectorAll('var.postImg'), v => v.getAttribute('title')).filter(Boolean);
+    } catch (e) {
+        console.error(`${LOG_PREFIX} could not parse topic page:`, e);
+        return [];
+    }
+}
 
 function fetchPreviewImageForTopic(topicId, topicHref, callback) {
     if (!topicId) { callback(null); return; }
     if (imagePreviewCache.hasOwnProperty(topicId)) { callback(imagePreviewCache[topicId]); return; }
+    const saved = previewCacheGet(topicId);
+    if (saved !== undefined) { imagePreviewCache[topicId] = saved; callback(saved, true); return; }
     if (pendingImageFetches[topicId]) { pendingImageFetches[topicId].push(callback); return; }
     pendingImageFetches[topicId] = [callback];
 
@@ -548,20 +343,25 @@ function fetchPreviewImageForTopic(topicId, topicHref, callback) {
         jQuery.ajax({
             url: topicHref,
             method: 'GET',
+            dataType: 'text',
             timeout: FETCH_TIMEOUT_MS,
             success: function (html) {
-                const $page = jQuery('<div>').html(html);
-                const $imageTags = $page.find('var.postImg');
-                tryTopicImage($imageTags, 0, null, function (finalSrc) {
-                    imagePreviewCache[topicId] = finalSrc;
-                    resolvePending(topicId, finalSrc);
-                    done();
+                done();   // the rest doesn't touch Pornolab: let the next topic fetch start
+                const urls = extractPostImageUrls(html);
+                enqueueImageCheck(function (checkDone) {
+                    tryTopicImage(urls, 0, null, function (finalSrc) {
+                        checkDone();
+                        imagePreviewCache[topicId] = finalSrc;
+                        previewCachePut(topicId, finalSrc);
+                        resolvePending(topicId, finalSrc);
+                    });
                 });
             },
             error: function () {
                 // Covers real HTTP errors AND $.ajax timeouts (jQuery calls `error`
                 // with textStatus === 'timeout' when the `timeout` option elapses),
                 // so a stalled/rate-limited request still frees its queue slot.
+                // Not remembered between visits: it's retried next time.
                 imagePreviewCache[topicId] = null;
                 resolvePending(topicId, null);
                 done();
@@ -576,34 +376,130 @@ function resolvePending(topicId, src) {
     cbs.forEach(cb => cb(src));
 }
 
-// Walks the var.postImg tags found on a topic page, testing each image's real
-// dimensions and skipping tiny placeholder/banner images until a valid one is found.
-function tryTopicImage($imageTags, index, fallbackSrc, done) {
-    if (index >= $imageTags.length) { done(fallbackSrc); return; }
-    const tag = $imageTags.get(index);
-    const imgSrc = tag ? tag.getAttribute('title') : null;
-    if (!imgSrc) { tryTopicImage($imageTags, index + 1, fallbackSrc, done); return; }
+// Walks the image links found on a topic page, testing each image's real dimensions
+// and skipping tiny placeholder/banner images until a valid one is found.
+function tryTopicImage(urls, index, fallbackSrc, done) {
+    if (index >= urls.length) { done(fallbackSrc); return; }
+    const imgSrc = urls[index];
+    if (!imgSrc) { tryTopicImage(urls, index + 1, fallbackSrc, done); return; }
 
     const testImg = new Image();
     testImg.onload = function () {
         if (this.width >= MIN_VALID_IMAGE_SIZE && this.height >= MIN_VALID_IMAGE_SIZE) {
             done(imgSrc);
         } else {
-            tryTopicImage($imageTags, index + 1, fallbackSrc || imgSrc, done);
+            tryTopicImage(urls, index + 1, fallbackSrc || imgSrc, done);
         }
     };
-    testImg.onerror = function () { tryTopicImage($imageTags, index + 1, fallbackSrc, done); };
+    testImg.onerror = function () { tryTopicImage(urls, index + 1, fallbackSrc, done); };
     testImg.src = imgSrc;
 }
 
+// Show a topic's preview in an <img>. A remembered image that no longer loads (taken
+// down by its host) is forgotten, so the topic page is checked again next time.
+function showPreviewInImg(imgEl, $imgJQ, topicId, src, fromSaved) {
+    if (!imgEl) return;
+    if (src && fromSaved) {
+        imgEl.addEventListener('error', function () {
+            previewCacheForget(topicId);
+            delete imagePreviewCache[topicId];
+        }, { once: true });
+    }
+    const finalSrc = src || FALLBACK_IMG;
+    imgEl.src = finalSrc;
+    if (src && $imgJQ) attachScaledHoverPreview($imgJQ, finalSrc);
+}
+
 function loadImageForImgElement(imgEl, topicId, topicHref, $imgJQ) {
-    fetchPreviewImageForTopic(topicId, topicHref, function (src) {
-        if (!imgEl) return;
-        const finalSrc = src || FALLBACK_IMG;
-        imgEl.src = finalSrc;
-        if (src && $imgJQ) attachScaledHoverPreview($imgJQ, finalSrc);
+    fetchPreviewImageForTopic(topicId, topicHref, function (src, fromSaved) {
+        showPreviewInImg(imgEl, $imgJQ, topicId, src, fromSaved);
     });
 }
+
+// --------------------
+// PREVIEW CACHE — remembers which image each topic uses between visits (Tampermonkey
+// storage), so returning to a list, or paging back, doesn't fetch the topic pages again.
+// Entry: topicId -> [src, savedAtHour]; '' means "no usable image" (re-checked sooner).
+// --------------------
+const PREVIEW_CACHE_KEY       = 'PREVIEW_CACHE';
+const PREVIEW_CACHE_MAX       = 4000;   // topics remembered; the oldest are dropped
+const PREVIEW_CACHE_DAYS      = 30;     // a found image is re-checked after this long
+const PREVIEW_CACHE_NONE_DAYS = 3;      // "no image" is re-checked sooner (topic may get one)
+let previewStore = null;
+const previewStoreDeleted = new Set();
+let previewStoreDirty = false;
+let previewStoreTimer = 0;
+
+function previewNowHours() { return Math.floor(Date.now() / 36e5); }
+
+function previewStoreRead() {
+    try {
+        const v = JSON.parse(GM_getValue(PREVIEW_CACHE_KEY, '{}'));
+        return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+    } catch (e) { return {}; }
+}
+
+function previewStoreLoad() {
+    if (!previewStore) previewStore = previewStoreRead();
+    return previewStore;
+}
+
+// undefined = not remembered, null = remembered "no image", string = image link
+function previewCacheGet(topicId) {
+    if (!REMEMBER_PREVIEWS) return undefined;
+    const e = previewStoreLoad()[topicId];
+    if (!Array.isArray(e)) return undefined;
+    const maxHours = (e[0] ? PREVIEW_CACHE_DAYS : PREVIEW_CACHE_NONE_DAYS) * 24;
+    if (previewNowHours() - e[1] > maxHours) { previewCacheForget(topicId); return undefined; }
+    return e[0] || null;
+}
+
+function previewCachePut(topicId, src) {
+    if (!REMEMBER_PREVIEWS) return;
+    previewStoreLoad()[topicId] = [src || '', previewNowHours()];
+    previewStoreDeleted.delete(topicId);
+    previewStoreSchedule();
+}
+
+function previewCacheForget(topicId) {
+    delete previewStoreLoad()[topicId];
+    previewStoreDeleted.add(topicId);
+    previewStoreSchedule();
+}
+
+function previewStoreSchedule() {
+    previewStoreDirty = true;
+    clearTimeout(previewStoreTimer);
+    previewStoreTimer = setTimeout(previewStoreFlush, 2000);
+}
+
+// Write back, merged with what other tabs may have saved meanwhile
+function previewStoreFlush() {
+    clearTimeout(previewStoreTimer);
+    if (!previewStoreDirty || !previewStore) return;
+    previewStoreDirty = false;
+    const merged = Object.assign(previewStoreRead(), previewStore);
+    previewStoreDeleted.forEach(id => { delete merged[id]; });
+    const ids = Object.keys(merged);
+    if (ids.length > PREVIEW_CACHE_MAX) {
+        ids.sort((x, y) => merged[x][1] - merged[y][1]);
+        ids.slice(0, ids.length - PREVIEW_CACHE_MAX).forEach(id => { delete merged[id]; });
+    }
+    previewStore = merged;
+    GM_setValue(PREVIEW_CACHE_KEY, JSON.stringify(merged));
+}
+
+function previewCacheCount() { return Object.keys(previewStoreLoad()).length; }
+
+function previewCacheClear() {
+    clearTimeout(previewStoreTimer);
+    previewStore = {};
+    previewStoreDeleted.clear();
+    previewStoreDirty = false;
+    GM_setValue(PREVIEW_CACHE_KEY, '{}');
+}
+
+window.addEventListener('pagehide', previewStoreFlush);
 
 // --------------------
 // FORUM BLACKLIST / FAVORITES — Pornolab has one forum per row instead of tags,
@@ -713,173 +609,6 @@ function removeGlowFromRow($row) {
 }
 
 // --------------------
-// GALLERY — BUILD A SINGLE CARD FROM A TABLE ROW
-// --------------------
-function buildGalleryCard($row) {
-    try {
-        const topicId    = getTopicIdFromRow($row);
-        const forumName  = getForumFromRow($row);
-        const forumHref  = getForumHrefFromRow($row);
-        const titleInfo  = getTitleFromRow($row);
-        const authorInfo = getAuthorFromRow($row);
-        const sizeInfo   = getSizeAndDownloadFromRow($row);
-        const seeders    = getSeedersFromRow($row);
-        const leechers   = getLeechersFromRow($row);
-        const completed  = getCompletedFromRow($row);
-        const dateInfo   = getDateFromRow($row);
-
-        const $card    = jQuery('<div class="vg-card">');
-        const $imgWrap = jQuery('<div class="vg-img-wrap">');
-
-        if (forumName) {
-            const $badgeWrap = jQuery('<div class="vg-cat-badge" style="display:flex;gap:3px;align-items:center;">');
-            jQuery('<a>').attr('href', forumHref).text(forumName.toUpperCase()).appendTo($badgeWrap);
-
-            const isFav = FORUM_FAVORITES.indexOf(forumName.toLowerCase()) !== -1;
-            const isBl  = FORUM_BLACKLIST.indexOf(forumName.toLowerCase()) !== -1;
-            const $favBtn = jQuery('<button type="button" class="vg-forum-fav-btn">').html(isFav ? '&#9733;' : '&#9734;')
-                .attr('title', isFav ? 'Remove favorite forum' : 'Mark forum as favorite (glow)');
-            const $blBtn  = jQuery('<button type="button" class="vg-forum-bl-btn">&#9940;</button>')
-                .attr('title', isBl ? 'Un-blacklist this forum' : 'Blacklist this forum');
-            $favBtn.on('click', function (e) { e.preventDefault(); e.stopPropagation(); toggleForumInFavorites(forumName); });
-            $blBtn.on('click',  function (e) { e.preventDefault(); e.stopPropagation(); toggleForumInBlacklist(forumName); });
-            $badgeWrap.append($favBtn, $blBtn);
-            $imgWrap.append($badgeWrap);
-        }
-
-        const $img = jQuery('<img class="vg-img" alt="">');
-        $img.one('error', function () { this.src = FALLBACK_IMG; });
-        const $imgLink = jQuery('<a class="vg-img-link" target="_blank">').attr('href', titleInfo.href).append($img);
-        $imgWrap.append($imgLink);
-
-        if (topicId) {
-            if (IMAGE_LOAD_MODE !== 'disabled' && galleryLazyObserver) {
-                $img.attr('data-topic-id', topicId).attr('data-topic-href', titleInfo.href);
-                setTimeout(() => { if ($img[0]) galleryLazyObserver.observe($img[0]); }, 0);
-            } else {
-                loadImageForImgElement($img[0], topicId, titleInfo.href, $img);
-            }
-        } else {
-            $img.attr('src', FALLBACK_IMG);
-        }
-
-        const $info = jQuery('<div class="vg-info">');
-        const $titleDiv = jQuery('<div class="vg-title">');
-        jQuery('<a target="_blank">').attr('href', titleInfo.href).text(titleInfo.text).appendTo($titleDiv);
-        $info.append($titleDiv);
-
-        if (sizeInfo.downloadHref) {
-            const $btnRow = jQuery('<div class="vg-dl-row">');
-            jQuery('<a>').attr('href', sizeInfo.downloadHref).addClass('vg-download-btn')
-                .html('&#11015; ' + (sizeInfo.sizeText || 'Download')).appendTo($btnRow);
-            $info.append($btnRow);
-        }
-
-        const $stats = jQuery('<div class="vg-stats">');
-        if (seeders   !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-seed"  title="Seeders">').text('▲ ' + seeders));
-        if (leechers  !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-leech" title="Leechers">').text('▼ ' + leechers));
-        if (completed !== '') $stats.append(jQuery('<span class="vg-stat vg-stat-snatch" title="Completed">').text('⤓ ' + completed));
-        if ($stats.children().length) $info.append($stats);
-
-        const $footer = jQuery('<div class="vg-footer">');
-        if (authorInfo.text) {
-            const key = authorInfo.text.toLowerCase();
-            const isUlBl = UPLOADER_BLACKLIST.indexOf(key) !== -1;
-            const $ulWrap = jQuery('<span style="display:inline-flex;align-items:center;gap:1px;">');
-            const $uploaderA = jQuery('<a>').attr('href', authorInfo.href).text('👤 ' + authorInfo.text)
-                .toggleClass('vg-uploader-bl', isUlBl);
-            $ulWrap.append($uploaderA);
-            const $blockBtn = jQuery('<button class="vg-footer-block-btn" type="button">⛔</button>')
-                .attr('title', isUlBl ? 'Blocked — click to unblock ' + authorInfo.text : 'Block uploader: ' + authorInfo.text);
-            $blockBtn.on('click', function (e) {
-                e.preventDefault(); e.stopPropagation();
-                toggleUploaderInBlacklist(key);
-                const nowBl = UPLOADER_BLACKLIST.indexOf(key) !== -1;
-                $uploaderA.toggleClass('vg-uploader-bl', nowBl);
-                jQuery(this).attr('title', nowBl ? 'Blocked — click to unblock ' + authorInfo.text : 'Block uploader: ' + authorInfo.text);
-            });
-            $ulWrap.append($blockBtn);
-            $footer.append($ulWrap);
-        }
-        if (dateInfo.combined) {
-            jQuery('<span class="vg-time">').text(dateInfo.combined).appendTo($footer);
-        }
-        $info.append($footer);
-
-        $card.append($imgWrap, $info);
-        if (rowMatchesFavoriteForum($row)) applyGlowToCard($card);
-        return $card;
-    } catch (e) {
-        console.error(`${LOG_PREFIX} buildGalleryCard error:`, e, $row);
-        return null;
-    }
-}
-
-// --------------------
-// GALLERY — BUILD / DESTROY / TOGGLE
-// --------------------
-function buildGalleryView() {
-    const $table = jQuery('#tor-tbl');
-    if (!$table.length) { console.warn(`${LOG_PREFIX} buildGalleryView: #tor-tbl not found`); return; }
-
-    jQuery('.viewer-gallery-grid').remove();
-
-    if (galleryLazyObserver) galleryLazyObserver.disconnect();
-    if (IMAGE_LOAD_MODE !== 'disabled') {
-        const rootMargin = IMAGE_LOAD_MODE === 'lazy' ? '0px' : '150% 0px';
-        const threshold  = IMAGE_LOAD_MODE === 'lazy' ? 0.1 : 0.01;
-        galleryLazyObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (!entry.isIntersecting) return;
-                const img = entry.target;
-                const topicId   = img.getAttribute('data-topic-id');
-                const topicHref = img.getAttribute('data-topic-href');
-                galleryLazyObserver.unobserve(img);
-                if (topicId) loadImageForImgElement(img, topicId, topicHref, jQuery(img));
-            });
-        }, { root: null, rootMargin, threshold });
-    } else {
-        galleryLazyObserver = null;
-    }
-
-    const $grid = jQuery('<div class="viewer-gallery-grid">');
-    getRows().each(function () {
-        const $r = jQuery(this);
-        if (rowMatchesForumBlacklist($r) || rowMatchesUploaderBlacklist($r)) return;
-        const $card = buildGalleryCard($r);
-        if ($card) $grid.append($card);
-    });
-
-    if ($grid.children().length) {
-        $table.hide();
-        $table.after($grid);
-    }
-    updateGalleryToggleLabel(true);
-}
-
-function destroyGalleryView() {
-    jQuery('.viewer-gallery-grid').remove();
-    jQuery('#tor-tbl').show();
-    if (galleryLazyObserver) { galleryLazyObserver.disconnect(); galleryLazyObserver = null; }
-    updateGalleryToggleLabel(false);
-}
-
-function toggleGalleryMode() {
-    GALLERY_VIEW_MODE = !GALLERY_VIEW_MODE;
-    GM_setValue('GALLERY_VIEW_MODE', GALLERY_VIEW_MODE);
-    if (GALLERY_VIEW_MODE) buildGalleryView(); else destroyGalleryView();
-}
-
-function updateGalleryToggleLabel(isGrid) {
-    const $btn = jQuery('#pl-gallery-toggle-btn');
-    if ($btn.length) {
-        $btn.html(isGrid ? '&#9776; List' : '&#10697; Grid');
-        $btn.attr('title', isGrid ? 'Switch to table view' : 'Switch to grid view');
-    }
-    jQuery('#vsm-GALLERY_VIEW_MODE').prop('checked', isGrid);
-}
-
-// --------------------
 // TABLE VIEW ENHANCEMENTS
 // (English-only category text, translated headers/dates, preview column,
 //  uploader block button, blacklist hide, favorite glow — applied once per row)
@@ -934,10 +663,8 @@ function enhanceTableRow($row) {
         $previewTd.append($thumb);
 
         const loadThisPreview = function () {
-            fetchPreviewImageForTopic(topicId, titleInfo.href, function (src) {
-                const finalSrc = src || FALLBACK_IMG;
-                $thumb.attr('src', finalSrc);
-                if (src) attachScaledHoverPreview($thumb, finalSrc);
+            fetchPreviewImageForTopic(topicId, titleInfo.href, function (src, fromSaved) {
+                showPreviewInImg($thumb[0], $thumb, topicId, src, fromSaved);
             });
         };
 
@@ -977,44 +704,45 @@ function enhanceTableRow($row) {
     }
 }
 
-
 const PREVIEW_HOVER_SCALE = 1.8; // 150% of the image's on-page rendered size
 
+// One popup element shared by every thumbnail (created on first hover)
+let hoverPopup = null, hoverPopupImg = null;
+
+function ensureHoverPopup() {
+    if (hoverPopup) return;
+    hoverPopup = document.createElement('div');
+    Object.assign(hoverPopup.style, {
+        position: 'fixed', display: 'none', zIndex: '9999',
+        border: '2px solid #000', backgroundColor: '#000',
+        padding: '2px', pointerEvents: 'none',
+    });
+    hoverPopupImg = document.createElement('img');
+    hoverPopupImg.style.display = 'block';
+    hoverPopup.appendChild(hoverPopupImg);
+    document.body.appendChild(hoverPopup);
+}
+
+function positionHoverPopup(clientX, clientY) {
+    const pad = 12;
+    const rect = hoverPopup.getBoundingClientRect();
+
+    let left = clientX + 20;
+    if (left + rect.width + pad > window.innerWidth) left = clientX - rect.width - 20;
+    left = Math.min(Math.max(left, pad), window.innerWidth - rect.width - pad);
+
+    let top = clientY + 20;
+    if (top + rect.height + pad > window.innerHeight) top = clientY - rect.height - 20;
+    top = Math.min(Math.max(top, pad), window.innerHeight - rect.height - pad);
+
+    hoverPopup.style.left = left + 'px';
+    hoverPopup.style.top = top + 'px';
+}
+
 function attachScaledHoverPreview($el, imgSrc) {
-    let popup = null, popupImg = null;
-
-    function ensurePopup() {
-        if (popup) return;
-        popup = document.createElement('div');
-        Object.assign(popup.style, {
-            position: 'fixed', display: 'none', zIndex: '9999',
-            border: '2px solid #000', backgroundColor: '#000',
-            padding: '2px', pointerEvents: 'none',
-        });
-        popupImg = document.createElement('img');
-        popupImg.style.display = 'block';
-        popup.appendChild(popupImg);
-        document.body.appendChild(popup);
-    }
-
-    function position(clientX, clientY) {
-        const pad = 12;
-        const rect = popup.getBoundingClientRect();
-
-        let left = clientX + 20;
-        if (left + rect.width + pad > window.innerWidth) left = clientX - rect.width - 20;
-        left = Math.min(Math.max(left, pad), window.innerWidth - rect.width - pad);
-
-        let top = clientY + 20;
-        if (top + rect.height + pad > window.innerHeight) top = clientY - rect.height - 20;
-        top = Math.min(Math.max(top, pad), window.innerHeight - rect.height - pad);
-
-        popup.style.left = left + 'px';
-        popup.style.top = top + 'px';
-    }
-
+    $el.off('.scaledPreview');
     $el.on('mouseenter.scaledPreview', function (e) {
-        ensurePopup();
+        ensureHoverPopup();
         const el = $el[0];
         const renderedW = el.offsetWidth  || el.getBoundingClientRect().width;
         const renderedH = el.offsetHeight || el.getBoundingClientRect().height;
@@ -1031,17 +759,17 @@ function attachScaledHoverPreview($el, imgSrc) {
             w *= shrink; h *= shrink;
         }
 
-        popupImg.style.width = w + 'px';
-        popupImg.style.height = h + 'px';
-        popupImg.src = imgSrc;
-        popup.style.display = 'block';
-        position(e.clientX, e.clientY);
+        hoverPopupImg.style.width = w + 'px';
+        hoverPopupImg.style.height = h + 'px';
+        hoverPopupImg.src = imgSrc;
+        hoverPopup.style.display = 'block';
+        positionHoverPopup(e.clientX, e.clientY);
     });
     $el.on('mousemove.scaledPreview', function (e) {
-        if (popup && popup.style.display === 'block') position(e.clientX, e.clientY);
+        if (hoverPopup && hoverPopup.style.display === 'block') positionHoverPopup(e.clientX, e.clientY);
     });
     $el.on('mouseleave.scaledPreview', function () {
-        if (popup) popup.style.display = 'none';
+        if (hoverPopup) hoverPopup.style.display = 'none';
     });
 }
 
@@ -1067,474 +795,10 @@ function enhanceAllTableRows() {
 }
 
 // --------------------
-// SETTINGS OVERLAY
-// --------------------
-function buildSettingsOverlay() {
-    function toggle(id, checked) {
-        return `<label class="vsm-toggle"><input type="checkbox" id="${id}" ${checked ? 'checked' : ''}><span class="vsm-toggle-slider"></span></label>`;
-    }
-    function select(id, options, value) {
-        const opts = options.map(([v, label]) => `<option value="${v}" ${v === value ? 'selected' : ''}>${label}</option>`).join('');
-        return `<select id="${id}">${opts}</select>`;
-    }
-    function row(labelText, hint, controlHtml) {
-        return `<div class="vsm-row"><div class="vsm-label-wrap"><span class="vsm-label">${labelText}</span>${hint ? `<span class="vsm-hint">${hint}</span>` : ''}</div><div class="vsm-control">${controlHtml}</div></div>`;
-    }
-
-    const html = `
-    <div id="viewer-settings-backdrop">
-        <div id="viewer-settings-modal">
-            <div class="vsm-header">
-                <h2>&#9881; Viewer Settings ${SCRIPT_VERSION}</h2>
-                <button class="vsm-close" id="vsm-close-btn">&#x2715;</button>
-            </div>
-            <div class="vsm-body">
-                <div class="vsm-section">
-                    <p class="vsm-section-title">Table View</p>
-                    ${row('Preview Thumbnail Size', 'Max width/height of the Preview column thumbnail (px)',
-                          `<input type="number" id="vsm-TABLE_THUMB_SIZE" min="40" max="300" step="10" value="${TABLE_THUMB_SIZE}">`)}
-                </div>
-                <div class="vsm-section">
-                    <p class="vsm-section-title">Gallery View</p>
-                    ${row('Gallery Mode', 'Display results as an image card grid instead of the table.', toggle('vsm-GALLERY_VIEW_MODE', GALLERY_VIEW_MODE))}
-                    ${row('Card Dark Mode', 'Dark styling for the gallery cards.', toggle('vsm-GRID_DARK_MODE', GRID_DARK_MODE))}
-                    ${row('Min Card Width', 'Minimum card width in the grid (px).',
-                          `<input type="number" id="vsm-GALLERY_CARD_MIN_WIDTH" min="140" max="480" step="10" value="${GALLERY_CARD_MIN_WIDTH}">`)}
-                </div>
-                <div class="vsm-section">
-                    <p class="vsm-section-title">Performance</p>
-                    ${row('Image Load Mode', 'When preview images are fetched from inside each topic, relative to the viewport.',
-                          select('vsm-IMAGE_LOAD_MODE', [['disabled','Immediate (no lazy load)'],['near','Near (~1–2 screens away)'],['lazy','Lazy (only when visible)']], IMAGE_LOAD_MODE))}
-                    ${row('Max Concurrent Fetches', 'How many topic pages can be fetched for previews at the same time. Lower this if the page stalls or looks rate-limited.',
-                          `<input type="number" id="vsm-FETCH_CONCURRENCY_LIMIT" min="1" max="12" step="1" value="${FETCH_CONCURRENCY_LIMIT}">`)}
-                    ${row('Fetch Stagger (ms)', 'Delay between starting new preview fetches once a slot frees up.',
-                          `<input type="number" id="vsm-FETCH_STAGGER_MS" min="0" max="2000" step="50" value="${FETCH_STAGGER_MS}">`)}
-                    ${row('Fetch Timeout (ms)', 'How long to wait for a topic page before giving up on its preview.',
-                          `<input type="number" id="vsm-FETCH_TIMEOUT_MS" min="2000" max="60000" step="1000" value="${FETCH_TIMEOUT_MS}">`)}
-                </div>
-                <div class="vsm-section" id="vsm-forums-section">
-                    <p class="vsm-section-title">Forum Blacklist</p>
-                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
-                        <span class="vsm-label">Blacklisted Forums</span>
-                        <span class="vsm-hint">Rows/cards from blacklisted forums are hidden immediately.</span>
-                    </div>
-                    <div id="vsm-forum-chips-container"></div>
-                    <div id="vsm-forum-add-row">
-                        <input type="text" id="vsm-forum-add-input" placeholder="e.g. Feature &amp; Vignettes" autocomplete="off">
-                        <button class="vsm-btn vsm-btn-save" id="vsm-forum-add-btn" type="button">Add</button>
-                        <button class="vsm-btn vsm-btn-reset" id="vsm-forum-clear-btn" type="button">Clear all</button>
-                    </div>
-                </div>
-                <div class="vsm-section" id="vsm-fav-forums-section">
-                    <p class="vsm-section-title">Favorite Forums</p>
-                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
-                        <span class="vsm-label">Glow Color</span>
-                        <span class="vsm-hint">Color of the glow effect on rows/cards from a favorite forum.</span>
-                    </div>
-                    <div class="vsm-glow-swatches" id="vsm-glow-swatches"></div>
-                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
-                        <span class="vsm-label">Favorited Forums</span>
-                    </div>
-                    <div id="vsm-fav-chips-container"></div>
-                    <div id="vsm-fav-add-row">
-                        <input type="text" id="vsm-fav-add-input" placeholder="e.g. SiteRip's 2026" autocomplete="off">
-                        <button class="vsm-btn vsm-btn-save" id="vsm-fav-add-btn" type="button">Add</button>
-                        <button class="vsm-btn vsm-btn-reset" id="vsm-fav-clear-btn" type="button">Clear all</button>
-                    </div>
-                </div>
-                <div class="vsm-section" id="vsm-uploaders-section">
-                    <p class="vsm-section-title">Uploader Blacklist</p>
-                    <div class="vsm-row" style="border-bottom:none;flex-direction:column;align-items:flex-start;gap:4px;">
-                        <span class="vsm-label">Blacklisted Uploaders</span>
-                        <span class="vsm-hint">Click ⛔ next to an uploader name anywhere to block them instantly.</span>
-                    </div>
-                    <div id="vsm-uploader-chips-container"></div>
-                    <div id="vsm-uploader-add-row">
-                        <input type="text" id="vsm-uploader-add-input" placeholder="e.g. username123" autocomplete="off">
-                        <button class="vsm-btn vsm-btn-save" id="vsm-uploader-add-btn" type="button">Add</button>
-                        <button class="vsm-btn vsm-btn-reset" id="vsm-uploader-clear-btn" type="button">Clear all</button>
-                    </div>
-                </div>
-            </div>
-            <div class="vsm-footer">
-                <div style="display:flex;align-items:center">
-                    <span class="vsm-saved-msg" id="vsm-saved-msg">&#x2713; Saved &mdash; reload to apply</span>
-                </div>
-                <div class="vsm-footer-btns">
-                    <button class="vsm-btn vsm-btn-reset" id="vsm-reset-btn">Reset defaults</button>
-                    <button class="vsm-btn vsm-btn-save"  id="vsm-save-btn">Save &amp; close</button>
-                </div>
-            </div>
-        </div>
-    </div>`;
-
-    jQuery('body').append(html);
-
-    jQuery('#viewer-settings-backdrop').on('click', function (e) { if (e.target === this) closeOverlay(); });
-    jQuery('#vsm-close-btn').on('click', closeOverlay);
-    jQuery(document).on('keydown.vsm', function (e) { if (e.key === 'Escape') closeOverlay(); });
-
-    // Forum blacklist handlers
-    jQuery(document).on('click', '#vsm-forum-add-btn', function () {
-        const val = jQuery('#vsm-forum-add-input').val().trim();
-        if (!val) return;
-        const key = val.toLowerCase();
-        if (FORUM_BLACKLIST.indexOf(key) === -1) FORUM_BLACKLIST.push(key);
-        saveForumBlacklist(); applyAllFiltersToPage();
-        jQuery('#vsm-forum-add-input').val('');
-        refreshForumSettingsPanel();
-    });
-    jQuery(document).on('keydown', '#vsm-forum-add-input', function (e) { if (e.key === 'Enter') jQuery('#vsm-forum-add-btn').trigger('click'); });
-    jQuery(document).on('click', '#vsm-forum-clear-btn', function () {
-        if (!FORUM_BLACKLIST.length) return;
-        if (!confirm('Remove all ' + FORUM_BLACKLIST.length + ' blacklisted forum(s)?')) return;
-        FORUM_BLACKLIST = []; saveForumBlacklist(); applyAllFiltersToPage(); refreshForumSettingsPanel();
-    });
-
-    // Favorite forums handlers
-    jQuery(document).on('click', '#vsm-fav-add-btn', function () {
-        const val = jQuery('#vsm-fav-add-input').val().trim();
-        if (!val) return;
-        toggleForumInFavoritesIfAbsent(val);
-        jQuery('#vsm-fav-add-input').val('');
-        refreshFavoriteForumsPanel();
-    });
-    jQuery(document).on('keydown', '#vsm-fav-add-input', function (e) { if (e.key === 'Enter') jQuery('#vsm-fav-add-btn').trigger('click'); });
-    jQuery(document).on('click', '#vsm-fav-clear-btn', function () {
-        if (!FORUM_FAVORITES.length) return;
-        if (!confirm('Remove all ' + FORUM_FAVORITES.length + ' favorite forum(s)?')) return;
-        FORUM_FAVORITES = []; saveForumFavorites(); applyAllFiltersToPage(); refreshFavoriteForumsPanel();
-    });
-
-    // Uploader blacklist handlers
-    jQuery(document).on('click', '#vsm-uploader-add-btn', function () {
-        const val = jQuery('#vsm-uploader-add-input').val().trim().toLowerCase();
-        if (!val) return;
-        if (UPLOADER_BLACKLIST.indexOf(val) === -1) UPLOADER_BLACKLIST.push(val);
-        saveUploaderBlacklist(); applyAllFiltersToPage();
-        jQuery('#vsm-uploader-add-input').val('');
-        refreshUploaderSettingsPanel();
-    });
-    jQuery(document).on('keydown', '#vsm-uploader-add-input', function (e) { if (e.key === 'Enter') jQuery('#vsm-uploader-add-btn').trigger('click'); });
-    jQuery(document).on('click', '#vsm-uploader-clear-btn', function () {
-        if (!UPLOADER_BLACKLIST.length) return;
-        if (!confirm('Remove all ' + UPLOADER_BLACKLIST.length + ' blacklisted uploader(s)?')) return;
-        UPLOADER_BLACKLIST = []; saveUploaderBlacklist(); applyAllFiltersToPage(); refreshUploaderSettingsPanel();
-    });
-
-    jQuery('#vsm-save-btn').on('click', function () {
-        const prevGallery = GALLERY_VIEW_MODE;
-        saveSettings();
-        GALLERY_VIEW_MODE = jQuery('#vsm-GALLERY_VIEW_MODE').is(':checked');
-        if (GALLERY_VIEW_MODE !== prevGallery) { if (GALLERY_VIEW_MODE) buildGalleryView(); else destroyGalleryView(); }
-        closeOverlay();
-        if (confirm('Settings saved!\n\nReload the page now for all changes (thumbnail size, dark mode, card width, image load mode, fetch throttling) to take effect?')) location.reload();
-    });
-    jQuery('#vsm-reset-btn').on('click', function () {
-        if (!confirm('Reset all viewer settings to their defaults?')) return;
-        applyDefaultsToForm(); saveSettings(); showSavedMsg();
-    });
-}
-
-function toggleForumInFavoritesIfAbsent(forumName) {
-    const key = forumName.toLowerCase().trim();
-    if (!key) return;
-    const blIdx = FORUM_BLACKLIST.indexOf(key);
-    if (blIdx !== -1) { FORUM_BLACKLIST.splice(blIdx, 1); saveForumBlacklist(); }
-    if (FORUM_FAVORITES.indexOf(key) === -1) FORUM_FAVORITES.push(key);
-    saveForumFavorites();
-    applyAllFiltersToPage();
-}
-
-function openOverlay() {
-    jQuery('#viewer-settings-backdrop').addClass('active');
-    refreshForumSettingsPanel();
-    refreshFavoriteForumsPanel();
-    refreshUploaderSettingsPanel();
-    buildGlowSwatches();
-}
-function closeOverlay() { jQuery('#viewer-settings-backdrop').removeClass('active'); }
-function showSavedMsg() {
-    const $msg = jQuery('#vsm-saved-msg');
-    $msg.addClass('visible');
-    setTimeout(() => $msg.removeClass('visible'), 2500);
-}
-function applyDefaultsToForm() {
-    jQuery('#vsm-TABLE_THUMB_SIZE').val(DEFAULTS.TABLE_THUMB_SIZE);
-    jQuery('#vsm-GALLERY_VIEW_MODE').prop('checked', DEFAULTS.GALLERY_VIEW_MODE);
-    jQuery('#vsm-GRID_DARK_MODE').prop('checked', DEFAULTS.GRID_DARK_MODE);
-    jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(DEFAULTS.GALLERY_CARD_MIN_WIDTH);
-    jQuery('#vsm-IMAGE_LOAD_MODE').val(DEFAULTS.IMAGE_LOAD_MODE);
-    jQuery('#vsm-FETCH_CONCURRENCY_LIMIT').val(DEFAULTS.FETCH_CONCURRENCY_LIMIT);
-    jQuery('#vsm-FETCH_STAGGER_MS').val(DEFAULTS.FETCH_STAGGER_MS);
-    jQuery('#vsm-FETCH_TIMEOUT_MS').val(DEFAULTS.FETCH_TIMEOUT_MS);
-}
-function saveSettings() {
-    GM_setValue('TABLE_THUMB_SIZE', parseInt(jQuery('#vsm-TABLE_THUMB_SIZE').val(), 10) || DEFAULTS.TABLE_THUMB_SIZE);
-    GM_setValue('GALLERY_VIEW_MODE', jQuery('#vsm-GALLERY_VIEW_MODE').is(':checked'));
-    GM_setValue('GRID_DARK_MODE', jQuery('#vsm-GRID_DARK_MODE').is(':checked'));
-    GM_setValue('GALLERY_CARD_MIN_WIDTH', parseInt(jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(), 10) || DEFAULTS.GALLERY_CARD_MIN_WIDTH);
-    GM_setValue('IMAGE_LOAD_MODE', jQuery('#vsm-IMAGE_LOAD_MODE').val());
-    GM_setValue('FETCH_CONCURRENCY_LIMIT', parseInt(jQuery('#vsm-FETCH_CONCURRENCY_LIMIT').val(), 10) || DEFAULTS.FETCH_CONCURRENCY_LIMIT);
-    GM_setValue('FETCH_STAGGER_MS', parseInt(jQuery('#vsm-FETCH_STAGGER_MS').val(), 10) || DEFAULTS.FETCH_STAGGER_MS);
-    GM_setValue('FETCH_TIMEOUT_MS', parseInt(jQuery('#vsm-FETCH_TIMEOUT_MS').val(), 10) || DEFAULTS.FETCH_TIMEOUT_MS);
-}
-
-function refreshForumSettingsPanel() {
-    const $c = jQuery('#vsm-forum-chips-container');
-    if (!$c.length) return;
-    $c.empty();
-    if (FORUM_BLACKLIST.length) {
-        FORUM_BLACKLIST.forEach(function (name) {
-            const $chip = jQuery('<span class="vsm-bl-chip">').text(name);
-            jQuery('<button type="button" title="Remove">&times;</button>').on('click', function () { toggleForumInBlacklist(name); }).appendTo($chip);
-            $c.append($chip);
-        });
-    } else {
-        $c.append(jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No forums blacklisted.'));
-    }
-}
-function refreshFavoriteForumsPanel() {
-    const $c = jQuery('#vsm-fav-chips-container');
-    if (!$c.length) return;
-    $c.empty();
-    if (FORUM_FAVORITES.length) {
-        FORUM_FAVORITES.forEach(function (name) {
-            const $chip = jQuery('<span class="vsm-fav-chip">').text(name);
-            jQuery('<button type="button" title="Remove">&times;</button>').on('click', function () { toggleForumInFavorites(name); }).appendTo($chip);
-            $c.append($chip);
-        });
-    } else {
-        $c.append(jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No favorite forums.'));
-    }
-}
-function refreshUploaderSettingsPanel() {
-    const $c = jQuery('#vsm-uploader-chips-container');
-    if (!$c.length) return;
-    $c.empty();
-    if (UPLOADER_BLACKLIST.length) {
-        UPLOADER_BLACKLIST.forEach(function (name) {
-            const $chip = jQuery('<span class="vsm-bl-chip">').text(name);
-            jQuery('<button type="button" title="Remove">&times;</button>').on('click', function () { toggleUploaderInBlacklist(name); }).appendTo($chip);
-            $c.append($chip);
-        });
-    } else {
-        $c.append(jQuery('<span>').css({ color: '#555', fontSize: '11px' }).text('No uploaders blacklisted.'));
-    }
-}
-function buildGlowSwatches() {
-    const $wrap = jQuery('#vsm-glow-swatches');
-    if (!$wrap.length) return;
-    $wrap.empty();
-    GLOW_COLORS.forEach(function (c) {
-        const isSel = c.hex.toLowerCase() === FAVORITE_GLOW_COLOR.toLowerCase();
-        jQuery('<div class="vsm-glow-swatch' + (isSel ? ' selected' : '') + '">')
-            .css({ background: c.hex, 'box-shadow': '0 0 8px 2px ' + c.hex + '88' })
-            .attr('title', c.name)
-            .on('click', function () {
-                FAVORITE_GLOW_COLOR = c.hex;
-                GM_setValue('FAVORITE_GLOW_COLOR', c.hex);
-                jQuery('.vsm-glow-swatch').removeClass('selected');
-                jQuery(this).addClass('selected');
-                applyAllFiltersToPage();
-            })
-            .appendTo($wrap);
-    });
-}
-
-// --------------------
-// NAV BUTTON INJECTION
-// (Pornolab shows a "Опции показа" link above the results table — we hang our
-//  Grid/List toggle and Settings gear right next to it)
-// --------------------
-function injectNavButtons() {
-    const $anchor = jQuery('a.menu-root[href="#tr-options"]').first();
-    if (!$anchor.length) { console.warn(`${LOG_PREFIX} nav anchor not found`); return; }
-
-    const $wrap = jQuery('<span id="pl_viewer_nav_wrap" style="margin-left:10px;">');
-    const $galleryBtn = jQuery('<a href="javascript:void(0)" id="pl-gallery-toggle-btn">')
-        .html(GALLERY_VIEW_MODE ? '&#9776; List' : '&#10697; Grid')
-        .attr('title', GALLERY_VIEW_MODE ? 'Switch to table view' : 'Switch to grid view');
-    const $settingsBtn = jQuery('<a href="javascript:void(0)" id="pl-settings-open-btn">&#9881; Viewer</a>')
-        .attr('title', 'Pornolab Viewer Settings');
-
-    $wrap.append(' | ', $galleryBtn, ' | ', $settingsBtn);
-    $anchor.after($wrap);
-
-    jQuery('#pl-gallery-toggle-btn').on('click', toggleGalleryMode);
-    jQuery('#pl-settings-open-btn').on('click', openOverlay);
-}
-
-// --------------------
-// CHANGELOG — fetched on demand from CHANGELOG.md (GitHub raw), not stored inline.
-// Expected file format (see CHANGELOG.md in the same repo folder). IMPORTANT: newest
-// version must be listed FIRST — index-based "is a newer version available" checks
-// below rely on that ordering:
-//
-//   ## v1.2
-//   - Change one
-//   - Change two
-//
-//   ## v1.1
-//   - Change one
-//
-// Parsed into the same [{version, changes:[...]}] shape the popup renderer expects.
-// --------------------
-function parseChangelogMarkdown(md) {
-    const lines = md.split(/\r?\n/);
-    const entries = [];
-    let current = null;
-    lines.forEach(function (line) {
-        const headerMatch = line.match(/^##\s*v?([0-9][0-9.]*)\s*$/i);
-        if (headerMatch) {
-            current = { version: headerMatch[1], changes: [] };
-            entries.push(current);
-            return;
-        }
-        const itemMatch = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
-        if (itemMatch && current) {
-            current.changes.push(itemMatch[1]);
-        }
-    });
-    return entries.filter(e => e.changes.length);
-}
-
-// Finds the index of a given version within the parsed entries (newest-first order).
-// Returns -1 if the version isn't present (e.g. a dev/test build not yet released).
-function findVersionIndex(entries, version) {
-    for (let i = 0; i < entries.length; i++) {
-        if (entries[i].version === version) return i;
-    }
-    return -1;
-}
-
-// Returns the index of `version` within `entries`, assuming CHANGELOG.md lists the
-// newest version first. Index 0 = latest; a higher index = an older version.
-// Returns -1 if the version isn't present in the fetched changelog.
-function findChangelogIndexForVersion(entries, version) {
-    for (let i = 0; i < entries.length; i++) {
-        if (entries[i].version === version) return i;
-    }
-    return -1;
-}
-
-function fetchChangelog(callback) {
-    if (changelogCache) { callback(changelogCache, null); return; }
-    if (typeof GM_xmlhttpRequest !== 'function') { callback(null, 'GM_xmlhttpRequest not available'); return; }
-    GM_xmlhttpRequest({
-        method: 'GET',
-        url: CHANGELOG_URL,
-        onload: function (res) {
-            if (res.status < 200 || res.status >= 300) { callback(null, 'HTTP ' + res.status); return; }
-            try {
-                const parsed = parseChangelogMarkdown(res.responseText);
-                changelogCache = parsed;
-                callback(parsed, null);
-            } catch (e) {
-                callback(null, 'Parse error: ' + e.message);
-            }
-        },
-        onerror: function () { callback(null, 'Network error fetching changelog'); },
-        ontimeout: function () { callback(null, 'Timed out fetching changelog'); },
-        timeout: 10000,
-    });
-}
-
-function buildChangelogPopup(versionsToShow, errorMsg, updateAvailableVersion) {
-    jQuery('#vcl-backdrop').remove(); // in case a stale popup/loading state is still around
-
-    let bodyHtml = '';
-    if (updateAvailableVersion) {
-        bodyHtml += `<div class="vcl-update-banner">&#128276; A newer version (v${updateAvailableVersion}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
-    }
-    if (errorMsg) {
-        bodyHtml += `<div class="vcl-error">Couldn't load the changelog (${errorMsg}). You can view it directly on GitHub using the link below.</div>`;
-    } else if (!versionsToShow || !versionsToShow.length) {
-        bodyHtml += `<div class="vcl-error">No changelog entries found.</div>`;
-    } else {
-        bodyHtml += versionsToShow.map(function (entry) {
-            const items = entry.changes.map(c => `<li>${c}</li>`).join('');
-            return `<div class="vcl-version-block"><span class="vcl-version-label">v${entry.version}</span><ul class="vcl-changes">${items}</ul></div>`;
-        }).join('');
-    }
-
-    const html = `
-    <div id="vcl-backdrop">
-        <div id="vcl-modal">
-            <div class="vcl-header">
-                <div class="vcl-header-left">
-                    <h2>&#127381; What's New</h2>
-                    <span class="vcl-subtitle">[Pornolab] Advanced Viewer Experience &mdash; currently v${SCRIPT_VERSION}</span>
-                </div>
-            </div>
-            <div class="vcl-body">${bodyHtml}</div>
-            <div class="vcl-footer">
-                <a class="vcl-github-link" href="https://github.com/edstagdh/Userscripts" target="_blank">&#128279; View on GitHub</a>
-                <button class="vcl-ok-btn" id="vcl-ok-btn">OK, got it</button>
-            </div>
-        </div>
-    </div>`;
-
-    jQuery('body').append(html);
-    jQuery('#vcl-backdrop').on('click', function (e) { if (e.target === this) dismissChangelog(); });
-    jQuery('#vcl-ok-btn').on('click', dismissChangelog);
-    jQuery(document).on('keydown.vcl', function (e) { if (e.key === 'Escape') dismissChangelog(); });
-    jQuery('#vcl-backdrop').addClass('active');
-}
-function dismissChangelog() {
-    jQuery('#vcl-backdrop').removeClass('active');
-    GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION);
-    jQuery(document).off('keydown.vcl');
-}
-function checkVersionAndShowChangelog() {
-    const lastSeen = GM_getValue('LAST_SEEN_VERSION', '');
-    if (lastSeen === SCRIPT_VERSION) return;
-    fetchChangelog(function (entries, err) {
-        if (err) { buildChangelogPopup(null, err); return; }
-        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
-        // Only ever show changes up through the version actually running right now —
-        // entries above currentIdx belong to a newer release we haven't been updated to yet.
-        const availableEntries = currentIdx === -1 ? entries : entries.slice(currentIdx);
-        let toShow;
-        if (!lastSeen) {
-            toShow = availableEntries.length ? [availableEntries[0]] : [];
-        } else {
-            toShow = [];
-            for (let i = 0; i < availableEntries.length; i++) {
-                if (availableEntries[i].version === lastSeen) break;
-                toShow.push(availableEntries[i]);
-            }
-        }
-        if (!toShow.length) { GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION); return; }
-        // If the remote changelog has entries newer than what's installed (e.g. the
-        // GreasyFork/GitHub copy updated but this browser hasn't picked it up yet),
-        // surface that as an update notice rather than silently showing future changes.
-        const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
-        buildChangelogPopup(toShow, null, updateAvailableVersion);
-    });
-}
-function showFullChangelog() {
-    fetchChangelog(function (entries, err) {
-        if (err) { buildChangelogPopup(null, err); return; }
-        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
-        if (currentIdx === -1) {
-            // Installed version isn't in the fetched changelog at all — show the latest
-            // entry as a best-effort fallback rather than nothing.
-            buildChangelogPopup(entries.length ? [entries[0]] : [], null, null);
-            return;
-        }
-        const updateAvailableVersion = currentIdx > 0 ? entries[0].version : null;
-        buildChangelogPopup([entries[currentIdx]], null, updateAvailableVersion);
-    });
-}
-
-// --------------------
 // INIT
 // --------------------
 (function init() {
     if (!jQuery('#tor-tbl').length) return; // not a search-results page
-
-    buildSettingsOverlay();
 
     if (typeof GM_registerMenuCommand === 'function') {
         GM_registerMenuCommand('📋 Show Changelog', showFullChangelog);
