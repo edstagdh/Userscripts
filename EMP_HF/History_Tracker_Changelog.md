@@ -4,6 +4,16 @@ All notable changes to [HF][EMP] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v3.4 - 2026-10-25
+- New offline viewer: open https://edstagdh.github.io/Userscripts/history_tracker_viewer/ to browse your saved history even when both sites are down. The History window opens full-screen there, with both sites' searches and torrents, torrent details and rendered presentations.
+- The viewer page is an empty page on GitHub Pages; your history stays in your browser and is only read by the userscript.
+- In the viewer, links and searches open the sites in a new tab, and Settings & data shows both sites' storage.
+
+## v3.3 - 2026-10-25
+- The History window is much wider (about 90% of the page) and taller, so a rendered presentation shows at full width.
+- A rendered presentation no longer scrolls inside the window's own scroll bar: it shows at full length and the window scrolls. The raw BBCode view is taller too.
+- Removed the "📋 Copy" buttons (torrent details and the Torrents list); presentations are for rendering here. The script no longer asks for clipboard access.
+
 ## v3.2 - 2026-10-23
 - Advanced Viewer Experience's Poster Wall: the info pane under the poster in focus now shows a "👁 Visited 3× · last 2 days ago" chip for torrents you've opened, like the badge in list and grid view (grey when the last visit is over 30 days ago).
 - Poster Wall: the outline on visited posters now follows the right torrent as the wall reuses posters while you glide, and the hover card no longer pops up over the wall.

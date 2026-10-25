@@ -1,7 +1,7 @@
 // [HF][EMP] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 3.2
+// Version 3.4
 //
 // The 🕘 History window: modal shell, Searches / Torrents tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom.
@@ -106,20 +106,23 @@ function requestCloseModal() {
     closeModal();
 }
 
-/** opts: { title, subtitle, tabs (element), headerButtons: [el] } → { body, actions (footer buttons), okBtn } */
+/**
+ * opts: { title, subtitle, tabs (element), headerButtons: [el], fullPage } → { body, actions (footer buttons), okBtn }
+ * fullPage: the window is the whole page (offline viewer) — no close button, Esc / outside clicks don't close it.
+ */
 function openModal(opts) {
     closeModal();
-    var bg = el('div', { id: 'ht-backdrop', 'data-ht-ui': '' });
-    var closeBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'Close (Esc)', 'aria-label': 'Close', text: '✕' });
+    var bg = el('div', { id: 'ht-backdrop', 'data-ht-ui': '', className: opts.fullPage ? 'ht-fullpage' : null });
+    var closeBtn = opts.fullPage ? null : el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'Close (Esc)', 'aria-label': 'Close', text: '✕' });
     var header = el('div', { className: 'ht-header' }, [
         el('div', { className: 'ht-header-left' }, [
             el('h2', { text: opts.title }),
             el('span', { className: 'ht-subtitle', text: opts.subtitle || (SCRIPT_NAME + ' — ' + GROUP_NAMES[GROUP] + ' — v' + SCRIPT_VERSION) }),
         ]),
-        el('div', { className: 'ht-header-right' }, (opts.headerButtons || []).concat([closeBtn])),
+        el('div', { className: 'ht-header-right' }, (opts.headerButtons || []).concat(closeBtn ? [closeBtn] : [])),
     ]);
     var body = el('div', { className: 'ht-body' });
-    var okBtn = el('button', { type: 'button', className: 'ht-ok', text: 'Close' });
+    var okBtn = el('button', { type: 'button', className: 'ht-ok' + (opts.fullPage ? ' ht-hidden' : ''), text: 'Close' });
     var actions = el('div', { className: 'ht-footer-actions' }, [okBtn]);
     var footer = el('div', { className: 'ht-footer' }, [
         el('a', { className: 'ht-github-link', href: 'https://github.com/edstagdh/Userscripts', target: '_blank', rel: 'noopener noreferrer', text: '🔗 View on GitHub' }),
@@ -128,13 +131,13 @@ function openModal(opts) {
     var modal = el('div', { id: 'ht-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title },
         [header, opts.tabs || null, body, footer]);
     bg.appendChild(modal);
-    closeBtn.addEventListener('click', requestCloseModal);
+    if (closeBtn) closeBtn.addEventListener('click', requestCloseModal);
     okBtn.addEventListener('click', closeModal);   // also when it reads "Close without saving": that's the explicit choice
-    bg.addEventListener('mousedown', function (ev) { if (ev.target === bg) requestCloseModal(); });
+    bg.addEventListener('mousedown', function (ev) { if (ev.target === bg && !opts.fullPage) requestCloseModal(); });
     modalKeyHandler = function (ev) {
         if (ev.key !== 'Escape' || document.querySelector('#ht-cl-backdrop.active')) return;
         ev.stopPropagation();
-        if (modalEscHook) modalEscHook(); else requestCloseModal();
+        if (modalEscHook) modalEscHook(); else if (!opts.fullPage) requestCloseModal();
     };
     document.addEventListener('keydown', modalKeyHandler, true);
     document.body.appendChild(bg);
@@ -194,14 +197,13 @@ function presentationSection(tid, g) {
     arr.slice().reverse().forEach(function (v, i) {
         var renderBtn = el('button', { type: 'button', className: 'ht-btn', text: '🖼 Render' });
         var viewBtn = el('button', { type: 'button', className: 'ht-btn', text: '</> BBCode' });
-        var copyBtn = el('button', { type: 'button', className: 'ht-btn', text: '📋 Copy' });
         var seen = v.l && v.l !== v.t ? ' · last seen ' + fmtDate(v.l) : '';
         var row = el('div', { className: 'ht-row' }, [
             el('div', { className: 'ht-main' }, [
                 el('div', { style: 'color:#e0e0e0;font-weight:600', text: (i === 0 ? 'Latest · ' : '') + fmtDateTime(v.t) }),
                 el('div', { className: 'ht-sub', text: fmtBytes(v.n) + ' of BBCode' + seen }),
             ]),
-            el('div', { className: 'ht-side' }, [renderBtn, viewBtn, copyBtn]),
+            el('div', { className: 'ht-side' }, [renderBtn, viewBtn]),
         ]);
         var out = null;
         var mode = null;
@@ -232,9 +234,6 @@ function presentationSection(tid, g) {
         }
         renderBtn.addEventListener('click', function () { showOut('render'); });
         viewBtn.addEventListener('click', function () { showOut('code'); });
-        copyBtn.addEventListener('click', function () {
-            decodeVersion(v).then(function (t) { copyText(t, 'Presentation BBCode'); }).catch(function () { showToast('Couldn\'t read the saved presentation'); });
-        });
         box.appendChild(row);
     });
     wrap.appendChild(box);
@@ -304,8 +303,9 @@ function openHistory(tab, filter) {
     var clBtn = el('button', { type: 'button', className: 'ht-btn', title: 'What\'s new in History Tracker', text: '📜 Changelog' });
     clBtn.addEventListener('click', showChangelogModal);
     var m = openModal({
-        title: '🕘 History', tabs: tabsEl, headerButtons: [clBtn],
-        subtitle: SCRIPT_NAME + ' — ' + (crossSite() ? GROUPS.map(function (g) { return GROUP_NAMES[g]; }).join(' + ') : GROUP_NAMES[GROUP]) + ' — v' + SCRIPT_VERSION,
+        title: '🕘 History', tabs: tabsEl, headerButtons: [clBtn], fullPage: IS_VIEWER,
+        subtitle: SCRIPT_NAME + (IS_VIEWER ? ' — offline viewer' : '') + ' — ' +
+            (crossSite() ? GROUPS.map(function (g) { return GROUP_NAMES[g]; }).join(' + ') : GROUP_NAMES[GROUP]) + ' — v' + SCRIPT_VERSION,
     });
     var TABS = [['searches', 'Searches'], ['torrents', 'Torrents'], ['settings', 'Settings & data']];
     var buttons = {};
@@ -502,10 +502,14 @@ function renderSearchesTab(body, filter, onChange) {
                 el('span', {}, found.length
                     ? ['You searched “', el('b', { text: text }), '” ' + perSiteCounts(found) + ' · last ' + ago(last)]
                     : ['You never searched exactly “', el('b', { text: text }), '”' + (crossSite() ? ' on either site' : '')]),
-                el('a', { className: 'ht-ok', href: searchUrl(text), text: '🔎 Search ' + GROUP_NAMES[GROUP] }),
+                IS_VIEWER
+                    ? el('span', { className: 'ht-buttons', style: 'margin:0' }, GROUPS.map(function (g) {
+                        return el('a', linkProps(g, searchUrl(text, g), { className: 'ht-ok', text: '🔎 Search ' + GROUP_NAMES[g] }));
+                    }))
+                    : el('a', { className: 'ht-ok', href: searchUrl(text), text: '🔎 Search ' + GROUP_NAMES[GROUP] }),
             ]);
         },
-        onEnter: function (text) { if (text) location.href = searchUrl(text); },
+        onEnter: function (text) { if (text && !IS_VIEWER) location.href = searchUrl(text); },
         row: function (s, reload) {
             var timesBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'When you ran it', text: '🕘' });
             var del = el('button', { type: 'button', className: 'ht-btn ht-icon ht-danger', title: 'Forget this search', text: '✕' });
@@ -534,7 +538,6 @@ function renderSearchesTab(body, filter, onChange) {
 }
 
 function renderTorrentsTab(body, filter, onChange, openDetails) {
-    var withPres = null;
     renderListTab(body, {
         filter: filter,
         placeholder: 'Title or torrent id…',
@@ -546,10 +549,8 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
             id: function (a, b) { return b.id - a.id; },
         },
         items: function () {
-            withPres = new Set();
             var out = [];
             viewGroups().forEach(function (g) {
-                presKeys(g).forEach(function (k) { withPres.add(k); });
                 torrents(g).forEach(function (e, id) { out.push(Object.assign({ id: id, g: g }, e)); });
             });
             return out;
@@ -560,10 +561,7 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
         },
         row: function (t, reload) {
             var timesBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'When you opened it', text: '🕘' });
-            var copyBtn = withPres.has(keysOf(t.g).pres + t.id)
-                ? el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'Copy the saved presentation (BBCode)', text: '📋' })
-                : null;
-            var infoBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'Details & saved presentation', text: 'ℹ️' });
+            var infoBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'Details & saved presentation (render it here)', text: 'ℹ️' });
             var del = el('button', { type: 'button', className: 'ht-btn ht-icon ht-danger', title: 'Forget this torrent', text: '✕' });
             var row = el('div', { className: 'ht-row' }, [
                 coverEl(t.cv),
@@ -574,10 +572,9 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
                     ]),
                     el('div', { className: 'ht-sub', text: '#' + t.id + ' · last ' + ago(t.l) + (t.c > 1 ? ' · first ' + fmtDate(t.f) : '') }),
                 ]),
-                el('div', { className: 'ht-side' }, [countPill(t.c), timesBtn, copyBtn, infoBtn, del]),
+                el('div', { className: 'ht-side' }, [countPill(t.c), timesBtn, infoBtn, del]),
             ]);
             timesBtn.addEventListener('click', function () { toggleTimes(row, t.v || [], timesBtn); });
-            if (copyBtn) copyBtn.addEventListener('click', function () { copyLatestPresentation(t.id, t.g); });
             function afterForget() { reload(); onChange(); markLinks(); }
             infoBtn.addEventListener('click', function () { openDetails(t.id, t.g, afterForget); });
             del.addEventListener('click', function () {
@@ -711,47 +708,59 @@ function renderSettingsTab(body, setDirty) {
     formArea.addEventListener('change', checkDirty);
     body.appendChild(el('p', { className: 'ht-note', text: 'Changes are applied with "💾 Save & reload" at the bottom of this window.' }));
 
-    // data
-    var keys = groupKeys();
+    // data: one block per site (the site you're on; both in the offline viewer)
+    (IS_VIEWER ? GROUPS : [GROUP]).forEach(function (g) { body.appendChild(siteDataBlock(g)); });
+
+    var exp = el('button', { type: 'button', className: 'ht-btn', text: '⬇️ Export JSON' });
+    var imp = el('button', { type: 'button', className: 'ht-btn', text: '⬆️ Import JSON…' });
+    var file = el('input', { type: 'file', accept: '.json,application/json', className: 'ht-hidden' });
+    exp.addEventListener('click', exportData);
+    imp.addEventListener('click', function () { file.click(); });
+    file.addEventListener('change', function () { if (file.files[0]) importData(file.files[0]); });
+    body.appendChild(el('div', { className: 'ht-label', text: 'Backup' }));
+    body.appendChild(el('div', { className: 'ht-buttons', style: 'margin-top:0' }, [exp, imp, file]));
+    body.appendChild(el('p', { className: 'ht-note', text:
+        'Export makes a backup of all sites. Importing replaces the history of the sites in the file; ' +
+        'exports from the older "[HF] Visit Tracker" script are accepted too.' }));
+}
+
+/** stats + delete buttons for one site's stored data */
+function siteDataBlock(g) {
+    var keys = groupKeys(g);
+    var pres = keysOf(g).pres;
     var histBytes = 0;
     var presBytes = 0;
     var presCount = 0;
     keys.forEach(function (k) {
         var size = JSON.stringify(GM_getValue(k, null)).length;
-        if (k.indexOf(KEY.pres) === 0) { presBytes += size; presCount++; } else histBytes += size;
+        if (k.indexOf(pres) === 0) { presBytes += size; presCount++; } else histBytes += size;
     });
-    var logs = logKeys();
+    var logs = logKeys(g);
     var visits = logs.reduce(function (a, k) { var v = GM_getValue(k, []); return a + (Array.isArray(v) ? v.length : 0); }, 0);
-    body.appendChild(el('div', { className: 'ht-label', text: 'Your ' + GROUP_NAMES[GROUP] + ' data (Tampermonkey, this browser only)' }));
-    body.appendChild(el('div', { className: 'ht-stats' }, [
-        el('div', { className: 'ht-stat' }, [el('b', { text: torrents().size + ' / ' + Object.keys(readSearches()).length }), el('span', { text: 'torrents / searches' })]),
-        el('div', { className: 'ht-stat' }, [el('b', { text: String(visits) }), el('span', { text: 'visits logged' + (logs.length ? ' since ' + logs[0].slice(KEY.log.length) : '') })]),
+    var wrap = el('div');
+    wrap.appendChild(el('div', { className: 'ht-label', text: 'Your ' + GROUP_NAMES[g] + ' data (Tampermonkey, this browser only)' }));
+    wrap.appendChild(el('div', { className: 'ht-stats' }, [
+        el('div', { className: 'ht-stat' }, [el('b', { text: torrents(g).size + ' / ' + Object.keys(readSearches(g)).length }), el('span', { text: 'torrents / searches' })]),
+        el('div', { className: 'ht-stat' }, [el('b', { text: String(visits) }), el('span', { text: 'visits logged' + (logs.length ? ' since ' + logs[0].slice(keysOf(g).log.length) : '') })]),
         el('div', { className: 'ht-stat' }, [el('b', { text: fmtBytes(histBytes) }), el('span', { text: 'history storage' })]),
         el('div', { className: 'ht-stat' }, [el('b', { text: fmtBytes(presBytes) }), el('span', { text: presCount + ' saved presentation' + (presCount === 1 ? '' : 's') })]),
     ]));
-
-    var exp = el('button', { type: 'button', className: 'ht-btn', text: '⬇️ Export JSON' });
-    var imp = el('button', { type: 'button', className: 'ht-btn', text: '⬆️ Import JSON…' });
-    var clrP = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete saved presentations' });
-    var clr = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete all ' + GROUP_NAMES[GROUP] + ' history' });
-    var file = el('input', { type: 'file', accept: '.json,application/json', className: 'ht-hidden' });
-    exp.addEventListener('click', exportData);
-    imp.addEventListener('click', function () { file.click(); });
-    file.addEventListener('change', function () { if (file.files[0]) importData(file.files[0]); });
+    var clrP = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete ' + GROUP_SHORT[g] + ' saved presentations' });
+    var clr = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete all ' + GROUP_NAMES[g] + ' history' });
     clrP.addEventListener('click', function () {
-        if (!confirm('Delete all ' + presCount + ' saved presentations? Your visit history is kept.')) return;
-        presKeys().forEach(function (k) { GM_deleteValue(k); });
+        if (!confirm('Delete all ' + presCount + ' saved ' + GROUP_NAMES[g] + ' presentations? Your visit history is kept.')) return;
+        presKeys(g).forEach(function (k) { GM_deleteValue(k); });
+        log.info('Deleted ' + presCount + ' saved ' + GROUP_NAMES[g] + ' presentations');
         location.reload();
     });
     clr.addEventListener('click', function () {
-        if (!confirm('Delete your whole ' + GROUP_NAMES[GROUP] + ' history (torrents, searches, presentations and the visit log)? Settings are kept. This can\'t be undone — export first if unsure.')) return;
-        groupKeys().forEach(function (k) { GM_deleteValue(k); });
+        if (!confirm('Delete your whole ' + GROUP_NAMES[g] + ' history (torrents, searches, presentations and the visit log)? Settings are kept. This can\'t be undone — export first if unsure.')) return;
+        groupKeys(g).forEach(function (k) { GM_deleteValue(k); });
+        log.info('Deleted all ' + GROUP_NAMES[g] + ' history');
         location.reload();
     });
-    body.appendChild(el('div', { className: 'ht-buttons' }, [exp, imp, clrP, clr, file]));
-    body.appendChild(el('p', { className: 'ht-note', text:
-        'Export makes a backup of all sites. Importing replaces the history of the sites in the file; ' +
-        'exports from the older "[HF] Visit Tracker" script are accepted too.' }));
+    wrap.appendChild(el('div', { className: 'ht-buttons' }, [clrP, clr]));
+    return wrap;
 }
 
 function exportData() {

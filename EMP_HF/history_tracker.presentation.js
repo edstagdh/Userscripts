@@ -1,7 +1,7 @@
 // [HF][EMP] History Tracker — Presentations: BBCode capture, storage and preview
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 3.2
+// Version 3.4
 //
 // Turns the torrent presentation (#descbox) back into BBCode (ported from [HF][EMP] Copy BBCode Button),
 // stores it gzip-compressed, prunes old copies, and renders saved BBCode for the "🖼 Render" preview.
@@ -403,24 +403,6 @@ function prunePresentations(keepId) {
     var drop = dated.slice(0, keys.length - max);
     drop.forEach(function (x) { GM_deleteValue(x[0]); });
     log.info('Removed ' + drop.length + ' old saved presentation(s) (keeping the ' + max + ' most recent torrents)');
-}
-
-function copyText(text, what) {
-    try {
-        GM_setClipboard(text, 'text');
-        showToast('📋 ' + (what || 'BBCode') + ' copied', fmtBytes(text.length) + ' of text');
-        log.info('Copied ' + (what || 'BBCode') + ' (' + fmtBytes(text.length) + ')');
-    } catch (e) {
-        log.error('Copy to clipboard failed', e);
-        showToast('Copy failed', e.message);
-    }
-}
-
-function copyLatestPresentation(tid, g) {
-    var arr = readPresentations(tid, g);
-    if (!arr.length) { showToast('No presentation saved for this torrent'); return; }
-    decodeVersion(arr[arr.length - 1]).then(function (t) { copyText(t, 'Presentation BBCode'); })
-        .catch(function (e) { log.error('Reading the saved presentation of #' + tid + ' failed', e); showToast('Couldn\'t read the saved presentation'); });
 }
 
 // ── BBCode → preview ─────────────────────────────────────────────────────

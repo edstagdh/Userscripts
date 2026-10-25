@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         [HF][EMP] History Tracker
-// @version      3.2
+// @version      3.4
 // @description  Remembers the torrent pages you open and the searches you run (stored locally in Tampermonkey), marks torrents you've already visited, keeps a searchable search history and, optionally, each torrent's presentation as BBCode
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
 // @match        https://www.happyfappy.net/*
 // @match        https://www.empornium.sx/*
 // @match        https://emparadise.rs/*
+// @match        https://edstagdh.github.io/Userscripts/history_tracker_viewer/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
@@ -14,14 +15,13 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_addValueChangeListener
 // @grant        GM_xmlhttpRequest
-// @grant        GM_setClipboard
 // @grant        GM_info
 // @grant        GM_getResourceText
 // @connect      raw.githubusercontent.com
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.presentation.js?v=3.2
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.window.js?v=3.2
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.changelog.js?v=3.2
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.styles.css?v=3.2
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.presentation.js?v=3.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.window.js?v=3.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.changelog.js?v=3.4
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.styles.css?v=3.4
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.user.js
@@ -61,6 +61,7 @@
 
 // Code is split across files (all in EMP_HF/, cached by Tampermonkey, refreshed on each
 // version bump through the ?v= on their URLs). The @require files run before this one, in the same scope:
+//   docs/history_tracker_viewer/index.html   offline viewer page (GitHub Pages), see VIEWER_URL
 //   history_tracker.presentation.js   presentation → BBCode, saved presentations, BBCode preview
 //   history_tracker.window.js         History window (tabs, settings & data, torrent details), cover zoom
 //   history_tracker.changelog.js      "What's New" window
@@ -138,6 +139,12 @@ var GROUP_DEFAULT_ORIGIN = { hf: 'https://www.happyfappy.net', emp: 'https://www
 var HOST = location.hostname.toLowerCase();
 var GROUP = SITE_GROUPS[HOST] || 'hf';
 
+// Offline viewer: a blank page on GitHub Pages (docs/history_tracker_viewer/index.html in the repo) where the
+// History window opens full-screen, so the saved history can be browsed while both sites are down.
+// Tampermonkey storage belongs to the script, not to a website, so everything saved is readable there too.
+var VIEWER_URL = 'https://edstagdh.github.io/Userscripts/history_tracker_viewer/';
+var IS_VIEWER = location.origin === 'https://edstagdh.github.io' && location.pathname.indexOf('/Userscripts/history_tracker_viewer') === 0;
+
 var KEY = {
     shard: 'ht_' + GROUP + '_tor_',
     searches: 'ht_' + GROUP + '_searches',
@@ -154,7 +161,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.2';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.4';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -241,12 +248,13 @@ function isOurs(node) {
 // ── Sites shown together ─────────────────────────────────────────────────
 // Tampermonkey storage belongs to the script, not to a website, so every site's history is readable from any of them.
 
-function crossSite() { return !!getSetting('crossSite'); }
+function crossSite() { return IS_VIEWER || !!getSetting('crossSite'); }
 function viewGroups() { return crossSite() ? GROUPS : [GROUP]; }
 
 /** the domain you last used for a site group (so links to the other site go where you browse it) */
 function originOf(g) {
-    if (!g || g === GROUP) return location.origin;
+    g = g || GROUP;
+    if (g === GROUP && !IS_VIEWER) return location.origin;
     var o = GM_getValue('ht_origin_' + g, null);
     return typeof o === 'string' && /^https:\/\/[a-z0-9.-]+$/i.test(o) ? o : GROUP_DEFAULT_ORIGIN[g];
 }
@@ -261,7 +269,7 @@ function torrentUrl(g, id) { return originOf(g) + '/torrents.php?id=' + id; }
 /** link attributes; links to the other site open in a new tab */
 function linkProps(g, href, extra) {
     var p = Object.assign({ href: href }, extra || {});
-    if (g && g !== GROUP) { p.target = '_blank'; p.rel = 'noopener'; }
+    if (IS_VIEWER || (g && g !== GROUP)) { p.target = '_blank'; p.rel = 'noopener'; }
     return p;
 }
 
@@ -465,8 +473,8 @@ function forgetSearch(key, g) {
 }
 
 function isDataKey(k) { return k === KEY.last || DATA_KEY_RE.test(k); }
-function groupKeys() {
-    var prefix = 'ht_' + GROUP + '_';
+function groupKeys(g) {
+    var prefix = 'ht_' + (g || GROUP) + '_';
     return GM_listValues().filter(function (k) { return k.indexOf(prefix) === 0 && DATA_KEY_RE.test(k); });
 }
 function logKeys(g) { var p = keysOf(g).log; return GM_listValues().filter(function (k) { return k.indexOf(p) === 0; }).sort(); }
@@ -1028,7 +1036,20 @@ if (typeof GM_registerMenuCommand !== 'undefined') {
 
 // ── Start ────────────────────────────────────────────────────────────────
 
+/** the offline viewer page: only the History window, full-screen, both sites */
+function startViewer() {
+    injectStyle();
+    hideZoom = setupCoverZoom();
+    document.title = 'History — [HF][EMP] History Tracker';
+    var fallback = document.getElementById('ht-viewer-fallback');
+    if (fallback) fallback.remove();
+    log.info('Offline viewer — showing the saved history of both sites');
+    openHistory('searches');
+    checkVersionUpdate();
+}
+
 function start() {
+    if (IS_VIEWER) { startViewer(); return; }
     injectStyle();
     setupTooltip();
     hideZoom = setupCoverZoom();
