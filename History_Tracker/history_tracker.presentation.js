@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — Presentations: BBCode capture, storage and preview
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.1
+// Version 4.2
 //
 // Turns the torrent presentation (#descbox) back into BBCode (ported from [HF][EMP] Copy BBCode Button),
 // stores it gzip-compressed, prunes old copies, and renders saved BBCode for the "🖼 Render" preview.
@@ -623,10 +623,110 @@ function sanitizeHtmlToString(root) {
     return box.innerHTML.replace(/\n{3,}/g, '\n\n');
 }
 
-/** render: a saved post, parsed inertly and cleaned again (it may come from an imported file) */
-function renderSafeHtml(html) {
+/**
+ * render: a saved post, parsed inertly and cleaned again (it may come from an imported file).
+ * referer: the site the post comes from (SimpCity) — used when an image host refuses a direct request.
+ */
+function renderSafeHtml(html, referer) {
     var doc = new DOMParser().parseFromString('<!doctype html><body>' + html, 'text/html');
-    return sanitizeNode(doc.body, { n: HTML_MAX_NODES });
+    var frag = sanitizeNode(doc.body, { n: HTML_MAX_NODES });
+    enhanceRendered(frag, referer);
+    return frag;
+}
+
+// ── Rendered posts: image fallback and video players ─────────────────────
+// Some image hosts (SimpCity's simp*.cuckcapital.cr) only serve their pictures to visitors of the forum. Away from
+// it — the offline viewer on github.io — Firefox keeps a separate cookie jar per site, the host answers with an
+// error (JSON) instead of the picture, and the browser blocks it. When an image fails, it's fetched once more
+// through Tampermonkey (your normal cookies for that host, the forum as referrer) and shown from memory.
+// A few at a time, and each address only once per page.
+
+var gmImageCache = new Map();
+var gmImageQueue = [];
+var gmImageActive = 0;
+var GM_IMAGE_PARALLEL = 4;
+
+function gmImageUrl(url, referer) {
+    if (gmImageCache.has(url)) return gmImageCache.get(url);
+    var p = new Promise(function (resolve, reject) {
+        gmImageQueue.push({ url: url, referer: referer, resolve: resolve, reject: reject });
+        pumpGmImages();
+    });
+    p.catch(function () { /* reported by the caller */ });
+    gmImageCache.set(url, p);
+    return p;
+}
+
+function pumpGmImages() {
+    while (gmImageActive < GM_IMAGE_PARALLEL && gmImageQueue.length) {
+        var job = gmImageQueue.shift();
+        gmImageActive++;
+        fetchGmImage(job, function () { gmImageActive--; pumpGmImages(); });
+    }
+}
+
+function fetchGmImage(job, done) {
+    if (typeof GM_xmlhttpRequest !== 'function') { job.reject(new Error('GM_xmlhttpRequest unavailable')); done(); return; }
+    var headers = {};
+    if (job.referer) headers.Referer = job.referer;
+    GM_xmlhttpRequest({
+        method: 'GET', url: job.url, responseType: 'blob', anonymous: false, timeout: 30000, headers: headers,
+        onload: function (r) {
+            var m = /^content-type:\s*([^;\r\n]+)/im.exec(r.responseHeaders || '');
+            var ct = (m ? m[1] : (r.response && r.response.type) || '').trim().toLowerCase();
+            var blob = r.response;
+            if (r.status >= 200 && r.status < 300 && blob && blob.size && (!ct || ct.indexOf('image/') === 0)) {
+                job.resolve(URL.createObjectURL(ct && blob.type !== ct ? new Blob([blob], { type: ct }) : blob));
+            } else {
+                var err = new Error('HTTP ' + r.status + ' ' + (ct || '?'));
+                if (blob && blob.text && blob.size < 4096) {
+                    blob.text().then(function (t) { log.warn('Image refused by its host: ' + job.url + ' — ' + err.message + ' — ' + t.slice(0, 200)); });
+                } else {
+                    log.warn('Image refused by its host: ' + job.url + ' — ' + err.message);
+                }
+                job.reject(err);
+            }
+            done();
+        },
+        onerror: function (e) { log.warn('Image couldn\'t be fetched: ' + job.url, e && e.error); job.reject(new Error('network')); done(); },
+        ontimeout: function () { job.reject(new Error('timeout')); done(); },
+    });
+}
+
+/** when img fails to load directly, try it through Tampermonkey; onFail() when that fails too */
+function imgFallback(img, src, referer, onFail) {
+    if (!src || /^(blob|data):/i.test(src)) return;
+    if (referer) img.setAttribute('data-ht-ref', referer);
+    img.addEventListener('error', function () {
+        if (img.getAttribute('data-ht-gm')) { if (onFail) onFail(); return; }
+        img.setAttribute('data-ht-gm', '1');
+        gmImageUrl(src, referer).then(function (u) { img.src = u; }).catch(function () { if (onFail) onFail(); });
+    });
+}
+
+var VIDEO_FILE_RE = /\.(mp4|webm|m4v|mov|ogv)(?:[?#]|$)/i;
+
+/** images get the fallback; "▶ Embedded player: <url>" blocks get the player itself (loaded when scrolled to) */
+function enhanceRendered(root, referer) {
+    root.querySelectorAll('img').forEach(function (img) { imgFallback(img, img.getAttribute('src'), referer); });
+    root.querySelectorAll('.ht-embed').forEach(function (box) {
+        var a = box.querySelector('a[href]');
+        var url = a && cleanUrl(a.getAttribute('href'));
+        if (!url || !/^https:/i.test(url) || box.querySelector('iframe, video')) return;
+        var player;
+        if (VIDEO_FILE_RE.test(new URL(url).pathname)) {
+            player = el('video', { className: 'ht-player', controls: true, preload: 'metadata', src: url });
+        } else {
+            // sandboxed: the player runs, but can't open pop-ups or navigate this page
+            player = el('iframe', {
+                className: 'ht-player', src: url, loading: 'lazy', allowfullscreen: true,
+                allow: 'fullscreen; autoplay; encrypted-media; picture-in-picture',
+                sandbox: 'allow-scripts allow-same-origin allow-presentation allow-forms',
+            });
+        }
+        box.classList.add('ht-embed-player');
+        box.appendChild(player);
+    });
 }
 
 /** the download section of a Pornolab topic: size, registration date, status (stored with the torrent) */

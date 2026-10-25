@@ -1,7 +1,7 @@
 /* [HF][EMP][PLAB][SC] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 4.1
+ * Version 4.2
  */
 
 .ht-badge {
@@ -362,3 +362,7 @@ h1.p-title-value .ht-tbtn { font-size: 12px; vertical-align: middle; }
 #ht-modal .ht-unfurl .ht-host { color: #777; font-size: 11px; }
 #ht-modal .ht-embed { margin: 4px 0; padding: 5px 9px; border: 1px dashed #444; border-radius: 4px; color: #aaa; word-break: break-all; }
 #ht-modal .ht-quote-head { font-weight: 700; color: #9cc4e4; margin-bottom: 4px; }
+
+/* ── Embedded players in rendered posts (v4.2) ── */
+#ht-modal .ht-embed.ht-embed-player { border-style: solid; }
+#ht-modal .ht-player { display: block; width: 100%; max-width: 860px; aspect-ratio: 16 / 9; height: auto; margin-top: 6px; border: 0; border-radius: 4px; background: #000; }

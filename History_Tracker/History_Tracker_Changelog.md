@@ -4,6 +4,10 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.2 - 2026-10-26
+- Saved SimpCity pages now show embedded videos as players (loaded when you scroll to them) instead of only their address. Players run sandboxed: they can't open pop-ups or leave the page. Direct video files get the browser's own player.
+- Offline viewer: images from hosts that only serve visitors of the forum (SimpCity's) were blocked there. When an image fails, it's now fetched again through Tampermonkey with your normal cookies, and with the forum as referrer. Tampermonkey asks once to allow those image hosts. This works for saved pages, thread thumbnails and the enlarged hover view.
+
 ## v4.1 - 2026-10-25
 - New: SimpCity support (simpcity.cr). Opening a thread records a visit with the page number, and searches (/search/…) are recorded, including searches inside one thread ("1 · in “Zarina Noir”").
 - SimpCity watched threads: each page of your Watched Threads list you open is saved: thumbnail, prefixes, forum, starter, replies, views, pages, and the last post's date and author. The History window has a new ⭐ Watched tab, sorted by last post, that marks threads with new posts since your last visit and shows how far you've read.

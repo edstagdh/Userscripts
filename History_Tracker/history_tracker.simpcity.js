@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — SimpCity
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.1
+// Version 4.2
 //
 // SimpCity (simpcity.cr) is a XenForo 2 forum. Here a "torrent" is a thread (/threads/slug.N/):
 //   • /watched/threads (any page): every thread listed is saved to ht_sc_watched — title, prefixes, thumbnail,
@@ -457,7 +457,7 @@ function renderWatchedTab(body, filter, onChange, openDetails) {
                 : 'Not opened yet';
             var lastPage = Math.max(w.np || 1, x.np || 1);
             var row = el('div', { className: 'ht-row' + (it.isNew ? ' ht-row-new' : '') }, [
-                coverEl(w.cv || (it.e && it.e.cv)),
+                coverEl(w.cv || (it.e && it.e.cv), null, originOf('sc') + '/'),
                 el('div', { className: 'ht-main' }, [
                     el('div', { className: 'ht-titleline' }, scPrefixChips(w.pf).concat([
                         el('a', linkProps('sc', torrentUrl('sc', it.id), { className: 'ht-title', text: it.t })),
@@ -564,7 +564,7 @@ function scRenderPosts(posts) {
             p.d ? el('span', { className: 'ht-sub', title: fmtDateTime(p.d), text: fmtDateTime(p.d) }) : null,
         ]);
         var bodyEl = el('div', { className: 'ht-post-body' });
-        bodyEl.appendChild(renderSafeHtml(String(p.h || '')));
+        bodyEl.appendChild(renderSafeHtml(String(p.h || ''), originOf('sc') + '/'));
         frag.appendChild(el('div', { className: 'ht-post' }, [head, bodyEl]));
     });
     return frag;
@@ -585,7 +585,7 @@ function scBuildThreadDetails(tid, onForgotten, showTitle) {
     }
     var cover = (e && e.cv) || w.cv;
     body.appendChild(el('div', { className: 'ht-torrent-head' }, [
-        cover ? coverEl(cover) : null,
+        cover ? coverEl(cover, null, originOf('sc') + '/') : null,
         el('div', { className: 'ht-stats' }, e ? [
             el('div', { className: 'ht-stat' }, [el('b', { text: String(e.c) }), el('span', { text: 'visits' })]),
             el('div', { className: 'ht-stat' }, [el('b', { text: fmtDate(e.f) }), el('span', { text: 'first visit' })]),

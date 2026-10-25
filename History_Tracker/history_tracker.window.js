@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.1
+// Version 4.2
 //
 // The 🕘 History window: modal shell, Searches / Torrents (& threads) / Watched tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom. SimpCity's Watched tab and thread details are
@@ -49,14 +49,23 @@ function setupCoverZoom() {
         img.removeAttribute('src');
     }
 
-    function show(src) {
+    function show(src, referer) {
         var full = thumbToFullUrl(src) || src;
+        var viaGm = false;
         status.textContent = 'Loading…';
         status.style.display = 'block';
         img.style.display = 'none';
         img.onload = function () { status.style.display = 'none'; img.style.display = 'block'; position(); };
         img.onerror = function () {
-            if (img.src !== src && full !== src) { img.src = src; return; }   // full-size guess failed: show the original
+            if (img.src !== src && full !== src && !viaGm) { img.src = src; return; }   // full-size guess failed: show the original
+            if (!viaGm) {                                                      // the host refused it: through Tampermonkey
+                viaGm = true;
+                gmImageUrl(src, referer).then(function (u) { if (current) img.src = u; }).catch(function () {
+                    status.textContent = 'Couldn\'t load the image';
+                    position();
+                });
+                return;
+            }
             status.textContent = 'Couldn\'t load the image';
             position();
         };
@@ -70,7 +79,7 @@ function setupCoverZoom() {
         if (!t || t === current || !getSetting('coverZoom')) return;
         hide();
         current = t;
-        timer = setTimeout(function () { show(t.getAttribute('data-ht-zoom')); }, ZOOM_DELAY_MS);
+        timer = setTimeout(function () { show(t.getAttribute('data-ht-zoom'), t.getAttribute('data-ht-ref')); }, ZOOM_DELAY_MS);
     });
     document.addEventListener('mousemove', function (ev) {
         mouse.x = ev.clientX;
@@ -163,10 +172,11 @@ function countPill(n) {
     return el('span', { className: 'ht-count' + (n > 1 ? ' ht-hot' : ''), title: n + ' visit' + (n === 1 ? '' : 's'), text: n + '×' });
 }
 
-function coverEl(src, cls) {
+/** referer: the site the cover comes from, for hosts that refuse direct requests (see imgFallback) */
+function coverEl(src, cls, referer) {
     if (!src) return el('div', { className: 'ht-cover ht-blank ' + (cls || ''), text: '–' });
     var img = el('img', { className: 'ht-cover ' + (cls || ''), src: src, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', 'data-ht-zoom': src });
-    img.addEventListener('error', function () { img.replaceWith(el('div', { className: 'ht-cover ht-blank', text: '–' })); });
+    imgFallback(img, src, referer || null, function () { img.replaceWith(el('div', { className: 'ht-cover ht-blank', text: '–' })); });
     return img;
 }
 
@@ -274,7 +284,7 @@ function buildTorrentDetails(tid, g, onForgotten, showTitle) {
         return body;
     }
     body.appendChild(el('div', { className: 'ht-torrent-head' }, [
-        e.cv ? coverEl(e.cv) : null,
+        e.cv ? coverEl(e.cv, null, g === 'sc' ? originOf('sc') + '/' : null) : null,
         el('div', { className: 'ht-stats' }, [
             el('div', { className: 'ht-stat' }, [el('b', { text: String(e.c) }), el('span', { text: 'visits' + (g !== GROUP ? ' on ' + GROUP_NAMES[g] : '') })]),
             el('div', { className: 'ht-stat' }, [el('b', { text: fmtDate(e.f) }), el('span', { text: 'first visit' })]),
@@ -639,7 +649,7 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
             var infoBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: t.g === 'sc' ? 'Details & saved pages (read them here)' : 'Details & saved presentation (render it here)', text: 'ℹ️' });
             var del = el('button', { type: 'button', className: 'ht-btn ht-icon ht-danger', title: 'Forget this torrent', text: '✕' });
             var row = el('div', { className: 'ht-row' }, [
-                coverEl(t.cv),
+                coverEl(t.cv, null, t.g === 'sc' ? originOf('sc') + '/' : null),
                 el('div', { className: 'ht-main' }, [
                     el('div', { className: 'ht-titleline' }, [
                         crossSite() ? siteTag(t.g) : null,
