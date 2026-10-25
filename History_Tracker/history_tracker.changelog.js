@@ -1,7 +1,7 @@
-// [HF][EMP] History Tracker — Changelog ("What's New")
+// [HF][EMP][PLAB] History Tracker — Changelog ("What's New")
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 3.5
+// Version 4.0
 //
 // Fetches History_Tracker_Changelog.md from GitHub and shows it after an update or on request,
 // in the same window as Advanced Better filelist (its CSS is in history_tracker.styles.css).
@@ -11,7 +11,7 @@
 // ── Changelog / "What's New" ─────────────────────────────────────────────
 // Same as Advanced Better filelist: fetched from GitHub, shown after an update and from the menu.
 
-var CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/History_Tracker_Changelog.md';
+var CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/History_Tracker/History_Tracker_Changelog.md';
 var CHANGELOG_HISTORY_DEPTH = 3;
 var changelogCache = null;
 var changelogModalEl = null;

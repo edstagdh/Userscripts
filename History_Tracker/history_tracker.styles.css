@@ -1,7 +1,7 @@
-/* [HF][EMP] History Tracker — stylesheet
+/* [HF][EMP][PLAB] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 3.5
+ * Version 4.0
  */
 
 .ht-badge {
@@ -309,3 +309,17 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 #ht-cl-modal .ht-cl-more { font-size: 11px; color: #777; padding: 10px 0 2px; border-top: 1px solid #2a2a2a; margin-top: 4px; }
 #ht-cl-modal .ht-cl-more a { color: #5a7a9a; text-decoration: none; }
 #ht-cl-modal .ht-cl-more a:hover { color: #7aa0c8; text-decoration: underline; }
+
+/* ── Pornolab: torrent facts, file list, rendered first post ── */
+#ht-modal .ht-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+#ht-modal .ht-fact { color: #e0e0e0; font-weight: 600; }
+#ht-modal .ht-fact .ht-sub { font-weight: 400; }
+#ht-modal .ht-files-box { margin-top: 8px; padding: 8px 12px; border: 1px solid #2e2e2e; border-radius: 6px; background: #202020; }
+#ht-modal ul.ht-files { list-style: none; margin: 0; padding-left: 16px; }
+#ht-modal .ht-files-box > ul.ht-files { padding-left: 0; }
+#ht-modal ul.ht-files li { line-height: 1.7; color: #c0c0c0; word-break: break-all; }
+#ht-modal ul.ht-files summary { cursor: pointer; color: #bcd; font-weight: 600; }
+#ht-modal .ht-render img[style*="float"] { max-width: 45%; }
+#ht-modal .ht-render h3, #ht-modal .ht-render h4 { margin: 8px 0; }
+#ht-modal .ht-render table { border-collapse: collapse; max-width: 100%; }
+#ht-modal .ht-render td, #ht-modal .ht-render th { padding: 3px 6px; border: 1px solid #333; }

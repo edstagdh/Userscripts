@@ -1,7 +1,7 @@
-// [HF][EMP] History Tracker — History window
+// [HF][EMP][PLAB] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 3.5
+// Version 4.0
 //
 // The 🕘 History window: modal shell, Searches / Torrents tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom.
@@ -190,7 +190,7 @@ function toggleTimes(row, items, btn) {
 }
 
 function searchUrl(text, g) {
-    return originOf(g) + '/torrents.php?searchtext=' + encodeURIComponent(text);
+    return originOf(g) + GROUP_PATHS[g || GROUP].search + encodeURIComponent(text);
 }
 
 // ── Torrent details (History window and torrent pages) ───────────────────
@@ -208,12 +208,13 @@ function presentationSection(tid, g) {
     var box = el('div', { className: 'ht-pres' });
     arr.slice().reverse().forEach(function (v, i) {
         var renderBtn = el('button', { type: 'button', className: 'ht-btn', text: '🖼 Render' });
-        var viewBtn = el('button', { type: 'button', className: 'ht-btn', text: '</> BBCode' });
+        var isHtml = v.f === 'html';   // Pornolab: a cleaned copy of the first post, not BBCode
+        var viewBtn = el('button', { type: 'button', className: 'ht-btn', text: isHtml ? '</> Source' : '</> BBCode' });
         var seen = v.l && v.l !== v.t ? ' · last seen ' + fmtDate(v.l) : '';
         var row = el('div', { className: 'ht-row' }, [
             el('div', { className: 'ht-main' }, [
                 el('div', { style: 'color:#e0e0e0;font-weight:600', text: (i === 0 ? 'Latest · ' : '') + fmtDateTime(v.t) }),
-                el('div', { className: 'ht-sub', text: fmtBytes(v.n) + ' of BBCode' + seen }),
+                el('div', { className: 'ht-sub', text: fmtBytes(v.n) + (isHtml ? ' · first post' : ' of BBCode') + seen }),
             ]),
             el('div', { className: 'ht-side' }, [renderBtn, viewBtn]),
         ]);
@@ -238,7 +239,7 @@ function presentationSection(tid, g) {
             decodeVersion(v).then(function (t) {
                 if (out !== target) return;
                 if (wanted === 'code') target.value = t;
-                else target.replaceChildren(renderBBCode(t));
+                else target.replaceChildren(isHtml ? renderSafeHtml(t) : renderBBCode(t));
             }).catch(function () {
                 if (wanted === 'code') target.value = 'Couldn\'t read the saved presentation.';
                 else target.textContent = 'Couldn\'t read the saved presentation.';
@@ -281,6 +282,7 @@ function buildTorrentDetails(tid, g, onForgotten, showTitle) {
     body.appendChild(el('div', { className: 'ht-label', text: 'Visits' }));
     body.appendChild(timesBox(e.v || []));
     if (e.c > (e.v || []).length) body.appendChild(el('p', { className: 'ht-note', text: 'Only the last ' + MAX_ITEM_VISITS + ' visit times are kept; the count includes older ones.' }));
+    if ((g || GROUP) === 'plab') body.appendChild(plabTorrentSection(tid, g, e));
     body.appendChild(presentationSection(tid, g));
     var forget = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Forget this torrent' });
     forget.addEventListener('click', function () {
@@ -302,6 +304,47 @@ function openTorrentHistory(tid, g, onChange) {
         if (onChange) onChange();
         markLinks();
     }, g !== GROUP));
+}
+
+/** Pornolab: size / date / status from the download section, the .torrent link and the saved file list */
+function plabTorrentSection(tid, g, e) {
+    var x = e.x || {};
+    var wrap = el('div');
+    wrap.appendChild(el('div', { className: 'ht-label', text: 'Torrent' }));
+    var facts = [];
+    if (x.sz) facts.push(['Size', x.sz]);
+    if (x.reg) facts.push(['Registered', x.reg]);
+    if (x.st) facts.push(['Status', x.st]);
+    var dl = downloadUrl(g, tid);
+    var row = el('div', { className: 'ht-facts' }, facts.map(function (f) {
+        return el('span', { className: 'ht-fact' }, [el('span', { className: 'ht-sub', text: f[0] + ' ' }), f[1]]);
+    }));
+    if (dl) row.appendChild(el('a', { className: 'ht-btn', href: dl, target: '_blank', rel: 'noopener', title: 'Needs you to be logged in to Pornolab', text: '⬇ Download .torrent' }));
+    wrap.appendChild(row);
+    var fl = readFileList(tid, g);
+    if (!fl) {
+        wrap.appendChild(el('p', { className: 'ht-note', text: getSetting('saveFileList')
+            ? 'No file list saved yet — it\'s saved the next time you open this topic.'
+            : 'Saving file lists is off (Settings & data).' }));
+        return wrap;
+    }
+    var btn = el('button', { type: 'button', className: 'ht-btn', text: '📁 File list · ' + fl.n + ' file' + (fl.n === 1 ? '' : 's') + ' · ' + fmtSize(fl.b) });
+    var note = el('span', { className: 'ht-sub', text: ' saved ' + ago(fl.t) });
+    var holder = el('div');
+    btn.addEventListener('click', function () {
+        if (holder.firstChild) { holder.replaceChildren(); btn.classList.remove('ht-active'); return; }
+        btn.classList.add('ht-active');
+        holder.replaceChildren(el('div', { className: 'ht-sub', text: 'Loading…' }));
+        decodeVersion(fl).then(function (json) {
+            holder.replaceChildren(el('div', { className: 'ht-files-box' }, [renderFileTree(JSON.parse(json))]));
+        }).catch(function (err) {
+            log.error('Reading the saved file list of #' + tid + ' failed', err);
+            holder.replaceChildren(el('div', { className: 'ht-sub', text: 'Couldn\'t read the saved file list.' }));
+        });
+    });
+    wrap.appendChild(el('div', { className: 'ht-buttons', style: 'margin-top:8px' }, [btn, note]));
+    wrap.appendChild(holder);
+    return wrap;
 }
 
 function totalSeconds(e) {
@@ -625,7 +668,7 @@ var CHECKS = [
         ['searchToast', 'Notice when I repeat a search'],
         ['searchBoxHint', '"Searched before" hint by the search box'],
         ['coverZoom', 'Enlarge covers on hover (History window)'],
-        ['crossSite', 'Show both sites\' history (HappyFappy + Empornium)'],
+        ['crossSite', 'Show all sites\' history together (HappyFappy, Empornium, Pornolab)'],
     ]],
 ];
 
@@ -663,7 +706,10 @@ function renderSettingsTab(body, setDirty) {
     ]));
 
     // presentation
-    checks(['Presentation (BBCode)', [['savePresentation', 'Save each torrent\'s presentation as BBCode']]]);
+    checks(['Presentation', [
+        ['savePresentation', 'Save each torrent\'s presentation (BBCode on HF / EMP, the first post on Pornolab)'],
+        ['saveFileList', 'Pornolab: save the file list (one extra request, like the site\'s "Список файлов" button)'],
+    ]]);
     var modeSel = el('select');
     [['latest', 'Only from my latest visit'], ['every', 'Every visit (a new copy when it changed)']].forEach(function (o) {
         var opt = el('option', { value: o[0], text: o[1] });
@@ -750,12 +796,15 @@ function renderSettingsTab(body, setDirty) {
 function siteDataBlock(g) {
     var keys = groupKeys(g);
     var pres = keysOf(g).pres;
+    var files = keysOf(g).files;
     var histBytes = 0;
     var presBytes = 0;
     var presCount = 0;
     keys.forEach(function (k) {
         var size = JSON.stringify(GM_getValue(k, null)).length;
-        if (k.indexOf(pres) === 0) { presBytes += size; presCount++; } else histBytes += size;
+        if (k.indexOf(pres) === 0) { presBytes += size; presCount++; }
+        else if (k.indexOf(files) === 0) presBytes += size;
+        else histBytes += size;
     });
     var logs = logKeys(g);
     var visits = logs.reduce(function (a, k) { var v = GM_getValue(k, []); return a + (Array.isArray(v) ? v.length : 0); }, 0);
@@ -772,6 +821,7 @@ function siteDataBlock(g) {
     clrP.addEventListener('click', function () {
         if (!confirm('Delete all ' + presCount + ' saved ' + GROUP_NAMES[g] + ' presentations? Your visit history is kept.')) return;
         presKeys(g).forEach(function (k) { GM_deleteValue(k); });
+        GM_listValues().forEach(function (k) { if (k.indexOf(files) === 0) GM_deleteValue(k); });
         log.info('Deleted ' + presCount + ' saved ' + GROUP_NAMES[g] + ' presentations');
         location.reload();
     });

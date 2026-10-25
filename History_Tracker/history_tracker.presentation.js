@@ -1,7 +1,7 @@
-// [HF][EMP] History Tracker — Presentations: BBCode capture, storage and preview
+// [HF][EMP][PLAB] History Tracker — Presentations: BBCode capture, storage and preview
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 3.5
+// Version 4.0
 //
 // Turns the torrent presentation (#descbox) back into BBCode (ported from [HF][EMP] Copy BBCode Button),
 // stores it gzip-compressed, prunes old copies, and renders saved BBCode for the "🖼 Render" preview.
@@ -355,11 +355,27 @@ function readPresentations(tid, g) {
     return Array.isArray(arr) ? arr : [];
 }
 
-function savePresentation(tid, now) {
+/** the presentation of the page being viewed: { text, f } — f: '' = BBCode (HF / EMP), 'html' = cleaned first post (Pornolab) */
+function capturePresentation(tid) {
+    if (GROUP === 'plab') {
+        if (parseInt(new URL(location.href).searchParams.get('start'), 10) > 0) {
+            log.debug('Pornolab: a later page of topic #' + tid + ' — the first post isn\'t on it, presentation not saved');
+            return null;
+        }
+        var post = document.querySelector('.post_body');
+        if (!post) { log.debug('No .post_body on this page — presentation not saved'); return null; }
+        return { text: sanitizeHtmlToString(post.querySelector('.post-user-message') || post), f: 'html' };
+    }
     var box = document.getElementById('descbox');
-    if (!box) { log.debug('No #descbox on this page — presentation not saved'); return; }
-    var text;
-    try { text = presentationToBBCode(box); } catch (e) { log.warn('Presentation → BBCode failed for #' + tid, e); return; }
+    if (!box) { log.debug('No #descbox on this page — presentation not saved'); return null; }
+    return { text: presentationToBBCode(box), f: '' };
+}
+
+function savePresentation(tid, now) {
+    var cap;
+    try { cap = capturePresentation(tid); } catch (e) { log.warn('Reading the presentation of #' + tid + ' failed', e); return; }
+    if (!cap) return;
+    var text = cap.text;
     if (!text || !text.trim()) { log.debug('Presentation of #' + tid + ' is empty — not saved'); return; }
     var h = hashText(text);
     var key = KEY.pres + tid;
@@ -373,6 +389,7 @@ function savePresentation(tid, now) {
     }
     encodeText(text).then(function (enc) {
         var v = { t: now, l: now, h: h, n: text.length, z: enc.z, d: enc.d };
+        if (cap.f) v.f = cap.f;
         var list = readPresentations(tid);
         if (getSetting('presentationMode') === 'every') {
             list.push(v);
@@ -382,7 +399,7 @@ function savePresentation(tid, now) {
             list = [v];
         }
         GM_setValue(key, list);
-        log.info('Saved presentation of #' + tid + ': ' + fmtBytes(text.length) + ' of BBCode, stored as ' +
+        log.info('Saved presentation of #' + tid + ': ' + fmtBytes(text.length) + (cap.f === 'html' ? ' of cleaned HTML' : ' of BBCode') + ', stored as ' +
             fmtBytes(enc.d.length) + (enc.z ? ' (gzip)' : ' (uncompressed)') + ' · ' + list.length + ' cop' + (list.length === 1 ? 'y' : 'ies') + ' kept');
         prunePresentations(tid);
     }).catch(function (e) { log.error('Saving the presentation of #' + tid + ' failed', e); });
@@ -401,8 +418,260 @@ function prunePresentations(keepId) {
     }).filter(function (x) { return x[0] !== KEY.pres + keepId; });
     dated.sort(function (a, b) { return a[1] - b[1]; });
     var drop = dated.slice(0, keys.length - max);
-    drop.forEach(function (x) { GM_deleteValue(x[0]); });
+    drop.forEach(function (x) {
+        GM_deleteValue(x[0]);
+        GM_deleteValue(x[0].replace(/_pres_/, '_files_'));   // Pornolab: the file list goes with it
+    });
     log.info('Removed ' + drop.length + ' old saved presentation(s) (keeping the ' + max + ' most recent torrents)');
+}
+
+// ── Pornolab: first post (cleaned HTML), download section, file list ──────
+// Pornolab has no BBCode to rebuild, so the topic's first post is kept as HTML — but only through an allow-list:
+// known formatting tags, a few style properties, http(s) links and images. Its own markup is translated on the
+// way: var.postImg → <img>, spoilers (.sp-wrap / .sp-body) → <details>, .post-b / .post-i / … → <strong> / <em> / ….
+// The same cleaner runs again when a saved post is rendered, so nothing stored can ever run code.
+
+var HTML_KEEP = {
+    DIV: 'div', P: 'p', SPAN: 'span', BR: 'br', HR: 'hr', B: 'strong', STRONG: 'strong', I: 'em', EM: 'em', U: 'u',
+    S: 's', STRIKE: 's', DEL: 's', A: 'a', IMG: 'img', UL: 'ul', OL: 'ol', LI: 'li', TABLE: 'table', TBODY: 'tbody',
+    THEAD: 'thead', TR: 'tr', TD: 'td', TH: 'th', PRE: 'pre', CODE: 'code', BLOCKQUOTE: 'blockquote', H1: 'h3', H2: 'h3',
+    H3: 'h3', H4: 'h4', H5: 'h5', H6: 'h6', DETAILS: 'details', SUMMARY: 'summary', SUP: 'sup', SUB: 'sub', CENTER: 'div', FONT: 'span',
+};
+var HTML_DROP = { SCRIPT: 1, STYLE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, FORM: 1, INPUT: 1, BUTTON: 1, SELECT: 1, TEXTAREA: 1, NOSCRIPT: 1, SVG: 1, VIDEO: 1, AUDIO: 1, LINK: 1, META: 1 };
+var HTML_STYLE_KEEP = ['color', 'background-color', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-align', 'text-decoration', 'line-height'];
+var HTML_CLASS_MAP = { 'post-b': 'strong', 'post-i': 'em', 'post-u': 'u', 'post-s': 's' };
+var HTML_MAX_NODES = 40000;
+
+function cleanStyle(style) {
+    if (!style) return '';
+    var out = [];
+    String(style).split(';').forEach(function (decl) {
+        var i = decl.indexOf(':');
+        if (i < 0) return;
+        var prop = decl.slice(0, i).trim().toLowerCase();
+        var val = decl.slice(i + 1).trim();
+        if (HTML_STYLE_KEEP.indexOf(prop) === -1 || !val || val.length > 80) return;
+        if (/url\s*\(|expression|javascript:|[<>{}\\]/i.test(val)) return;
+        out.push(prop + ': ' + val);
+    });
+    return out.join('; ');
+}
+
+function cleanUrl(u) {
+    if (!u) return null;
+    try { u = new URL(String(u).trim(), location.href).href; } catch (e) { return null; }
+    return /^https?:\/\//i.test(u) ? u : null;
+}
+
+/** allow-listed copy of a DOM subtree, as nodes of the current document */
+function sanitizeNode(src, budget) {
+    var frag = document.createDocumentFragment();
+    (function walk(node, parent) {
+        for (var c = node.firstChild; c; c = c.nextSibling) {
+            if (--budget.n < 0) return;
+            if (c.nodeType === 3) { parent.appendChild(document.createTextNode(c.nodeValue)); continue; }
+            if (c.nodeType !== 1) continue;
+            var tag = c.tagName.toUpperCase();
+            if (HTML_DROP[tag]) continue;
+            var cls = c.classList || { contains: function () { return false; } };
+            if (cls.contains('mc-note') || cls.contains('sp-title') || cls.contains('q-head-hidden')) continue;
+            // Pornolab markup → plain elements
+            if (tag === 'VAR' && cls.contains('postImg')) {
+                var isrc = cleanUrl(c.getAttribute('title'));
+                if (isrc) {
+                    var img = el('img', { src: isrc, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', 'data-ht-zoom': isrc });
+                    if (cls.contains('img-right')) img.setAttribute('style', 'float: right; margin: 0 0 6px 8px');
+                    else if (cls.contains('img-left')) img.setAttribute('style', 'float: left; margin: 0 8px 6px 0');
+                    parent.appendChild(img);
+                }
+                continue;
+            }
+            if (cls.contains('post-hr')) { parent.appendChild(el('hr')); continue; }
+            if (cls.contains('post-br')) { parent.appendChild(el('br')); continue; }
+            if (cls.contains('sp-body') || tag === 'DETAILS') {
+                var title = cleanText(c.getAttribute('title')) || '';
+                if (tag === 'DETAILS') { var sm = c.querySelector(':scope > summary'); title = sm ? cleanText(sm.textContent) : title; }
+                var det = el('details', { className: 'ht-bb-spoiler' }, [el('summary', { text: title || 'Spoiler' })]);
+                walk(c, det);
+                parent.appendChild(det);
+                continue;
+            }
+            if (tag === 'SUMMARY') continue;   // already used as the spoiler's title
+            if (cls.contains('q-wrap') || cls.contains('q')) {
+                if (cls.contains('q')) { var bq = el('blockquote', { className: 'ht-bb-quote' }); walk(c, bq); parent.appendChild(bq); }
+                else walk(c, parent);
+                continue;
+            }
+            if (cls.contains('c-wrap') || cls.contains('c-body')) {
+                parent.appendChild(el('pre', { className: 'ht-bb-pre', text: c.textContent }));
+                continue;
+            }
+            var mapped = null;
+            for (var k in HTML_CLASS_MAP) if (cls.contains(k)) mapped = HTML_CLASS_MAP[k];
+            var out = HTML_KEEP[tag] || mapped;
+            if (!out) { walk(c, parent); continue; }        // unknown element: keep its contents only
+            if (mapped && (tag === 'SPAN' || tag === 'DIV')) out = mapped;
+            var e = document.createElement(out);
+            var st = cleanStyle(c.getAttribute('style'));
+            if (tag === 'CENTER') st = (st ? st + '; ' : '') + 'text-align: center';
+            if (tag === 'FONT' && c.getAttribute('color')) st = (st ? st + '; ' : '') + cleanStyle('color: ' + c.getAttribute('color'));
+            if (st) e.setAttribute('style', st);
+            if (out === 'a') {
+                var href = cleanUrl(c.getAttribute('href'));
+                if (href) { e.setAttribute('href', href); e.setAttribute('target', '_blank'); e.setAttribute('rel', 'noopener noreferrer'); }
+            } else if (out === 'img') {
+                var src = cleanUrl(c.getAttribute('src') || c.getAttribute('data-src'));
+                if (!src) continue;
+                e.setAttribute('src', src); e.setAttribute('alt', ''); e.setAttribute('loading', 'lazy');
+                e.setAttribute('referrerpolicy', 'no-referrer'); e.setAttribute('data-ht-zoom', src);
+            } else if (out === 'td' || out === 'th') {
+                ['colspan', 'rowspan'].forEach(function (a) { var v = c.getAttribute(a); if (/^\d{1,2}$/.test(v || '')) e.setAttribute(a, v); });
+            } else if (out === 'details' || out === 'blockquote') {
+                e.className = out === 'details' ? 'ht-bb-spoiler' : 'ht-bb-quote';
+            }
+            parent.appendChild(e);
+            if (out !== 'img' && out !== 'br' && out !== 'hr') walk(c, e);
+        }
+    })(src, frag);
+    return frag;
+}
+
+/** capture: the cleaned post as an HTML string (only allow-listed elements and attributes are in it) */
+function sanitizeHtmlToString(root) {
+    var budget = { n: HTML_MAX_NODES };
+    var box = document.createElement('div');
+    box.appendChild(sanitizeNode(root, budget));
+    if (budget.n < 0) log.warn('Post is very large — saved the first ' + HTML_MAX_NODES + ' elements');
+    return box.innerHTML.replace(/\n{3,}/g, '\n\n');
+}
+
+/** render: a saved post, parsed inertly and cleaned again (it may come from an imported file) */
+function renderSafeHtml(html) {
+    var doc = new DOMParser().parseFromString('<!doctype html><body>' + html, 'text/html');
+    return sanitizeNode(doc.body, { n: HTML_MAX_NODES });
+}
+
+/** the download section of a Pornolab topic: size, registration date, status (stored with the torrent) */
+function savePlabTorrentInfo(tid) {
+    var box = document.getElementById('tor-reged');
+    if (!box) { log.debug('Pornolab: no download section on this page'); return; }
+    var info = {};
+    box.querySelectorAll('tr').forEach(function (tr) {
+        var tds = tr.querySelectorAll(':scope > td');
+        if (tds.length < 2) return;
+        var label = cleanText(tds[0].textContent).replace(/:$/, '').toLowerCase();
+        var value = cleanText(tds[1].textContent);
+        if (label === 'размер') info.sz = value;
+        else if (label === 'торрент') { var m = value.match(/\[\s*([^\]]+?)\s*\]/); info.reg = m ? m[1] : value; }
+        else if (label === 'статус') info.st = value.replace(/^\*\s*/, '');
+        else if (label === '.torrent скачан') info.dlc = value;
+    });
+    if (!info.sz && !info.reg) { log.debug('Pornolab: download section without size / date'); return; }
+    updateTorrent(tid, function (e) { if (!e) return null; e.x = info; return e; });
+    log.debug('Pornolab: torrent info of #' + tid, info);
+}
+
+/**
+ * The file list, fetched the way the site's own "Список файлов" button does (POST viewtorrent.php t=N, same site,
+ * your own session). Stored as a compact tree: dir = [name, [children]], file = [name, bytes]; refreshed weekly.
+ */
+var FILE_LIST_MAX_AGE = 7 * 86400000;
+var FILE_LIST_MAX_ITEMS = 20000;
+
+function parseFileTree(ul, counter) {
+    var out = [];
+    if (!ul) return out;
+    Array.prototype.forEach.call(ul.children, function (li) {
+        if (li.tagName !== 'LI' || counter.items >= FILE_LIST_MAX_ITEMS) return;
+        counter.items++;
+        var sub = li.querySelector(':scope > ul');
+        if (sub) {
+            var head = li.querySelector(':scope > span.b, :scope > b, :scope > span');
+            var dname = cleanText(head ? head.textContent : li.firstChild && li.firstChild.textContent) || '…';
+            dname = dname.replace(/\s*·.*$/, '');
+            out.push([dname, parseFileTree(sub, counter)]);
+            return;
+        }
+        var sizeEl = li.querySelector('i');
+        var bytes = sizeEl ? parseInt(String(sizeEl.textContent).replace(/[^\d]/g, ''), 10) || 0 : 0;
+        var clone = li.cloneNode(true);
+        clone.querySelectorAll('i, s').forEach(function (n) { n.remove(); });
+        var fname = cleanText(clone.textContent);
+        if (!fname) return;
+        counter.files++;
+        counter.bytes += bytes;
+        out.push([fname, bytes]);
+    });
+    return out;
+}
+
+function decodeHtmlResponse(buf, contentType) {
+    var m = /charset=([\w-]+)/i.exec(contentType || '');
+    var charset = m ? m[1] : 'windows-1251';          // Pornolab's pages are windows-1251
+    try { return new TextDecoder(charset).decode(buf); } catch (e) { return new TextDecoder('windows-1251').decode(buf); }
+}
+
+function savePlabFileList(tid, now) {
+    var key = keysOf().files + tid;
+    var cur = GM_getValue(key, null);
+    if (cur && now - cur.t < FILE_LIST_MAX_AGE) { log.debug('Pornolab: file list of #' + tid + ' saved ' + ago(cur.t) + ' — not fetched again'); return; }
+    fetch(location.origin + '/forum/viewtorrent.php', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+        body: 't=' + encodeURIComponent(tid),
+    }).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var ct = res.headers.get('Content-Type');
+        return res.arrayBuffer().then(function (buf) { return decodeHtmlResponse(buf, ct); });
+    }).then(function (html) {
+        var doc = new DOMParser().parseFromString('<!doctype html><body>' + html, 'text/html');
+        var root = doc.querySelector('ul.tree-root') || doc.querySelector('ul');
+        var counter = { items: 0, files: 0, bytes: 0 };
+        var tree = parseFileTree(root, counter);
+        if (!counter.files) { log.warn('Pornolab: couldn\'t read the file list of #' + tid + ' (unexpected format)', html.slice(0, 300)); return; }
+        return encodeText(JSON.stringify(tree)).then(function (enc) {
+            GM_setValue(key, { t: now, n: counter.files, b: counter.bytes, z: enc.z, d: enc.d });
+            log.info('Saved the file list of #' + tid + ': ' + counter.files + ' files, ' + fmtSize(counter.bytes) + ', stored as ' + fmtBytes(enc.d.length));
+        });
+    }).catch(function (e) { log.warn('Pornolab: fetching the file list of #' + tid + ' failed', e); });
+}
+
+function readFileList(tid, g) {
+    var v = GM_getValue(keysOf(g).files + tid, null);
+    return v && typeof v === 'object' ? v : null;
+}
+
+/** sizes like the site shows them (1024-based) */
+function fmtSize(bytes) {
+    var units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    var i = 0;
+    var n = Number(bytes) || 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i >= 3 ? n.toFixed(2) : i ? n.toFixed(1) : String(Math.round(n))) + ' ' + units[i];
+}
+
+/** the saved file list as a nested, collapsible tree */
+function renderFileTree(tree) {
+    function list(items) {
+        var ul = el('ul', { className: 'ht-files' });
+        items.forEach(function (it) {
+            if (Array.isArray(it[1])) {
+                var total = 0;
+                var count = 0;
+                (function sum(xs) { xs.forEach(function (x) { if (Array.isArray(x[1])) sum(x[1]); else { total += x[1]; count++; } }); })(it[1]);
+                var det = el('details', { open: items.length === 1 ? true : null }, [
+                    el('summary', {}, ['📁 ' + it[0], el('span', { className: 'ht-sub', text: ' · ' + count + ' file' + (count === 1 ? '' : 's') + ' · ' + fmtSize(total) })]),
+                    list(it[1]),
+                ]);
+                ul.appendChild(el('li', { className: 'ht-files-dir' }, [det]));
+            } else {
+                ul.appendChild(el('li', {}, [it[0], el('span', { className: 'ht-sub', text: ' · ' + fmtSize(it[1]) })]));
+            }
+        });
+        return ul;
+    }
+    return list(tree);
 }
 
 // ── BBCode → preview ─────────────────────────────────────────────────────

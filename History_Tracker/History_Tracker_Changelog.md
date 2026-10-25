@@ -1,8 +1,16 @@
 # Changelog
 
-All notable changes to [HF][EMP] History Tracker are documented here.
+All notable changes to [HF][EMP][PLAB] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
+
+## v4.0 - 2026-10-25
+- New: Pornolab support. Topic pages you open (viewtopic.php) are recorded as visits, and searches on the tracker (tracker.php) are recorded with their search text. Later result pages of the same search aren't counted again.
+- Pornolab search results get the 👁 badge and "hide visited", in list view and in [Pornolab] Advanced Viewer Experience's grid view. Rows hidden by its forum / uploader blacklist aren't counted as "visited hidden".
+- Pornolab has no BBCode, so a cleaned copy of the topic's first post is saved instead: text formatting, images, spoilers, quotes and links. 🖼 Render shows it in the History window, and "</> Source" shows what was saved.
+- Pornolab topics also keep the torrent's size, registration date and status, a "⬇ Download .torrent" link (dl.php holds no passkey; it needs you to be logged in), and the file list, fetched once a week like the site's "Список файлов" button. File lists can be turned off in Settings & data.
+- The History window, the search banners, the "↔ Seen on …" button and the offline viewer now cover all three sites, with a PLAB tag and chip.
+- Renamed to "[HF][EMP][PLAB] History Tracker". Update the existing script in Tampermonkey's editor to keep your history.
 
 ## v3.5 - 2026-10-25
 - Offline viewer: torrent details get more of the page. "← Back to the list" (or Esc) now sits in the row with the Searches / Torrents / Settings buttons instead of its own bar.
