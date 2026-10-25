@@ -1,7 +1,7 @@
-// [HF][EMP][PLAB] History Tracker — Presentations: BBCode capture, storage and preview
+// [HF][EMP][PLAB][SC] History Tracker — Presentations: BBCode capture, storage and preview
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.0
+// Version 4.1
 //
 // Turns the torrent presentation (#descbox) back into BBCode (ported from [HF][EMP] Copy BBCode Button),
 // stores it gzip-compressed, prunes old copies, and renders saved BBCode for the "🖼 Render" preview.
@@ -441,6 +441,35 @@ var HTML_DROP = { SCRIPT: 1, STYLE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, FORM: 1, 
 var HTML_STYLE_KEEP = ['color', 'background-color', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-align', 'text-decoration', 'line-height'];
 var HTML_CLASS_MAP = { 'post-b': 'strong', 'post-i': 'em', 'post-u': 'u', 'post-s': 's' };
 var HTML_MAX_NODES = 40000;
+// classes of our own that survive (a saved post is cleaned again when it's rendered)
+var HTML_OWN_CLASSES = ['ht-unfurl', 'ht-embed', 'ht-quote-head', 'ht-host'];
+
+/**
+ * SimpCity (XenForo) shortens outgoing links to /redirect/?to=<base64>; the saved copy keeps the real address,
+ * so it still works when the forum is down.
+ */
+function decodeRedirectUrl(href) {
+    if (!href || href.indexOf('/redirect/') === -1) return href;
+    try {
+        var u = new URL(href, location.href);
+        if (!/^\/redirect\/?$/.test(u.pathname)) return href;
+        var to = u.searchParams.get('to');
+        if (!to) return href;
+        var bin = atob(to.replace(/-/g, '+').replace(/_/g, '/'));
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        var real = new TextDecoder('utf-8').decode(bytes);
+        return /^https?:\/\//i.test(real) ? real : href;
+    } catch (e) { return href; }
+}
+
+/** an embedded player (iframe / video / click-to-load media) kept as a plain link */
+function embedLink(src, label) {
+    var url = cleanUrl(src);
+    if (!url) return null;
+    return el('div', { className: 'ht-embed' }, ['▶ ' + (label || 'Embedded media') + ': ',
+        el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: url })]);
+}
 
 function cleanStyle(style) {
     if (!style) return '';
@@ -472,8 +501,55 @@ function sanitizeNode(src, budget) {
             if (c.nodeType === 3) { parent.appendChild(document.createTextNode(c.nodeValue)); continue; }
             if (c.nodeType !== 1) continue;
             var tag = c.tagName.toUpperCase();
-            if (HTML_DROP[tag]) continue;
             var cls = c.classList || { contains: function () { return false; } };
+            // embedded players: a link instead (nothing in a saved post may load or run anything by itself)
+            if (tag === 'IFRAME' || tag === 'VIDEO') {
+                var vsrc = c.getAttribute('src') || c.getAttribute('data-src');
+                if (!vsrc && tag === 'VIDEO') { var so = c.querySelector('source[src]'); vsrc = so && so.getAttribute('src'); }
+                var emb = embedLink(vsrc, tag === 'VIDEO' ? 'Video' : 'Embedded player');
+                if (emb) parent.appendChild(emb);
+                continue;
+            }
+            var onclick = c.getAttribute('onclick') || '';
+            var lm = onclick.match(/loadMedia\(\s*this\s*,\s*['"]([^'"]+)['"]/);   // SimpCity's click-to-load media
+            if (lm) { var emb2 = embedLink(lm[1], 'Embedded media'); if (emb2) parent.appendChild(emb2); continue; }
+            if (HTML_DROP[tag]) continue;
+            // XenForo (SimpCity) markup → plain elements
+            if (cls.contains('bbCodeSpoiler')) {
+                var stl = c.querySelector('.bbCodeSpoiler-button-title');
+                var sdet = el('details', { className: 'ht-bb-spoiler' }, [el('summary', { text: 'Spoiler' + (stl && cleanText(stl.textContent) ? ': ' + cleanText(stl.textContent) : '') })]);
+                walk(c.querySelector('.bbCodeSpoiler-content') || c, sdet);
+                parent.appendChild(sdet);
+                continue;
+            }
+            if (cls.contains('bbCodeSpoiler-button') || cls.contains('bbCodeBlock-expandLink') || cls.contains('js-extraPhrases') || cls.contains('u-srOnly')) continue;
+            if (cls.contains('bbCodeBlock--unfurl')) {          // link preview card → a one-line link
+                var ulink = cleanUrl(decodeRedirectUrl(c.getAttribute('data-url') || ''));
+                var utl = c.querySelector('.js-unfurl-title');
+                var utitle = cleanText(utl ? utl.textContent : '') || ulink;
+                if (ulink) {
+                    parent.appendChild(el('div', { className: 'ht-unfurl' }, [
+                        el('a', { href: ulink, target: '_blank', rel: 'noopener noreferrer', text: utitle }),
+                        ' ', el('span', { className: 'ht-host', text: cleanText(c.getAttribute('data-host')) || '' }),
+                    ]));
+                }
+                continue;
+            }
+            if (cls.contains('bbCodeBlock--quote')) {
+                var qbq = el('blockquote', { className: 'ht-bb-quote' });
+                var qh = c.querySelector('.bbCodeBlock-title');
+                if (qh && cleanText(qh.textContent)) qbq.appendChild(el('div', { className: 'ht-quote-head', text: cleanText(qh.textContent) }));
+                walk(c.querySelector('.bbCodeBlock-expandContent') || c.querySelector('.bbCodeBlock-content') || c, qbq);
+                parent.appendChild(qbq);
+                continue;
+            }
+            if (cls.contains('bbCodeBlock--code')) {
+                var code = c.querySelector('code, pre, .bbCodeBlock-content') || c;
+                parent.appendChild(el('pre', { className: 'ht-bb-pre', text: code.textContent }));
+                continue;
+            }
+            if (cls.contains('bbCodeBlock-title') && !c.closest('.bbCodeBlock--quote')) continue;
+            if (tag === 'IMG' && cls.contains('smilie')) { parent.appendChild(document.createTextNode(c.getAttribute('alt') || '')); continue; }
             if (cls.contains('mc-note') || cls.contains('sp-title') || cls.contains('q-head-hidden')) continue;
             // Pornolab markup → plain elements
             if (tag === 'VAR' && cls.contains('postImg')) {
@@ -516,18 +592,20 @@ function sanitizeNode(src, budget) {
             if (tag === 'CENTER') st = (st ? st + '; ' : '') + 'text-align: center';
             if (tag === 'FONT' && c.getAttribute('color')) st = (st ? st + '; ' : '') + cleanStyle('color: ' + c.getAttribute('color'));
             if (st) e.setAttribute('style', st);
+            for (var oc = 0; oc < HTML_OWN_CLASSES.length; oc++) if (cls.contains(HTML_OWN_CLASSES[oc])) e.classList.add(HTML_OWN_CLASSES[oc]);
             if (out === 'a') {
-                var href = cleanUrl(c.getAttribute('href'));
+                var href = cleanUrl(decodeRedirectUrl(c.getAttribute('href')));
                 if (href) { e.setAttribute('href', href); e.setAttribute('target', '_blank'); e.setAttribute('rel', 'noopener noreferrer'); }
             } else if (out === 'img') {
-                var src = cleanUrl(c.getAttribute('src') || c.getAttribute('data-src'));
+                // XenForo keeps the original image address in data-url; src may be a proxy or a lazy placeholder
+                var src = cleanUrl(c.getAttribute('data-url')) || cleanUrl(c.getAttribute('src')) || cleanUrl(c.getAttribute('data-src'));
                 if (!src) continue;
                 e.setAttribute('src', src); e.setAttribute('alt', ''); e.setAttribute('loading', 'lazy');
                 e.setAttribute('referrerpolicy', 'no-referrer'); e.setAttribute('data-ht-zoom', src);
             } else if (out === 'td' || out === 'th') {
                 ['colspan', 'rowspan'].forEach(function (a) { var v = c.getAttribute(a); if (/^\d{1,2}$/.test(v || '')) e.setAttribute(a, v); });
             } else if (out === 'details' || out === 'blockquote') {
-                e.className = out === 'details' ? 'ht-bb-spoiler' : 'ht-bb-quote';
+                e.classList.add(out === 'details' ? 'ht-bb-spoiler' : 'ht-bb-quote');
             }
             parent.appendChild(e);
             if (out !== 'img' && out !== 'br' && out !== 'hr') walk(c, e);

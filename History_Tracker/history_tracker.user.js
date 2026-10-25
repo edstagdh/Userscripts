@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         [HF][EMP][PLAB] History Tracker
-// @version      4.0
-// @description  Remembers the torrent pages / topics you open and the searches you run on HappyFappy, Empornium and Pornolab (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history and, optionally, each torrent's presentation
+// @name         [HF][EMP][PLAB][SC] History Tracker
+// @version      4.1
+// @description  Remembers the torrent pages / topics / threads you open and the searches you run on HappyFappy, Empornium, Pornolab and SimpCity (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history, each torrent's presentation and, on SimpCity, your watched threads and the posts of the thread pages you read
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
 // @match        https://www.happyfappy.net/*
@@ -9,6 +9,7 @@
 // @match        https://emparadise.rs/*
 // @match        https://pornolab.net/forum/tracker.php*
 // @match        https://pornolab.net/forum/viewtopic.php*
+// @match        https://simpcity.cr/*
 // @match        https://edstagdh.github.io/Userscripts/history_tracker_viewer/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -20,10 +21,11 @@
 // @grant        GM_info
 // @grant        GM_getResourceText
 // @connect      raw.githubusercontent.com
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.0
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.0
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.0
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.0
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.1
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.1
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
@@ -31,10 +33,11 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pornolab.net
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=simpcity.cr
 // ==/UserScript==
 
 /*
- * [HF][EMP][PLAB] History Tracker: everything is kept in this script's Tampermonkey storage; nothing leaves the browser.
+ * [HF][EMP][PLAB][SC] History Tracker: everything is kept in this script's Tampermonkey storage; nothing leaves the browser.
  *
  *  • Torrent pages (torrents.php?id=N): each visit is recorded (time, title, cover URL, active time on the page and,
  *    optionally, the presentation as BBCode). A 👁 button next to the title shows your earlier visits.
@@ -51,7 +54,12 @@
  * Pornolab (pornolab.net, since v4.0): a "torrent" is a topic (viewtopic.php?t=N); searches (tracker.php) are read from
  * the results page's search box since the site sends them as a form. Instead of BBCode, a cleaned copy of the topic's
  * first post is saved (allow-listed tags only), plus size / date / status and the file list (viewtorrent.php).
- * The History window, search hint and repeat-search notice can show both sites together (setting "crossSite"),
+ * SimpCity (simpcity.cr, a XenForo forum, since v4.1): a "torrent" is a thread (/threads/slug.N/, visits note the page
+ * number). The watched-threads list (/watched/threads) is saved as you browse it (thumbnail, last post, replies, …),
+ * and each thread page you open keeps a cleaned copy of its posts (that page only). Searches are /search/N/?q=…,
+ * including searches inside one thread. Nothing is ever fetched from SimpCity: it rate-limits and blocks bots, so
+ * only the pages you open yourself are read.
+ * The History window, search hint and repeat-search notice can show all sites together (setting "crossSite"),
  * with an HF / EMP tag on each entry. 👁 badges stay per site: torrent ids aren't shared between the trackers.
  *
  * Storage (per site group G = hf | emp), kept small so page loads stay fast:
@@ -60,6 +68,9 @@
  *   ht_G_searches             { key: { c, f, l, lb: label, tx: search text, u: last url, v: [time, …] (last 200) } }
  *   ht_G_log_YYYY-MM          every visit of that month: [visitId, time, 't'|'s', torrent id | search key, seconds]
  *   ht_G_pres_<id>            saved presentations: [{ t: first seen, l: last seen, h: hash, n: chars, z: 1 = gzip, d: data }]
+ *   ht_G_files_<id>           Pornolab: the topic's file list
+ *   ht_sc_watched             SimpCity: watched threads { id: { t, p: path, cv, pf: prefixes, fo, lp: last post, … } }
+ *   ht_sc_posts_<id>_<page>   SimpCity: the posts of one thread page: { t, l, h, n: posts, a / e: first / last #, z, d }
  *   ht_last                   last page recorded (reloads within a few seconds aren't counted twice)
  */
 
@@ -71,6 +82,7 @@
 //   history_tracker.presentation.js   presentation → BBCode, saved presentations, BBCode preview
 //   history_tracker.window.js         History window (tabs, settings & data, torrent details), cover zoom
 //   history_tracker.changelog.js      "What's New" window
+//   history_tracker.simpcity.js       SimpCity: watched threads, thread pages' posts, the Watched tab
 //   history_tracker.styles.css        all CSS (@resource HT_STYLES)
 // When bumping @version, update the ?v= on those @require / @resource lines and SCRIPT_VERSION too.
 
@@ -78,6 +90,10 @@
 // ── Settings ─────────────────────────────────────────────────────────────
 
 var DEFAULT_SETTINGS = {
+    trackSite_hf: true,           // record anything at all on this site (HappyFappy / Empornium / Pornolab / SimpCity);
+    trackSite_emp: true,          //   when off, nothing new is saved there, but badges and the History window still work
+    trackSite_plab: true,
+    trackSite_sc: true,
     trackTorrents: true,          // record torrent page visits
     trackSearches: true,          // record searches
     markVisited: true,            // mark links to torrents you've opened
@@ -93,6 +109,9 @@ var DEFAULT_SETTINGS = {
     historySite: 'all',           // History window site filter last used: 'all' | 'hf' | 'emp'
     savePresentation: true,       // save the torrent's presentation (BBCode on HF / EMP, the first post on Pornolab)
     saveFileList: true,           // Pornolab: save the topic's file list (one extra request to the site, like its "Список файлов" button)
+    saveWatched: true,            // SimpCity: save the watched-threads list each time you open it
+    saveThreadPosts: true,        // SimpCity: save the posts of each thread page you open (that page only)
+    threadPagesMax: 200,          // SimpCity: saved thread pages kept, least recently seen dropped first (0 = no limit)
     presentationMode: 'latest',   // 'latest' = only from your latest visit | 'every' = a new copy whenever it changed
     presentationVersions: 10,     // 'every' mode: copies kept per torrent
     presentationMaxTorrents: 300, // presentations kept for this many most recently visited torrents (0 = no limit)
@@ -139,16 +158,21 @@ var SITE_GROUPS = {
     'www.empornium.sx': 'emp', 'empornium.sx': 'emp',
     'emparadise.rs': 'emp', 'www.emparadise.rs': 'emp',
     'pornolab.net': 'plab', 'www.pornolab.net': 'plab',
+    'simpcity.cr': 'sc', 'www.simpcity.cr': 'sc',
 };
-var GROUPS = ['hf', 'emp', 'plab'];
-var GROUP_NAMES = { hf: 'HappyFappy', emp: 'Empornium', plab: 'Pornolab' };
-var GROUP_SHORT = { hf: 'HF', emp: 'EMP', plab: 'PLAB' };
-var GROUP_DEFAULT_ORIGIN = { hf: 'https://www.happyfappy.net', emp: 'https://www.empornium.sx', plab: 'https://pornolab.net' };
+var GROUPS = ['hf', 'emp', 'plab', 'sc'];
+var GROUP_NAMES = { hf: 'HappyFappy', emp: 'Empornium', plab: 'Pornolab', sc: 'SimpCity' };
+var GROUP_SHORT = { hf: 'HF', emp: 'EMP', plab: 'PLAB', sc: 'SC' };
+var GROUP_DEFAULT_ORIGIN = { hf: 'https://www.happyfappy.net', emp: 'https://www.empornium.sx', plab: 'https://pornolab.net', sc: 'https://simpcity.cr' };
+/** what one "torrent" is on each site, for labels */
+var GROUP_ITEM = { hf: 'torrent', emp: 'torrent', plab: 'topic', sc: 'thread' };
 // Pornolab (TorrentPier forum): a "torrent" is a topic (viewtopic.php?t=N), searches are tracker.php (sent as a form)
 var GROUP_PATHS = {
     hf: { torrent: '/torrents.php?id=', search: '/torrents.php?searchtext=' },
     emp: { torrent: '/torrents.php?id=', search: '/torrents.php?searchtext=' },
     plab: { torrent: '/forum/viewtopic.php?t=', search: '/forum/tracker.php?nm=', download: '/forum/dl.php?t=' },
+    // SimpCity (XenForo 2): /threads/N/ redirects to the thread; search/search?keywords= runs a search as a plain link
+    sc: { torrent: '/threads/', search: '/search/search?o=date&keywords=' },
 };
 var HOST = location.hostname.toLowerCase();
 var GROUP = SITE_GROUPS[HOST] || 'hf';
@@ -165,9 +189,11 @@ var KEY = {
     log: 'ht_' + GROUP + '_log_',
     pres: 'ht_' + GROUP + '_pres_',
     files: 'ht_' + GROUP + '_files_',
+    posts: 'ht_' + GROUP + '_posts_',
+    watched: 'ht_' + GROUP + '_watched',
     last: 'ht_last',
 };
-var DATA_KEY_RE = /^ht_(hf|emp|plab)_(tor_\d+|searches|log_\d{4}-\d{2}|pres_\d+|files_\d+)$/;
+var DATA_KEY_RE = /^ht_(hf|emp|plab|sc)_(tor_\d+|searches|log_\d{4}-\d{2}|pres_\d+|files_\d+|posts_\d+_\d+|watched)$/;
 var SHARDS = 16;
 var MAX_ITEM_VISITS = 200;
 var LIST_PAGE = 150;
@@ -176,7 +202,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.0';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.1';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -263,6 +289,9 @@ function isOurs(node) {
 // ── Sites shown together ─────────────────────────────────────────────────
 // Tampermonkey storage belongs to the script, not to a website, so every site's history is readable from any of them.
 
+/** recording is on for the site being viewed (Settings & data → Sites) */
+function siteTracking(g) { return getSetting('trackSite_' + (g || GROUP)) !== false; }
+
 function crossSite() { return IS_VIEWER || !!getSetting('crossSite'); }
 function viewGroups() { return crossSite() ? GROUPS : [GROUP]; }
 
@@ -279,7 +308,10 @@ function onDomainOf(g, url) {
     try { var u = new URL(url); return originOf(g) + u.pathname + u.search + u.hash; } catch (e) { return url; }
 }
 
-function torrentUrl(g, id) { return originOf(g) + GROUP_PATHS[g || GROUP].torrent + id; }
+function torrentUrl(g, id) {
+    if ((g || GROUP) === 'sc') return originOf('sc') + scThreadPath(id);   // the thread's own /threads/slug.N/ when known
+    return originOf(g) + GROUP_PATHS[g || GROUP].torrent + id;
+}
 
 /** Pornolab only: the .torrent download (dl.php?t=N holds no passkey; HF / EMP download links do, so they're never saved) */
 function downloadUrl(g, id) { var p = GROUP_PATHS[g || GROUP].download; return p ? originOf(g) + p + id : null; }
@@ -303,6 +335,7 @@ var LIST_ACTIONS = ['', 'basic', 'advanced'];
 /** torrent id if this URL is a torrent page on this site group (torrents.php?id=N, no action / viewtopic.php?t=N), else 0 */
 function torrentIdFromUrl(u) {
     if (SITE_GROUPS[u.hostname.toLowerCase()] !== GROUP) return 0;
+    if (GROUP === 'sc') return scThreadIdFromPath(u.pathname);
     if (GROUP === 'plab') {
         if (u.pathname.toLowerCase() !== '/forum/viewtopic.php') return 0;
         var t = u.searchParams.get('t');
@@ -359,6 +392,7 @@ function classifyPlab(u) {
 
 function classify(u) {
     if (GROUP === 'plab') return classifyPlab(u);
+    if (GROUP === 'sc') return classifySc(u);
     if (u.pathname.toLowerCase() !== '/torrents.php') return { type: 'other' };
     var tid = torrentIdFromUrl(u);
     if (tid) return { type: 'torrent', torrent_id: tid };
@@ -380,11 +414,12 @@ function classify(u) {
 
 function linkTorrentId(a) {
     var href = a.getAttribute('href');
-    if (!href || href.charAt(0) === '#' || (href.indexOf('torrents.php') === -1 && href.indexOf('viewtopic.php') === -1)) return 0;
+    if (!href || href.charAt(0) === '#' || (href.indexOf('torrents.php') === -1 && href.indexOf('viewtopic.php') === -1 && href.indexOf('/threads/') === -1)) return 0;
     try { return torrentIdFromUrl(new URL(href, location.href)); } catch (e) { return 0; }
 }
 
 function pageTitle() {
+    if (GROUP === 'sc') return scPageTitle();
     var topic = document.querySelector('#topic-title');                 // Pornolab
     if (topic && cleanText(topic.textContent)) return cleanText(topic.textContent).slice(0, 300);
     var t = cleanText(document.title);
@@ -399,7 +434,11 @@ function pageTitle() {
 
 function coverUrl() {
     var src;
-    if (GROUP === 'plab') {                                              // first image of the first post (the poster)
+    if (GROUP === 'sc') {                                                // the thread's thumbnail (also its og:image)
+        var og = document.querySelector('meta[property="og:image"]');
+        src = og && og.getAttribute('content');
+        if (src && /defaultThumbnailImage|no_image/i.test(src)) src = '';
+    } else if (GROUP === 'plab') {                                       // first image of the first post (the poster)
         var v = document.querySelector('.post_body var.postImg[title]');
         src = v && v.getAttribute('title');
     } else {
@@ -445,7 +484,10 @@ function readObj(key) {
 /** storage keys of a site group (default: the site being viewed) */
 function keysOf(g) {
     g = g || GROUP;
-    return { shard: 'ht_' + g + '_tor_', searches: 'ht_' + g + '_searches', log: 'ht_' + g + '_log_', pres: 'ht_' + g + '_pres_', files: 'ht_' + g + '_files_' };
+    return {
+        shard: 'ht_' + g + '_tor_', searches: 'ht_' + g + '_searches', log: 'ht_' + g + '_log_', pres: 'ht_' + g + '_pres_',
+        files: 'ht_' + g + '_files_', posts: 'ht_' + g + '_posts_', watched: 'ht_' + g + '_watched',
+    };
 }
 
 // torrents: one in-memory Map per site group, filled from its 16 shards on first use
@@ -528,6 +570,7 @@ function forgetTorrent(tid, g) {
     removeFromLog('t', tid, g);
     GM_deleteValue(keysOf(g).pres + tid);
     GM_deleteValue(keysOf(g).files + tid);
+    if ((g || GROUP) === 'sc') scPageKeys(tid, 'sc').forEach(function (k) { GM_deleteValue(k); });
 }
 
 function forgetSearch(key, g) {
@@ -550,10 +593,11 @@ function pushCapped(arr, item) {
     return arr.length > MAX_ITEM_VISITS ? arr.slice(-MAX_ITEM_VISITS) : arr;
 }
 
-function recordTorrentVisit(tid, now) {
+function recordTorrentVisit(tid, now, page) {
     var title = pageTitle();
     var cover = getSetting('saveCover') ? coverUrl() : '';
     var visit = { id: uuid(), ts: now };
+    var row = page ? [now, 0, page] : [now, 0];   // SimpCity: which page of the thread
     updateTorrent(tid, function (e) {
         e = e || { c: 0, f: now, l: now, t: '', v: [] };
         e.c = (e.c || 0) + 1;
@@ -561,12 +605,12 @@ function recordTorrentVisit(tid, now) {
         e.f = Math.min(e.f || now, now);
         if (title) e.t = title;
         if (cover) e.cv = cover;
-        e.v = pushCapped(Array.isArray(e.v) ? e.v : [], [now, 0]);
+        e.v = pushCapped(Array.isArray(e.v) ? e.v : [], row);
         return e;
     });
     appendLog([visit.id, now, 't', tid, 0]);
     var e = torrents().get(tid);
-    log.info('Recorded torrent visit #' + tid + ' "' + title + '" (visit ' + (e ? e.c : 1) + ')' + (cover ? '' : ' — no cover found'));
+    log.info('Recorded ' + GROUP_ITEM[GROUP] + ' visit #' + tid + (page ? ' page ' + page : '') + ' "' + title + '" (visit ' + (e ? e.c : 1) + ')' + (cover ? '' : ' — no cover found'));
     return visit;
 }
 
@@ -710,20 +754,30 @@ function markLink(a, id) {
         badge.classList.toggle('ht-badge-chip', !!chipRow);
         badge.classList.toggle('ht-badge-before', before);
         linkBadges.set(a, badge);
-        var text = '👁 ' + e.c;
+        // SimpCity lists: "new" when the thread's last post is newer than your last visit
+        var lp = GROUP === 'sc' ? scListLastPost(a) : 0;
+        var isNew = !!(lp && lp > e.l);
+        var text = '👁 ' + e.c + (isNew ? ' · new' : '');
         if (badge.textContent !== text) badge.textContent = text;
         badge.setAttribute('data-ht-tip', id);
-        badge.classList.toggle('ht-old', Date.now() - e.l > 30 * 86400000);
+        if (isNew) badge.setAttribute('data-ht-new', String(lp)); else badge.removeAttribute('data-ht-new');
+        badge.classList.toggle('ht-new', isNew);
+        badge.classList.toggle('ht-old', !isNew && Date.now() - e.l > 30 * 86400000);
     } else {
         if (badge) removeBadge(a, badge);
         a.setAttribute('data-ht-tip', id);   // dim only: hover the link itself
     }
 }
 
-/** the torrent links worth marking: every torrents.php link on HF / EMP; on Pornolab only the search results' titles */
+/**
+ * the torrent links worth marking: every torrents.php link on HF / EMP; on Pornolab only the search results' titles;
+ * on SimpCity the thread titles of lists (watched threads, forums) and of search results
+ */
 var LINK_SELECTOR = GROUP === 'plab'
     ? '#tor-tbl a.tLink, .vg-card a[href*="viewtopic.php"]'
-    : 'a[href*="torrents.php"]';
+    : GROUP === 'sc'
+        ? '.structItem-title a[href*="/threads/"], .contentRow-title a[href*="/threads/"]'
+        : 'a[href*="torrents.php"]';
 
 function markLinks() {
     if (!getSetting('markVisited')) return;
@@ -940,11 +994,14 @@ function setupTooltip() {
         var id = parseInt(target.getAttribute('data-ht-tip'), 10);
         var e = torrents().get(id);
         if (!e) return;
-        var lastDur = e.v && e.v.length ? e.v[e.v.length - 1][1] : 0;
+        var lastV = e.v && e.v.length ? e.v[e.v.length - 1] : null;
+        var lastDur = lastV ? lastV[1] : 0;
+        var newTs = parseInt(target.getAttribute('data-ht-new'), 10);
         tip.replaceChildren(
             el('div', {}, [el('b', { text: 'Last visit: ' }), fmtDateTime(e.l)]),
-            el('div', { className: 'ht-tip-sub', text: ago(e.l) + (lastDur ? ' · ' + fmtDur(lastDur) + ' on page' : '') }),
-            el('div', { className: 'ht-tip-sub', text: e.c + ' visit' + (e.c === 1 ? '' : 's') + (e.c > 1 ? ' · first ' + fmtDate(e.f) : '') })
+            el('div', { className: 'ht-tip-sub', text: ago(e.l) + (lastV && lastV[2] ? ' · page ' + lastV[2] : '') + (lastDur ? ' · ' + fmtDur(lastDur) + ' on page' : '') }),
+            el('div', { className: 'ht-tip-sub', text: e.c + ' visit' + (e.c === 1 ? '' : 's') + (e.c > 1 ? ' · first ' + fmtDate(e.f) : '') }),
+            newTs ? el('div', { className: 'ht-tip-new', text: 'New posts since then — last post ' + ago(newTs) }) : ''
         );
         tip.style.display = 'block';
         var r = target.getBoundingClientRect();
@@ -994,21 +1051,22 @@ function addTorrentButton(tid, visit) {
         }
         btn.classList.toggle('ht-first', prevCount < 1);
         btn.textContent = prevCount > 0 ? '👁 Seen ' + prevCount + '× before · last ' + ago(prevLast) : '👁 First visit';
+        if (GROUP === 'sc') scDecorateThreadButton(btn, tid);
     }
     render();
     btn.addEventListener('click', function () { openTorrentHistory(tid, GROUP, render); });
 
-    var h2 = document.querySelector('h1.maintitle') || document.querySelector('#content h2') || document.querySelector('.thin h2') || document.querySelector('h2');
+    var h2 = document.querySelector('h1.maintitle') || document.querySelector('h1.p-title-value') || document.querySelector('#content h2') || document.querySelector('.thin h2') || document.querySelector('h2');
     if (h2) h2.appendChild(btn);
     else { btn.classList.add('ht-float'); document.body.appendChild(btn); }
 
-    // the same title opened on the other site(s)
-    if (!crossSite()) return;
+    // the same title opened on the other site(s) — torrents only: SimpCity thread titles are just names
+    if (!crossSite() || GROUP === 'sc') return;
     var own = torrents().get(tid);
     var title = normTitle((own && own.t) || pageTitle());
     if (!title) return;
     GROUPS.forEach(function (g) {
-        if (g === GROUP) return;
+        if (g === GROUP || g === 'sc') return;
         var best = null;
         torrents(g).forEach(function (e, id) {
             if (normTitle(e.t) === title && (!best || e.l > best.e.l)) best = { id: id, e: e };
@@ -1031,7 +1089,11 @@ function addMenuButton() {
     a.addEventListener('click', function (ev) { ev.preventDefault(); openHistory('searches'); });
     var uls = document.querySelectorAll('#menu ul');
     var plabNav = document.querySelector('#main-nav td.nowrap');
-    if (uls.length) {
+    var xfNav = document.querySelector('ul.p-nav-list');                 // SimpCity (XenForo)
+    if (xfNav) {
+        a.className = 'p-navEl-link';
+        xfNav.appendChild(el('li', { id: 'nav_ht', 'data-ht-ui': '' }, [el('div', { className: 'p-navEl' }, [a])]));
+    } else if (uls.length) {
         uls[uls.length - 1].appendChild(el('li', { id: 'nav_ht', 'data-ht-ui': '' }, [a]));
     } else if (plabNav) {
         plabNav.appendChild(el('span', { id: 'nav_ht', 'data-ht-ui': '' }, [' \u00b7 ', a]));
@@ -1044,7 +1106,7 @@ function addMenuButton() {
 }
 
 function attachSearchHints() {
-    var inputs = document.querySelectorAll('input[name="searchtext"], input[name="nm"]');
+    var inputs = document.querySelectorAll('input[name="searchtext"], input[name="nm"], input[name="keywords"]');
     if (!inputs.length) return;
     var cache = null;
     function searches() {
@@ -1093,6 +1155,7 @@ function attachSearchHints() {
 if (typeof GM_registerMenuCommand !== 'undefined') {
     GM_registerMenuCommand('🕘 Search history', function () { openHistory('searches'); });
     GM_registerMenuCommand('👁 Torrent history', function () { openHistory('torrents'); });
+    if (GROUP === 'sc' || IS_VIEWER) GM_registerMenuCommand('⭐ Watched threads (SimpCity)', function () { openHistory('watched'); });
     GM_registerMenuCommand('⚙️ Settings & data', function () { openHistory('settings'); });
     GM_registerMenuCommand('📜 Show Changelog', function () { showChangelogModal(); });
     var markOn = getSetting('markVisited');
@@ -1113,10 +1176,10 @@ if (typeof GM_registerMenuCommand !== 'undefined') {
 function startViewer() {
     injectStyle();
     hideZoom = setupCoverZoom();
-    document.title = 'History — [HF][EMP] History Tracker';
+    document.title = 'History — [HF][EMP][PLAB][SC] History Tracker';
     var fallback = document.getElementById('ht-viewer-fallback');
     if (fallback) fallback.remove();
-    log.info('Offline viewer — showing the saved history of both sites');
+    log.info('Offline viewer — showing the saved history of all sites');
     openHistory('searches');
     checkVersionUpdate();
 }
@@ -1142,13 +1205,15 @@ function start() {
     log.debug('v' + SCRIPT_VERSION + ' on ' + GROUP_NAMES[GROUP] + ' (' + HOST + ') — page type: ' + info.type +
         (info.torrent_id ? ' #' + info.torrent_id : '') + (info.key ? ' "' + info.key + '"' : ''));
     if (isReload) log.debug('Reload of the same page within ' + (dedupeMs / 1000) + 's — not counted as a new visit');
+    var siteOn = siteTracking();
+    if (!siteOn) log.info('Recording is off for ' + GROUP_NAMES[GROUP] + ' (Settings & data → Sites) — nothing is saved on this site');
 
     if (info.type === 'torrent') {
         var tid = info.torrent_id;
         CURRENT_TORRENT = tid;
         var visit = null;
-        if (getSetting('trackTorrents') && !isReload) {
-            visit = recordTorrentVisit(tid, now);
+        if (siteOn && getSetting('trackTorrents') && !isReload) {
+            visit = recordTorrentVisit(tid, now, info.page || 0);
             if (getSetting('timeOnPage')) trackTimeOnPage(visit, tid);
         }
         if (!visit && isReload) {
@@ -1156,13 +1221,20 @@ function start() {
             var ex = torrents().get(tid);
             if (ex && ex.v && ex.v.length) visit = { ts: ex.v[ex.v.length - 1][0] };
         }
-        if (getSetting('savePresentation') && getSetting('trackTorrents') && torrents().has(tid)) savePresentation(tid, now);
-        if (GROUP === 'plab' && getSetting('trackTorrents') && torrents().has(tid)) {
+        if (!siteOn) { /* recording off for this site: only show what's saved */ }
+        else if (GROUP === 'sc') {
+            // SimpCity: thread facts + watched state always (they only read the page); this page's posts if enabled
+            scSaveThreadInfo(tid, info.page || 1, now);
+            if (getSetting('saveThreadPosts')) scSaveThreadPage(tid, info.page || 1, now);
+        } else if (getSetting('savePresentation') && getSetting('trackTorrents') && torrents().has(tid)) savePresentation(tid, now);
+        if (siteOn && GROUP === 'plab' && getSetting('trackTorrents') && torrents().has(tid)) {
             savePlabTorrentInfo(tid);
             if (getSetting('saveFileList')) savePlabFileList(tid, now);
         }
         if (getSetting('torrentButton')) addTorrentButton(tid, visit);
-    } else if (info.type === 'search' && getSetting('trackSearches') && !isReload) {
+    } else if (info.type === 'watched') {
+        if (siteOn && getSetting('saveWatched')) scSaveWatchedList(info.page || 1, now);
+    } else if (info.type === 'search' && siteOn && getSetting('trackSearches') && !isReload) {
         var sv = recordSearchVisit(info, now);
         var elsewhere = viewGroups().filter(function (g) { return g !== GROUP; }).map(function (g) {
             var s = readSearches(g)[info.key];

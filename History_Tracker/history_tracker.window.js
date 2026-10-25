@@ -1,10 +1,11 @@
-// [HF][EMP][PLAB] History Tracker — History window
+// [HF][EMP][PLAB][SC] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.0
+// Version 4.1
 //
-// The 🕘 History window: modal shell, Searches / Torrents tabs, Settings & data (export / import),
-// torrent details with saved presentations, and the cover zoom.
+// The 🕘 History window: modal shell, Searches / Torrents (& threads) / Watched tabs, Settings & data (export / import),
+// torrent details with saved presentations, and the cover zoom. SimpCity's Watched tab and thread details are
+// in history_tracker.simpcity.js.
 // Top-level code here only declares things: everything from the main script (settings, storage,
 // log, el, …) is used inside functions, which run after the main script has loaded.
 
@@ -175,7 +176,7 @@ function timesBox(items) {
     var shown = list.slice(0, 100);
     var box = el('div', { className: 'ht-times' }, [
         el('ul', { className: 'ht-list' }, shown.map(function (x) {
-            return el('li', {}, [el('span', {}, [fmtDateTime(x[0]), el('span', { className: 'ht-sub', text: ' · ' + ago(x[0]) + (x[1] ? ' · ' + fmtDur(x[1]) : '') })])]);
+            return el('li', {}, [el('span', {}, [fmtDateTime(x[0]), el('span', { className: 'ht-sub', text: ' · ' + ago(x[0]) + (x[2] ? ' · page ' + x[2] : '') + (x[1] ? ' · ' + fmtDur(x[1]) : '') })])]);
         })),
     ]);
     if (list.length > shown.length) box.appendChild(el('div', { className: 'ht-sub', text: '…and ' + (list.length - shown.length) + ' older' }));
@@ -190,6 +191,7 @@ function toggleTimes(row, items, btn) {
 }
 
 function searchUrl(text, g) {
+    if ((g || GROUP) === 'sc') return scSearchUrl(text);
     return originOf(g) + GROUP_PATHS[g || GROUP].search + encodeURIComponent(text);
 }
 
@@ -256,6 +258,7 @@ function presentationSection(tid, g) {
 /** torrent details (stats, visits, saved presentations); onForgotten() runs after "Forget this torrent" */
 function buildTorrentDetails(tid, g, onForgotten, showTitle) {
     g = g || GROUP;
+    if (g === 'sc') return scBuildThreadDetails(tid, onForgotten, showTitle);
     var e = torrents(g).get(tid);
     var title = e && e.t ? e.t : 'Torrent #' + tid;
     var body = el('div');
@@ -362,7 +365,10 @@ function openHistory(tab, filter) {
         subtitle: SCRIPT_NAME + (IS_VIEWER ? ' — offline viewer' : '') + ' — ' +
             (crossSite() ? GROUPS.map(function (g) { return GROUP_NAMES[g]; }).join(' + ') : GROUP_NAMES[GROUP]) + ' — v' + SCRIPT_VERSION,
     });
-    var TABS = [['searches', 'Searches'], ['torrents', 'Torrents'], ['settings', 'Settings & data']];
+    // SimpCity's Watched tab: on SimpCity, and elsewhere once there are watched threads saved
+    var showWatched = viewGroups().indexOf('sc') !== -1 && (GROUP === 'sc' || IS_VIEWER || Object.keys(readWatched('sc')).length > 0);
+    var TABS = [['searches', 'Searches'], ['torrents', 'Torrents']].concat(showWatched ? [['watched', 'Watched']] : []).concat([['settings', 'Settings & data']]);
+    if (tab === 'watched' && !showWatched) tab = 'torrents';
     var buttons = {};
     // the tab's list stays in `pane` while a torrent's details are shown in `detail`,
     // so "Back" returns to exactly the same filter, sort, loaded rows and scroll position
@@ -393,7 +399,9 @@ function openHistory(tab, filter) {
         var nT = 0;
         viewGroups().forEach(function (g) { nS += Object.keys(readSearches(g)).length; nT += torrents(g).size; });
         buttons.searches.textContent = '🔎 Searches (' + nS + ')';
-        buttons.torrents.textContent = '👁 Torrents (' + nT + ')';
+        var vg = viewGroups();
+        buttons.torrents.textContent = '👁 ' + (vg.length === 1 && vg[0] === 'sc' ? 'Threads' : vg.indexOf('sc') !== -1 ? 'Torrents & threads' : 'Torrents') + ' (' + nT + ')';
+        if (buttons.watched) buttons.watched.textContent = '⭐ Watched (' + Object.keys(readWatched('sc')).length + ')';
     }
 
     function closeDetails() {
@@ -442,6 +450,7 @@ function openHistory(tab, filter) {
         m.body.scrollTop = 0;
         if (name === 'searches') renderSearchesTab(pane, f || '', counts);
         else if (name === 'torrents') renderTorrentsTab(pane, f || '', counts, openDetails);
+        else if (name === 'watched') renderWatchedTab(pane, f || '', counts, openDetails);
         else renderSettingsTab(pane, setSettingsDirty);
     }
 
@@ -462,7 +471,8 @@ function renderListTab(body, opts) {
     input.value = opts.filter || '';
     var sortSel = el('select', { 'aria-label': 'Sort' });
     opts.sorts.forEach(function (s) { sortSel.appendChild(el('option', { value: s[0], text: s[1] })); });
-    var chipsEl = crossSite() ? el('div', { className: 'ht-chips', role: 'group', 'aria-label': 'Site' }) : null;
+    var withSites = crossSite() && !opts.noSites;
+    var chipsEl = withSites ? el('div', { className: 'ht-chips', role: 'group', 'aria-label': 'Site' }) : null;
     var top = el('div');
     var list = el('div', { className: 'ht-rows' });
     var more = el('div', { className: 'ht-more' });
@@ -471,7 +481,7 @@ function renderListTab(body, opts) {
     var items = [];
     var shown = 0;
     var matches = [];
-    var site = crossSite() ? (getSetting('historySite') || 'all') : GROUP;
+    var site = withSites ? (getSetting('historySite') || 'all') : 'all';
     if (site !== 'all' && GROUPS.indexOf(site) === -1) site = 'all';
 
     function drawChips() {
@@ -481,7 +491,7 @@ function renderListTab(body, opts) {
             var n = c[0] === 'all' ? items.length : items.filter(function (it) { return it.g === c[0]; }).length;
             var b = el('button', {
                 type: 'button', className: 'ht-btn' + (site === c[0] ? ' ht-active' : ''),
-                title: c[0] === 'all' ? 'Both sites' : GROUP_NAMES[c[0]] + ' only', text: c[1] + ' (' + n + ')',
+                title: c[0] === 'all' ? 'All sites' : GROUP_NAMES[c[0]] + ' only', text: c[1] + ' (' + n + ')',
             });
             b.addEventListener('click', function () { site = c[0]; setSetting('historySite', site); drawChips(); draw(); });
             chipsEl.appendChild(b);
@@ -566,7 +576,7 @@ function renderSearchesTab(body, filter, onChange) {
             return el('div', { className: 'ht-action' + (found.length ? '' : ' ht-new') }, [
                 el('span', {}, found.length
                     ? ['You searched “', el('b', { text: text }), '” ' + perSiteCounts(found) + ' · last ' + ago(last)]
-                    : ['You never searched exactly “', el('b', { text: text }), '”' + (crossSite() ? ' on either site' : '')]),
+                    : ['You never searched exactly “', el('b', { text: text }), '”' + (crossSite() ? ' on any site' : '')]),
                 IS_VIEWER
                     ? el('span', { className: 'ht-buttons', style: 'margin:0' }, GROUPS.map(function (g) {
                         return el('a', linkProps(g, searchUrl(text, g), { className: 'ht-ok', text: '🔎 Search ' + GROUP_NAMES[g] }));
@@ -605,7 +615,7 @@ function renderSearchesTab(body, filter, onChange) {
 function renderTorrentsTab(body, filter, onChange, openDetails) {
     renderListTab(body, {
         filter: filter,
-        placeholder: 'Title or torrent id…',
+        placeholder: 'Title or id…',
         emptyText: 'No torrent pages recorded yet.',
         sorts: [['last', 'Most recent'], ['count', 'Most visited'], ['first', 'Oldest first'], ['az', 'A → Z'], ['id', 'Torrent id']],
         sortFns: {
@@ -626,16 +636,17 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
         },
         row: function (t, reload) {
             var timesBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'When you opened it', text: '🕘' });
-            var infoBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'Details & saved presentation (render it here)', text: 'ℹ️' });
+            var infoBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: t.g === 'sc' ? 'Details & saved pages (read them here)' : 'Details & saved presentation (render it here)', text: 'ℹ️' });
             var del = el('button', { type: 'button', className: 'ht-btn ht-icon ht-danger', title: 'Forget this torrent', text: '✕' });
             var row = el('div', { className: 'ht-row' }, [
                 coverEl(t.cv),
                 el('div', { className: 'ht-main' }, [
                     el('div', { className: 'ht-titleline' }, [
                         crossSite() ? siteTag(t.g) : null,
+                    ].concat(t.g === 'sc' && t.x ? scPrefixChips(t.x.pf) : [], [
                         el('a', linkProps(t.g, torrentUrl(t.g, t.id), { className: 'ht-title', text: t.t || 'Torrent #' + t.id })),
-                    ]),
-                    el('div', { className: 'ht-sub', text: '#' + t.id + ' · last ' + ago(t.l) + (t.c > 1 ? ' · first ' + fmtDate(t.f) : '') }),
+                    ])),
+                    el('div', { className: 'ht-sub', text: '#' + t.id + ' · last ' + ago(t.l) + (t.g === 'sc' && t.x && t.x.lr ? ' (page ' + t.x.lr + ')' : '') + (t.c > 1 ? ' · first ' + fmtDate(t.f) : '') }),
                 ]),
                 el('div', { className: 'ht-side' }, [countPill(t.c), timesBtn, infoBtn, del]),
             ]);
@@ -643,7 +654,7 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
             function afterForget() { reload(); onChange(); markLinks(); }
             infoBtn.addEventListener('click', function () { openDetails(t.id, t.g, afterForget); });
             del.addEventListener('click', function () {
-                if (!confirm('Forget all ' + t.c + ' visits of "' + (t.t || '#' + t.id) + '" on ' + GROUP_NAMES[t.g] + ' (and its saved presentation)?')) return;
+                if (!confirm('Forget all ' + t.c + ' visits of "' + (t.t || '#' + t.id) + '" on ' + GROUP_NAMES[t.g] + (t.g === 'sc' ? ' (and its saved pages)?' : ' (and its saved presentation)?'))) return;
                 forgetTorrent(t.id, t.g);
                 afterForget();
             });
@@ -655,6 +666,12 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
 // ── Settings & data tab ──────────────────────────────────────────────────
 
 var CHECKS = [
+    ['Sites — record on', [
+        ['trackSite_hf', 'HappyFappy'],
+        ['trackSite_emp', 'Empornium (empornium.sx, emparadise.rs)'],
+        ['trackSite_plab', 'Pornolab'],
+        ['trackSite_sc', 'SimpCity'],
+    ]],
     ['Record', [
         ['trackTorrents', 'Torrent page visits'],
         ['trackSearches', 'Searches'],
@@ -668,7 +685,7 @@ var CHECKS = [
         ['searchToast', 'Notice when I repeat a search'],
         ['searchBoxHint', '"Searched before" hint by the search box'],
         ['coverZoom', 'Enlarge covers on hover (History window)'],
-        ['crossSite', 'Show all sites\' history together (HappyFappy, Empornium, Pornolab)'],
+        ['crossSite', 'Show all sites\' history together (HappyFappy, Empornium, Pornolab, SimpCity)'],
     ]],
 ];
 
@@ -691,7 +708,10 @@ function renderSettingsTab(body, setDirty) {
         });
         body.appendChild(grid);
     }
-    CHECKS.forEach(checks);
+    CHECKS.forEach(function (group, i) {
+        checks(group);
+        if (i === 0) body.appendChild(el('p', { className: 'ht-note', text: 'A site that\'s off records nothing new (visits, searches, presentations, SimpCity\'s watched threads and pages); what\'s already saved stays, and its badges and History button keep working.' }));
+    });
 
     var styleSel = el('select');
     [['badge', '👁 badge after the link'], ['dim', 'Dim the link'], ['both', 'Badge + dim']].forEach(function (o) {
@@ -727,6 +747,15 @@ function renderSettingsTab(body, setDirty) {
         'Presentations are stored compressed (about a quarter of their size). Tampermonkey loads all of this script\'s storage on every page, ' +
         'so keep the total under a few MB — the limit above keeps it in check.' }));
 
+    checks(['SimpCity', [
+        ['saveWatched', 'Save my watched threads each time I open the Watched Threads list (thumbnail, last post, replies…)'],
+        ['saveThreadPosts', 'Save the posts of each thread page I open (that page only)'],
+    ]]);
+    var pagesMax = numberField('Saved thread pages kept (0 = all; least recently seen go first)', 'threadPagesMax', 0, 100000);
+    body.appendChild(el('div', { className: 'ht-grid', style: 'margin-top:10px' }, [pagesMax.field]));
+    body.appendChild(el('p', { className: 'ht-note', text:
+        'SimpCity is only read from the pages you open — the script never sends it a request (it rate-limits and blocks bots).' }));
+
     body.appendChild(el('div', { className: 'ht-label', text: 'Advanced' }));
     var logSel = el('select');
     [['off', 'Off'], ['error', 'Errors only'], ['warn', 'Warnings and errors (default)'], ['info', 'Info — what was recorded and saved'], ['debug', 'Debug — everything']].forEach(function (o) {
@@ -753,6 +782,7 @@ function renderSettingsTab(body, setDirty) {
         st.dedupeSeconds = numberValue(dedupe, 'dedupeSeconds');
         st.presentationVersions = numberValue(versions, 'presentationVersions');
         st.presentationMaxTorrents = numberValue(maxT, 'presentationMaxTorrents');
+        st.threadPagesMax = numberValue(pagesMax, 'threadPagesMax');
         return st;
     }
 
@@ -797,36 +827,40 @@ function siteDataBlock(g) {
     var keys = groupKeys(g);
     var pres = keysOf(g).pres;
     var files = keysOf(g).files;
+    var posts = keysOf(g).posts;
     var histBytes = 0;
     var presBytes = 0;
     var presCount = 0;
     keys.forEach(function (k) {
         var size = JSON.stringify(GM_getValue(k, null)).length;
-        if (k.indexOf(pres) === 0) { presBytes += size; presCount++; }
+        if (k.indexOf(pres) === 0 || k.indexOf(posts) === 0) { presBytes += size; presCount++; }
         else if (k.indexOf(files) === 0) presBytes += size;
         else histBytes += size;
     });
+    var isSc = g === 'sc';
+    var savedWord = isSc ? 'saved thread page' : 'saved presentation';
     var logs = logKeys(g);
     var visits = logs.reduce(function (a, k) { var v = GM_getValue(k, []); return a + (Array.isArray(v) ? v.length : 0); }, 0);
     var wrap = el('div');
     wrap.appendChild(el('div', { className: 'ht-label', text: 'Your ' + GROUP_NAMES[g] + ' data (Tampermonkey, this browser only)' }));
     wrap.appendChild(el('div', { className: 'ht-stats' }, [
-        el('div', { className: 'ht-stat' }, [el('b', { text: torrents(g).size + ' / ' + Object.keys(readSearches(g)).length }), el('span', { text: 'torrents / searches' })]),
+        el('div', { className: 'ht-stat' }, [el('b', { text: torrents(g).size + ' / ' + Object.keys(readSearches(g)).length + (isSc ? ' / ' + Object.keys(readWatched('sc')).length : '') }), el('span', { text: isSc ? 'threads / searches / watched' : 'torrents / searches' })]),
         el('div', { className: 'ht-stat' }, [el('b', { text: String(visits) }), el('span', { text: 'visits logged' + (logs.length ? ' since ' + logs[0].slice(keysOf(g).log.length) : '') })]),
         el('div', { className: 'ht-stat' }, [el('b', { text: fmtBytes(histBytes) }), el('span', { text: 'history storage' })]),
-        el('div', { className: 'ht-stat' }, [el('b', { text: fmtBytes(presBytes) }), el('span', { text: presCount + ' saved presentation' + (presCount === 1 ? '' : 's') })]),
+        el('div', { className: 'ht-stat' }, [el('b', { text: fmtBytes(presBytes) }), el('span', { text: presCount + ' ' + savedWord + (presCount === 1 ? '' : 's') })]),
     ]));
-    var clrP = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete ' + GROUP_SHORT[g] + ' saved presentations' });
+    if (!siteTracking(g)) wrap.appendChild(el('p', { className: 'ht-note', text: 'Recording is off for ' + GROUP_NAMES[g] + ' (Sites, above).' }));
+    var clrP = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete ' + GROUP_SHORT[g] + ' ' + savedWord + 's' });
     var clr = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete all ' + GROUP_NAMES[g] + ' history' });
     clrP.addEventListener('click', function () {
-        if (!confirm('Delete all ' + presCount + ' saved ' + GROUP_NAMES[g] + ' presentations? Your visit history is kept.')) return;
+        if (!confirm('Delete all ' + presCount + ' ' + savedWord + 's of ' + GROUP_NAMES[g] + '? Your visit history is kept.')) return;
         presKeys(g).forEach(function (k) { GM_deleteValue(k); });
-        GM_listValues().forEach(function (k) { if (k.indexOf(files) === 0) GM_deleteValue(k); });
-        log.info('Deleted ' + presCount + ' saved ' + GROUP_NAMES[g] + ' presentations');
+        GM_listValues().forEach(function (k) { if (k.indexOf(files) === 0 || k.indexOf(posts) === 0) GM_deleteValue(k); });
+        log.info('Deleted ' + presCount + ' ' + savedWord + 's of ' + GROUP_NAMES[g]);
         location.reload();
     });
     clr.addEventListener('click', function () {
-        if (!confirm('Delete your whole ' + GROUP_NAMES[g] + ' history (torrents, searches, presentations and the visit log)? Settings are kept. This can\'t be undone — export first if unsure.')) return;
+        if (!confirm('Delete your whole ' + GROUP_NAMES[g] + ' history (' + (isSc ? 'threads, searches, watched threads, saved pages' : 'torrents, searches, presentations') + ' and the visit log)? Settings are kept. This can\'t be undone — export first if unsure.')) return;
         groupKeys(g).forEach(function (k) { GM_deleteValue(k); });
         log.info('Deleted all ' + GROUP_NAMES[g] + ' history');
         location.reload();
@@ -887,7 +921,7 @@ function importData(f) {
         if (!confirm('Replace your ' + names.join(' + ') + ' history in this browser with the file\'s (' + nT + ' torrents, ' + nS + ' searches, exported ' +
             (data.exported_at ? fmtDate(Date.parse(data.exported_at)) : '?') + ')?')) return;
         GM_listValues().forEach(function (k) {
-            var m = k.match(/^ht_(hf|emp)_/);
+            var m = k.match(/^ht_(hf|emp|plab|sc)_/);
             if (m && groups[m[1]] && DATA_KEY_RE.test(k)) GM_deleteValue(k);
         });
         Object.keys(values).forEach(function (k) { GM_setValue(k, values[k]); });

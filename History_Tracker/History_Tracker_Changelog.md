@@ -1,8 +1,19 @@
 # Changelog
 
-All notable changes to [HF][EMP][PLAB] History Tracker are documented here.
+All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
+
+## v4.1 - 2026-10-25
+- New: SimpCity support (simpcity.cr). Opening a thread records a visit with the page number, and searches (/search/…) are recorded, including searches inside one thread ("1 · in “Zarina Noir”").
+- SimpCity watched threads: each page of your Watched Threads list you open is saved: thumbnail, prefixes, forum, starter, replies, views, pages, and the last post's date and author. The History window has a new ⭐ Watched tab, sorted by last post, that marks threads with new posts since your last visit and shows how far you've read.
+- SimpCity thread pages: the posts of each page you open are saved (that page only), cleaned like Pornolab's first post: text, images, spoilers, quotes, link previews as plain links, embedded players as links, and the forum's /redirect/ links turned back into the real addresses. "🖼 Read" in the thread's details shows them, even in the offline viewer. The newest 200 pages are kept (configurable).
+- The script never sends a request to SimpCity: it only reads the pages you open, so its rate limits aren't touched.
+- SimpCity lists: thread links get the 👁 badge, which turns amber ("👁 3 · new") when the thread has posts newer than your last visit.
+- New in Settings & data: turn recording on or off per site (HappyFappy, Empornium, Pornolab, SimpCity). A site that's off records nothing new, but its badges and History window keep working.
+- Pornolab now has its own PLAB tag color, and SimpCity's is SC.
+- Fixed: importing a backup now also replaces the Pornolab history in the file.
+- Renamed to "[HF][EMP][PLAB][SC] History Tracker".
 
 ## v4.0 - 2026-10-25
 - New: Pornolab support. Topic pages you open (viewtopic.php) are recorded as visits, and searches on the tracker (tracker.php) are recorded with their search text. Later result pages of the same search aren't counted again.

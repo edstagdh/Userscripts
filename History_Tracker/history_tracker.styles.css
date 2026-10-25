@@ -1,7 +1,7 @@
-/* [HF][EMP][PLAB] History Tracker — stylesheet
+/* [HF][EMP][PLAB][SC] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 4.0
+ * Version 4.1
  */
 
 .ht-badge {
@@ -323,3 +323,42 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 #ht-modal .ht-render h3, #ht-modal .ht-render h4 { margin: 8px 0; }
 #ht-modal .ht-render table { border-collapse: collapse; max-width: 100%; }
 #ht-modal .ht-render td, #ht-modal .ht-render th { padding: 3px 6px; border: 1px solid #333; }
+
+/* ── Site tags for Pornolab and SimpCity ── */
+.ht-site-plab { color: #ffc080; background: #3a2610; border-color: #8a5a2a; }
+.ht-site-sc { color: #ff9ac0; background: #3a1626; border-color: #8a3a5c; }
+
+/* ── SimpCity: menu item, "new" badge, Watched tab, saved pages ── */
+#nav_ht .p-navEl-link { color: #7ecfff !important; font-weight: 700; }
+#nav_ht .p-navEl-link:hover { color: #bfe8ff !important; }
+h1.p-title-value .ht-tbtn { font-size: 12px; vertical-align: middle; }
+.ht-badge.ht-new { background: #4a3a10; color: #ffd27e !important; border-color: #c9a040; }
+.ht-tip .ht-tip-new { color: #ffd27e; margin-top: 2px; }
+#ht-modal .ht-prefix {
+    display: inline-block; flex-shrink: 0; padding: 0 5px; border-radius: 3px; background: #2e2e2e; border: 1px solid #444;
+    color: #ccc; font-size: 9px; font-weight: 700; line-height: 14px; vertical-align: middle; white-space: nowrap;
+}
+#ht-modal .ht-prefix.ht-tag { background: #1e2a36; border-color: #34506a; color: #9cc4e4; font-weight: 600; }
+#ht-modal .ht-row.ht-row-new { box-shadow: inset 3px 0 0 #c9a040; }
+#ht-modal .ht-newpill {
+    display: inline-block; padding: 1px 7px; border-radius: 10px; background: #4a3a10; border: 1px solid #c9a040;
+    color: #ffd27e; font-size: 10px; font-weight: 800; text-decoration: none; text-transform: uppercase; letter-spacing: .05em;
+}
+#ht-modal .ht-newpill:hover { background: #5e4a16; color: #ffe2a8; }
+#ht-modal .ht-newtext { color: #ffd27e; }
+#ht-modal .ht-mine { color: #9cc4e4; }
+#ht-modal .ht-never { color: #777; font-style: italic; }
+#ht-modal .ht-posts { padding: 0; background: none; border: none; }
+#ht-modal .ht-post { margin: 10px 0; border: 1px solid #2e2e2e; border-radius: 6px; background: #1c1c1c; overflow: hidden; }
+#ht-modal .ht-post-head {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 12px;
+    background: #232323; border-bottom: 1px solid #2e2e2e;
+}
+#ht-modal .ht-post-head a { color: #7ecfff; font-weight: 700; text-decoration: none; }
+#ht-modal .ht-post-head b { color: #e0e0e0; }
+#ht-modal .ht-post-body { padding: 10px 12px; overflow-x: auto; line-height: 1.5; }
+#ht-modal .ht-post-body img { max-width: 100%; height: auto; }
+#ht-modal .ht-unfurl { margin: 4px 0; padding: 5px 9px; border: 1px solid #333; border-left: 3px solid #4a9fd4; border-radius: 4px; background: #202020; }
+#ht-modal .ht-unfurl .ht-host { color: #777; font-size: 11px; }
+#ht-modal .ht-embed { margin: 4px 0; padding: 5px 9px; border: 1px dashed #444; border-radius: 4px; color: #aaa; word-break: break-all; }
+#ht-modal .ht-quote-head { font-weight: 700; color: #9cc4e4; margin-bottom: 4px; }
