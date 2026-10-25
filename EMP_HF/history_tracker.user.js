@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP] History Tracker
-// @version      3.4
+// @version      3.5
 // @description  Remembers the torrent pages you open and the searches you run (stored locally in Tampermonkey), marks torrents you've already visited, keeps a searchable search history and, optionally, each torrent's presentation as BBCode
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -18,10 +18,10 @@
 // @grant        GM_info
 // @grant        GM_getResourceText
 // @connect      raw.githubusercontent.com
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.presentation.js?v=3.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.window.js?v=3.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.changelog.js?v=3.4
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.styles.css?v=3.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.presentation.js?v=3.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.window.js?v=3.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.changelog.js?v=3.5
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.styles.css?v=3.5
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/history_tracker.user.js
@@ -161,7 +161,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.4';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '3.5';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 

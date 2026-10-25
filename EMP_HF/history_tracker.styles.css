@@ -1,7 +1,7 @@
 /* [HF][EMP] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 3.4
+ * Version 3.5
  */
 
 .ht-badge {
@@ -113,6 +113,11 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 #ht-modal .ht-subtitle { display: block; font-size: 10px; color: #666; letter-spacing: 0.02em; text-align: left; }
 #ht-modal .ht-header-right { display: flex; gap: 6px; flex-shrink: 0; }
 #ht-modal .ht-tabs { display: flex; gap: 6px; padding: 10px 18px 0; flex-wrap: wrap; }
+#ht-modal .ht-tabs-back { display: flex; align-items: center; gap: 10px; margin-left: 8px; padding-left: 14px; border-left: 1px solid #3a3a3a; }
+#ht-modal .ht-header-right a.ht-github-link.ht-btn { color: #89a0b8; font-weight: 400; }
+#ht-modal .ht-header-right a.ht-github-link.ht-btn:hover { color: #bcd; text-decoration: none; }
+#ht-backdrop.ht-fullpage .ht-tabs { padding-bottom: 10px; border-bottom: 1px solid #2e2e2e; }
+#ht-backdrop.ht-fullpage .ht-body { padding-top: 12px; }
 #ht-modal .ht-body { padding: 12px 18px; overflow-y: auto; flex: 1; }
 #ht-modal .ht-footer {
     display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;

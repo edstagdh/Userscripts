@@ -1,7 +1,7 @@
 // [HF][EMP] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 3.4
+// Version 3.5
 //
 // The 🕘 History window: modal shell, Searches / Torrents tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom.
@@ -121,13 +121,25 @@ function openModal(opts) {
         ]),
         el('div', { className: 'ht-header-right' }, (opts.headerButtons || []).concat(closeBtn ? [closeBtn] : [])),
     ]);
+    var githubLink = el('a', { className: 'ht-github-link', href: 'https://github.com/edstagdh/Userscripts', target: '_blank', rel: 'noopener noreferrer', text: '🔗 View on GitHub' });
     var body = el('div', { className: 'ht-body' });
     var okBtn = el('button', { type: 'button', className: 'ht-ok' + (opts.fullPage ? ' ht-hidden' : ''), text: 'Close' });
     var actions = el('div', { className: 'ht-footer-actions' }, [okBtn]);
-    var footer = el('div', { className: 'ht-footer' }, [
-        el('a', { className: 'ht-github-link', href: 'https://github.com/edstagdh/Userscripts', target: '_blank', rel: 'noopener noreferrer', text: '🔗 View on GitHub' }),
-        actions,
-    ]);
+    var footer;
+    if (opts.fullPage) {
+        // offline viewer: GitHub link next to the header buttons; the footer only appears for "Save & reload"
+        githubLink.classList.add('ht-btn');
+        header.lastChild.appendChild(githubLink);
+        footer = el('div', { className: 'ht-footer ht-hidden' }, [actions]);
+    } else {
+        footer = el('div', { className: 'ht-footer' }, [githubLink, actions]);
+    }
+    /** full page: show the footer only while one of its buttons is visible */
+    function refreshFooter() {
+        if (!opts.fullPage) return;
+        var any = Array.prototype.some.call(actions.children, function (b) { return !b.classList.contains('ht-hidden'); });
+        footer.classList.toggle('ht-hidden', !any);
+    }
     var modal = el('div', { id: 'ht-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title },
         [header, opts.tabs || null, body, footer]);
     bg.appendChild(modal);
@@ -141,7 +153,7 @@ function openModal(opts) {
     };
     document.addEventListener('keydown', modalKeyHandler, true);
     document.body.appendChild(bg);
-    return { body: body, actions: actions, okBtn: okBtn };
+    return { body: body, actions: actions, okBtn: okBtn, refreshFooter: refreshFooter };
 }
 
 // ── Shared list pieces ───────────────────────────────────────────────────
@@ -315,6 +327,7 @@ function openHistory(tab, filter) {
     var detail = el('div', { className: 'ht-hidden' });
     m.body.append(pane, detail);
     var listScroll = 0;
+    var tabsBack = null;   // offline viewer: the "Back to the list" button while it sits in the tabs row
 
     // Settings: "Save & reload" shows up next to Close once something differs from what's saved
     var saveBtn = el('button', { type: 'button', className: 'ht-ok ht-hidden', text: '💾 Save & reload' });
@@ -329,6 +342,7 @@ function openHistory(tab, filter) {
         m.okBtn.textContent = dirty ? 'Close without saving' : 'Close';
         m.okBtn.classList.toggle('ht-discard', dirty);
         modalCloseGuard = dirty ? function () { return confirm('You have unsaved settings. Close without saving them?'); } : null;
+        m.refreshFooter();
     }
 
     function counts() {
@@ -343,6 +357,7 @@ function openHistory(tab, filter) {
         if (detail.classList.contains('ht-hidden')) return;
         hideZoom();
         detail.replaceChildren();
+        if (tabsBack) { tabsBack.remove(); tabsBack = null; }
         detail.classList.add('ht-hidden');
         pane.classList.remove('ht-hidden');
         m.body.scrollTop = listScroll;
@@ -354,10 +369,17 @@ function openHistory(tab, filter) {
         hideZoom();
         var back = el('button', { type: 'button', className: 'ht-btn ht-back', text: '← Back to the list' });
         back.addEventListener('click', closeDetails);
-        detail.replaceChildren(
-            el('div', { className: 'ht-backbar' }, [back, el('span', { className: 'ht-sub', text: 'or press Esc' })]),
-            buildTorrentDetails(tid, g, function () { closeDetails(); if (afterForget) afterForget(); }, true)
-        );
+        var hint = el('span', { className: 'ht-sub', text: 'or press Esc' });
+        var details = buildTorrentDetails(tid, g, function () { closeDetails(); if (afterForget) afterForget(); }, true);
+        if (IS_VIEWER) {
+            // offline viewer: in the tabs row, so the details get the whole height of the page
+            if (tabsBack) tabsBack.remove();
+            tabsBack = el('span', { className: 'ht-tabs-back' }, [back, hint]);
+            tabsEl.appendChild(tabsBack);
+            detail.replaceChildren(details);
+        } else {
+            detail.replaceChildren(el('div', { className: 'ht-backbar' }, [back, hint]), details);
+        }
         pane.classList.add('ht-hidden');
         detail.classList.remove('ht-hidden');
         m.body.scrollTop = 0;

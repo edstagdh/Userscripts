@@ -1,7 +1,7 @@
 // [HF][EMP] History Tracker — Presentations: BBCode capture, storage and preview
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 3.4
+// Version 3.5
 //
 // Turns the torrent presentation (#descbox) back into BBCode (ported from [HF][EMP] Copy BBCode Button),
 // stores it gzip-compressed, prunes old copies, and renders saved BBCode for the "🖼 Render" preview.

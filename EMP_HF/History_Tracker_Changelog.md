@@ -4,6 +4,11 @@ All notable changes to [HF][EMP] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v3.5 - 2026-10-25
+- Offline viewer: torrent details get more of the page. "← Back to the list" (or Esc) now sits in the row with the Searches / Torrents / Settings buttons instead of its own bar.
+- Offline viewer: "View on GitHub" moved to the top bar next to 📜 Changelog, and the bottom bar only appears when there's something to save in Settings.
+- On the sites themselves the History window is unchanged.
+
 ## v3.4 - 2026-10-25
 - New offline viewer: open https://edstagdh.github.io/Userscripts/history_tracker_viewer/ to browse your saved history even when both sites are down. The History window opens full-screen there, with both sites' searches and torrents, torrent details and rendered presentations.
 - The viewer page is an empty page on GitHub Pages; your history stays in your browser and is only read by the userscript.
