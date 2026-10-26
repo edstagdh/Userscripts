@@ -4,6 +4,9 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.4 - 2026-10-26
+- Fixed: "📥 Save all pages" from the Watched Threads list stopped with "SimpCity answered 404 on page 2". The list's links go to a thread's latest post (…/latest?new=1), and the page addresses were built from that. They're now built from the thread's own address (…/threads/name.123/page-2), also for threads already in your saved watched list.
+
 ## v4.3 - 2026-10-26
 - New on SimpCity: "📥 Save all pages" saves every page of a thread, to read the whole thread later in 🕘 History (also in the offline viewer). It's next to the 👁 button on a thread, and on each row of your Watched Threads list, with how many pages are saved already ("📥 3/24 pages").
 - Choose "Missing + last page" (pages not saved yet, plus the last one for new posts) or "All pages". Several threads can be queued.

@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — SimpCity
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.3
+// Version 4.4
 //
 // SimpCity (simpcity.cr) is a XenForo 2 forum. Here a "torrent" is a thread (/threads/slug.N/):
 //   • /watched/threads (any page): every thread listed is saved to ht_sc_watched — title, prefixes, thumbnail,
@@ -28,12 +28,21 @@ function scPageFromPath(path) {
     return m ? parseInt(m[1], 10) : 1;
 }
 
+/**
+ * the thread's base path (/threads/slug.N/) from any link to it: list titles point to …/latest?new=1, …/unread,
+ * …/page-7 or …/post-123, so everything after the thread's own segment is dropped. '' if it isn't a thread link.
+ */
+function scBasePath(path) {
+    var m = String(path || '').match(/^\/threads\/([^\/?#]*?\.)?(\d{1,10})(?=[\/?#]|$)/i);
+    return m ? '/threads/' + (m[1] || '') + m[2] + '/' : '';
+}
+
 /** the thread's own path (/threads/slug.N/) when we've seen it, else /threads/N/ (the forum redirects that) */
 function scThreadPath(id) {
     var w = readWatched('sc')[id];
-    if (w && w.p) return w.p;
+    if (w && scBasePath(w.p)) return scBasePath(w.p);
     var e = torrents('sc').get(id);
-    if (e && e.x && e.x.p) return e.x.p;
+    if (e && e.x && scBasePath(e.x.p)) return scBasePath(e.x.p);
     return GROUP_PATHS.sc.torrent + id + '/';
 }
 
@@ -169,7 +178,7 @@ function scParseListRow(row) {
     var lastBy = latest && latest.querySelector('.username');
     var item = {
         t: cleanText(link.textContent).slice(0, 300),
-        p: /^\/threads\//.test(path) ? path : '',
+        p: scBasePath(path),
         pf: scPrefixes(titleBox),
         cv: scThumbUrl(row.querySelector('.dcThumbnail img')),
         fo: forum ? cleanText(forum.textContent) : '',
@@ -219,7 +228,7 @@ function scThreadFacts(page, doc) {
     var canon = d.querySelector('link[rel="canonical"]');
     try {
         var cp = new URL(canon ? canon.getAttribute('href') : location.href, location.href).pathname.replace(/page-\d+\/?$/i, '');
-        if (/^\/threads\/[^\/]+\/$/.test(cp)) f.p = cp;
+        if (scBasePath(cp)) f.p = scBasePath(cp);
     } catch (e) { /* no path */ }
     f.t = scPageTitle(d);
     f.pf = scPrefixes(d.querySelector('h1.p-title-value'));
@@ -470,7 +479,7 @@ function scStopError(msg) { var e = new Error(msg); e.scStop = true; return e; }
 
 /** fetch one page of a thread and check it's really that page of that thread */
 function scFetchPage(job, n) {
-    var url = location.origin + job.path + (n > 1 ? 'page-' + n : '');
+    var url = location.origin + (scBasePath(job.path) || scThreadPath(job.tid)) + (n > 1 ? 'page-' + n : '');
     return fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html' } }).then(function (res) {
         if (res.status === 429) throw scStopError('SimpCity answered 429 (too many requests) on page ' + n);
         if (!res.ok) throw scStopError('SimpCity answered ' + res.status + ' on page ' + n);
@@ -674,7 +683,7 @@ function scRefreshButtons() {
 /** thread page: "📥 Save all pages" next to the 👁 button */
 function scAddThreadSaveButton(tid, page) {
     var f = scThreadFacts(page);
-    var path = f.p || scThreadPath(tid);
+    var path = scBasePath(f.p) || scThreadPath(tid);
     var b = scMakeSaveButton({ tid: tid, title: f.t || 'Thread #' + tid, path: path, np: f.np || 1 }, 'ht-tbtn ht-tbtn-save');
     var anchor = document.querySelector('h1.p-title-value .ht-tbtn');
     if (anchor) anchor.insertAdjacentElement('afterend', b);

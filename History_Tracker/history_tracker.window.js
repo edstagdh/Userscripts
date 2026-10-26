@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.3
+// Version 4.4
 //
 // The 🕘 History window: modal shell, Searches / Torrents (& threads) / Watched tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom. SimpCity's Watched tab and thread details are
