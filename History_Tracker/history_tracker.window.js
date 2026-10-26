@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.6
+// Version 4.7
 //
 // The 🕘 History window: modal shell, Searches / Torrents (& threads) / Watched tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom. SimpCity's Watched tab and thread details are
@@ -380,8 +380,19 @@ function openHistory(tab, filter) {
     });
     // SimpCity's Watched tab: on SimpCity, and elsewhere once there are watched threads saved
     var showWatched = viewGroups().indexOf('sc') !== -1 && (GROUP === 'sc' || IS_VIEWER || Object.keys(readWatched('sc')).length > 0);
-    var TABS = [['searches', 'Searches'], ['torrents', 'Torrents']].concat(showWatched ? [['watched', 'Watched']] : []).concat([['settings', 'Settings & data']]);
-    if (tab === 'watched' && !showWatched) tab = 'torrents';
+    // Torrents (HF / EMP / PLAB) and Threads (SimpCity) are separate tabs, each shown when its sites are
+    // (another site's tab only once it has history, so e.g. HF users without SimpCity don't get an empty Threads tab)
+    var torrentGroups = viewGroups().filter(function (g) { return g !== 'sc'; });
+    if (GROUP === 'sc' && !IS_VIEWER && !torrentGroups.some(function (g) { return torrents(g).size > 0; })) torrentGroups = [];
+    var showThreads = viewGroups().indexOf('sc') !== -1 && (GROUP === 'sc' || IS_VIEWER || torrents('sc').size > 0);
+    var TABS = [['searches', 'Searches']]
+        .concat(torrentGroups.length ? [['torrents', 'Torrents']] : [])
+        .concat(showThreads ? [['threads', 'Threads']] : [])
+        .concat(showWatched ? [['watched', 'Watched']] : [])
+        .concat([['settings', 'Settings & data']]);
+    if (tab === 'torrents' && (!torrentGroups.length || (GROUP === 'sc' && !IS_VIEWER))) tab = showThreads ? 'threads' : 'searches';
+    if (tab === 'threads' && !showThreads) tab = 'torrents';
+    if (tab === 'watched' && !showWatched) tab = showThreads ? 'threads' : 'torrents';
     var buttons = {};
     // the tab's list stays in `pane` while a torrent's details are shown in `detail`,
     // so "Back" returns to exactly the same filter, sort, loaded rows and scroll position
@@ -412,8 +423,8 @@ function openHistory(tab, filter) {
         var nT = 0;
         viewGroups().forEach(function (g) { nS += Object.keys(readSearches(g)).length; nT += torrents(g).size; });
         buttons.searches.textContent = '🔎 Searches (' + nS + ')';
-        var vg = viewGroups();
-        buttons.torrents.textContent = '👁 ' + (vg.length === 1 && vg[0] === 'sc' ? 'Threads' : vg.indexOf('sc') !== -1 ? 'Torrents & threads' : 'Torrents') + ' (' + nT + ')';
+        if (buttons.torrents) buttons.torrents.textContent = '👁 Torrents (' + (nT - (showThreads ? torrents('sc').size : 0)) + ')';
+        if (buttons.threads) buttons.threads.textContent = '🧵 Threads (' + torrents('sc').size + ')';
         if (buttons.watched) buttons.watched.textContent = '⭐ Watched (' + Object.keys(readWatched('sc')).length + ')';
     }
 
@@ -463,7 +474,8 @@ function openHistory(tab, filter) {
         pane.replaceChildren();
         m.body.scrollTop = 0;
         if (name === 'searches') renderSearchesTab(pane, f || '', counts);
-        else if (name === 'torrents') renderTorrentsTab(pane, f || '', counts, openDetails);
+        else if (name === 'torrents') renderTorrentsTab(pane, f || '', counts, openDetails, torrentGroups);
+        else if (name === 'threads') renderTorrentsTab(pane, f || '', counts, openDetails, ['sc']);
         else if (name === 'watched') renderWatchedTab(pane, f || '', counts, openDetails);
         else renderSettingsTab(pane, setSettingsDirty);
     }
@@ -485,7 +497,8 @@ function renderListTab(body, opts) {
     input.value = opts.filter || '';
     var sortSel = el('select', { 'aria-label': 'Sort' });
     opts.sorts.forEach(function (s) { sortSel.appendChild(el('option', { value: s[0], text: s[1] })); });
-    var withSites = crossSite() && !opts.noSites;
+    var chipGroups = opts.groups || GROUPS;
+    var withSites = crossSite() && !opts.noSites && chipGroups.length > 1;
     var chipsEl = withSites ? el('div', { className: 'ht-chips', role: 'group', 'aria-label': 'Site' }) : null;
     var top = el('div');
     var list = el('div', { className: 'ht-rows' });
@@ -496,12 +509,12 @@ function renderListTab(body, opts) {
     var shown = 0;
     var matches = [];
     var site = withSites ? (getSetting('historySite') || 'all') : 'all';
-    if (site !== 'all' && GROUPS.indexOf(site) === -1) site = 'all';
+    if (site !== 'all' && chipGroups.indexOf(site) === -1) site = 'all';
 
     function drawChips() {
         if (!chipsEl) return;
         chipsEl.replaceChildren();
-        [['all', 'All']].concat(GROUPS.map(function (g) { return [g, GROUP_SHORT[g]]; })).forEach(function (c) {
+        [['all', 'All']].concat(chipGroups.map(function (g) { return [g, GROUP_SHORT[g]]; })).forEach(function (c) {
             var n = c[0] === 'all' ? items.length : items.filter(function (it) { return it.g === c[0]; }).length;
             var b = el('button', {
                 type: 'button', className: 'ht-btn' + (site === c[0] ? ' ht-active' : ''),
@@ -626,11 +639,15 @@ function renderSearchesTab(body, filter, onChange) {
     });
 }
 
-function renderTorrentsTab(body, filter, onChange, openDetails) {
+/** the Torrents tab (groups: HF / EMP / PLAB) or the Threads tab (groups: ['sc']) */
+function renderTorrentsTab(body, filter, onChange, openDetails, groups) {
+    groups = groups || viewGroups();
+    var isThreads = groups.length === 1 && groups[0] === 'sc';
     renderListTab(body, {
         filter: filter,
-        placeholder: 'Title or id…',
-        emptyText: 'No torrent pages recorded yet.',
+        groups: groups,
+        placeholder: isThreads ? 'Thread title, prefix or id…' : 'Title or id…',
+        emptyText: isThreads ? 'No SimpCity threads recorded yet.' : 'No torrent pages recorded yet.',
         sorts: [['last', 'Most recent'], ['count', 'Most visited'], ['first', 'Oldest first'], ['az', 'A → Z'], ['id', 'Torrent id']],
         sortFns: {
             last: SORTS.last, count: SORTS.count, first: SORTS.first,
@@ -639,14 +656,15 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
         },
         items: function () {
             var out = [];
-            viewGroups().forEach(function (g) {
+            groups.forEach(function (g) {
                 torrents(g).forEach(function (e, id) { out.push(Object.assign({ id: id, g: g }, e)); });
             });
             return out;
         },
         match: function (t, q) {
             if (/^\d+$/.test(q)) return String(t.id).indexOf(q) === 0;
-            return (t.t || '').toLowerCase().indexOf(q) !== -1;
+            var hay = (t.t || '') + (t.g === 'sc' && t.x ? ' ' + (t.x.pf || []).join(' ') + ' ' + (t.x.fo || '') : '');
+            return hay.toLowerCase().indexOf(q) !== -1;
         },
         row: function (t, reload) {
             var timesBtn = el('button', { type: 'button', className: 'ht-btn ht-icon', title: 'When you opened it', text: '🕘' });
@@ -656,11 +674,12 @@ function renderTorrentsTab(body, filter, onChange, openDetails) {
                 coverEl(t.cv, null, t.g === 'sc' ? originOf('sc') + '/' : null),
                 el('div', { className: 'ht-main' }, [
                     el('div', { className: 'ht-titleline' }, [
-                        crossSite() ? siteTag(t.g) : null,
+                        crossSite() && !isThreads ? siteTag(t.g) : null,
                     ].concat(t.g === 'sc' && t.x ? scPrefixChips(t.x.pf) : [], [
                         el('a', linkProps(t.g, torrentUrl(t.g, t.id), { className: 'ht-title', text: t.t || 'Torrent #' + t.id })),
                     ])),
-                    el('div', { className: 'ht-sub', text: '#' + t.id + ' · last ' + ago(t.l) + (t.g === 'sc' && t.x && t.x.lr ? ' (page ' + t.x.lr + ')' : '') + (t.c > 1 ? ' · first ' + fmtDate(t.f) : '') }),
+                    el('div', { className: 'ht-sub', text: '#' + t.id + ' · last ' + ago(t.l) + (t.g === 'sc' && t.x && t.x.lr ? ' (page ' + t.x.lr + ')' : '') + (t.c > 1 ? ' · first ' + fmtDate(t.f) : '') +
+                        (t.g === 'sc' ? scThreadRowExtra(t) : '') }),
                 ]),
                 el('div', { className: 'ht-side' }, [countPill(t.c), timesBtn, infoBtn, del]),
             ]);
@@ -791,6 +810,10 @@ function renderSettingsTab(body, setDirty) {
         'itself: one at a time, with a random wait in each range above (e.g. 1-3). It stops at the first error, check page or rate limit. ' +
         'Pages saved that way are kept apart from the limit on the left.' }));
 
+    // backup to Filester (history_tracker.backup.js): part of the form, saved with "Save & reload"
+    var backupBlock = backupSettingsBlock();
+    body.appendChild(backupBlock.el);
+
     // interface size: a slider, previewed live on this window
     body.appendChild(el('div', { className: 'ht-label', text: 'Interface size' }));
     var scaleIn = el('input', { type: 'range', min: '70', max: '200', step: '5', 'aria-label': 'Interface size' });
@@ -835,6 +858,7 @@ function renderSettingsTab(body, setDirty) {
         st.presentationMode = modeSel.value;
         st.logLevel = logSel.value;
         st.uiScale = parseInt(scaleIn.value, 10) || 100;
+        Object.assign(st, backupBlock.state());
         st.dedupeSeconds = numberValue(dedupe, 'dedupeSeconds');
         st.presentationVersions = numberValue(versions, 'presentationVersions');
         st.presentationMaxTorrents = numberValue(maxT, 'presentationMaxTorrents');
@@ -870,7 +894,7 @@ function renderSettingsTab(body, setDirty) {
 
     var exp = el('button', { type: 'button', className: 'ht-btn', text: '⬇️ Export JSON' });
     var imp = el('button', { type: 'button', className: 'ht-btn', text: '⬆️ Import JSON…' });
-    var file = el('input', { type: 'file', accept: '.json,application/json', className: 'ht-hidden' });
+    var file = el('input', { type: 'file', accept: '.json,.gz,application/json,application/gzip', className: 'ht-hidden' });
     exp.addEventListener('click', exportData);
     imp.addEventListener('click', function () { file.click(); });
     file.addEventListener('change', function () { if (file.files[0]) importData(file.files[0]); });
@@ -928,10 +952,16 @@ function siteDataBlock(g) {
     return wrap;
 }
 
-function exportData() {
+/** everything an export / backup holds (all sites' history; settings and the Filester key are not in it) */
+function buildExportData() {
     var values = {};
     GM_listValues().filter(function (k) { return DATA_KEY_RE.test(k); }).forEach(function (k) { values[k] = GM_getValue(k, null); });
-    var data = { app: 'history-tracker', format: 2, version: SCRIPT_VERSION, exported_at: new Date().toISOString(), values: values };
+    return { app: 'history-tracker', format: 2, version: SCRIPT_VERSION, exported_at: new Date().toISOString(), values: values };
+}
+
+function exportData() {
+    var data = buildExportData();
+    var values = data.values;
     var a = el('a', {
         href: URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' })),
         download: 'history-tracker-' + new Date().toISOString().slice(0, 10) + '.json',
@@ -952,9 +982,24 @@ function mapLegacyKey(k) {
     return null;
 }
 
+/** a backup file's text: plain .json, or .json.gz (Filester backups) unpacked */
+function readBackupFile(f) {
+    return f.arrayBuffer().then(function (buf) {
+        var b = new Uint8Array(buf);
+        if (b.length > 2 && b[0] === 0x1f && b[1] === 0x8b) {
+            return new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+        }
+        return new TextDecoder('utf-8').decode(b);
+    });
+}
+
 function importData(f) {
-    var reader = new FileReader();
-    reader.onload = function () {
+    var reader = { result: null };
+    readBackupFile(f).then(function (text) { reader.result = text; onload(); }, function (e) {
+        log.error('Import: couldn\'t read the file', e);
+        alert('Couldn\'t read that file.');
+    });
+    function onload() {
         var data;
         try { data = JSON.parse(reader.result); } catch (e) { log.error('Import: not valid JSON', e); alert('That file isn\'t valid JSON.'); return; }
         if (!data || !data.values || typeof data.values !== 'object' || (data.app !== 'history-tracker' && data.app !== 'hf-visit-tracker')) {
@@ -986,7 +1031,5 @@ function importData(f) {
         Object.keys(values).forEach(function (k) { GM_setValue(k, values[k]); });
         log.info('Imported ' + nT + ' torrents and ' + nS + ' searches (' + names.join(' + ') + ')' + (data.app === 'hf-visit-tracker' ? ' from an old [HF] Visit Tracker export' : ''));
         location.reload();
-    };
-    reader.onerror = function () { log.error('Import: couldn\'t read the file', reader.error); };
-    reader.readAsText(f);
+    }
 }

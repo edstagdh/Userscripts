@@ -1,7 +1,7 @@
 /* [HF][EMP][PLAB][SC] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 4.6
+ * Version 4.7
  */
 
 .ht-badge {
@@ -419,3 +419,34 @@ h1.p-title-value .ht-tbtn { font-size: 12px; vertical-align: middle; }
 #ht-modal .ht-scale { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 #ht-modal .ht-scale input[type=range] { flex: 1; min-width: 180px; max-width: 420px; accent-color: #4a9fd4; }
 #ht-modal .ht-scale .ht-scale-val { min-width: 44px; color: #7ecfff; font-weight: 700; }
+
+/* ── Save-all-pages panel: title bar to drag, collapse button (v4.7) ── */
+.ht-scrape { padding: 0; }
+.ht-scrape .ht-scrape-head {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; cursor: move; user-select: none;
+    border-bottom: 1px solid #3a3216;
+}
+.ht-scrape .ht-scrape-head .ht-scrape-title { flex: 1; margin: 0; }
+.ht-scrape .ht-scrape-min {
+    width: 24px; height: 22px; padding: 0; border: 1px solid #4a4020; border-radius: 4px; background: #2e2810; color: #f0d080;
+    font-family: inherit; font-size: 13px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.ht-scrape .ht-scrape-min:hover { background: #3e3616; }
+.ht-scrape .ht-scrape-body { padding: 8px 14px 12px; }
+.ht-scrape.ht-min .ht-scrape-body { display: none; }
+.ht-scrape.ht-min .ht-scrape-head { border-bottom: 0; }
+.ht-scrape.ht-min { width: auto; }
+.ht-scrape.ht-dragging { opacity: .9; box-shadow: 0 14px 60px rgba(0,0,0,.95); }
+
+/* ── Backup to Filester (v4.7) ── */
+#ht-modal .ht-keyrow { display: flex; gap: 6px; align-items: center; }
+#ht-modal .ht-keyrow input { flex: 1; min-width: 0; }
+#ht-modal input[type=password], #ht-modal input[type=text] {
+    padding: 6px 10px; border: 1px solid #3a4a60; border-radius: 4px; background: #29374F; color: #e0ecf8; font-family: inherit; font-size: 12px; box-sizing: border-box;
+}
+#ht-modal .ht-backup-status { margin-top: 10px; color: #c0c0c0; }
+#ht-modal .ht-backup-status a, #ht-modal .ht-backup-out a { color: #7ecfff; }
+#ht-modal .ht-backup-err { color: #f0a0a0; margin-top: 2px; }
+#ht-modal .ht-ok-text { color: #8fc88f; font-weight: 700; }
+#ht-modal .ht-backup-out { margin-top: 8px; }
+#ht-modal .ht-backup-list { max-height: 220px; overflow-y: auto; margin-top: 4px; }

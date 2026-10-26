@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — SimpCity
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.6
+// Version 4.7
 //
 // SimpCity (simpcity.cr) is a XenForo 2 forum. Here a "torrent" is a thread (/threads/slug.N/):
 //   • /watched/threads (any page): every thread listed is saved to ht_sc_watched — title, prefixes, thumbnail,
@@ -335,10 +335,18 @@ function scCapturePosts(doc) {
     return out;
 }
 
-/** keys of a thread's saved pages */
-function scPageKeys(tid, g) {
+/** all storage keys, listed at most once a second (the Threads tab asks for every row) */
+var scKeysCache = { t: 0, keys: [] };
+function scAllKeys() {
+    if (Date.now() - scKeysCache.t > 1000) scKeysCache = { t: Date.now(), keys: GM_listValues() };
+    return scKeysCache.keys;
+}
+
+/** keys of a thread's saved pages (cached: a key list up to a second old, for long lists) */
+function scPageKeys(tid, g, cached) {
     var p = keysOf(g || 'sc').posts + tid + '_';
-    return GM_listValues().filter(function (k) { return k.indexOf(p) === 0 && /_\d+$/.test(k.slice(p.length - 1)); });
+    if (!cached) scKeysCache.t = 0;   // fresh list (pages may have just been saved or deleted)
+    return scAllKeys().filter(function (k) { return k.indexOf(p) === 0 && /_\d+$/.test(k.slice(p.length - 1)); });
 }
 
 /** a thread's saved pages, in page order: [{ page, v }] */
@@ -594,16 +602,109 @@ async function scRunQueue() {
     }
 }
 
-// the progress panel (bottom right)
+// the progress panel: bottom right by default, draggable by its title bar (position remembered), collapsible.
+// It's rebuilt only when its content changes (a thread queued, started, finished…); in between, only the
+// progress line, bar and title are updated — rebuilding it on every countdown tick replaced the buttons under
+// the mouse, so a click could get lost.
+var SC_PANEL_POS_KEY = 'ht_ui_scrape_pos';
+var scLastSig = null;
+var scLive = {};
+
+function scPanelSig() {
+    return [scPending.length ? scPending[0].tid + ':' + scPending.length : '', scState.running ? 1 : 0, scState.paused ? 1 : 0,
+        scState.job ? scState.job.tid : '', scQueue.length, scFinished.length, scState.error, scState.min ? 1 : 0].join('|');
+}
+
+/** x, y in the panel's own (zoomed) CSS pixels; kept on screen */
+function scPlacePanel(p, x, y) {
+    var z = parseFloat(p.style.zoom) || 1;
+    var r = p.getBoundingClientRect();
+    var h = r.height || 60;
+    x = Math.min(Math.max(0, x), Math.max(0, (window.innerWidth - (r.width || 380)) / z));
+    y = Math.min(Math.max(0, y), Math.max(0, (window.innerHeight - 40) / z));
+    p.style.left = x + 'px';
+    p.style.top = y + 'px';
+    p.style.right = 'auto';
+    p.style.bottom = 'auto';
+    return { x: x, y: y, h: h };
+}
+
+function scMakePanel() {
+    var p = el('div', { className: 'ht-scrape', 'data-ht-ui': '' });
+    applyUiScale(p);
+    var title = el('span', { className: 'ht-scrape-title', text: '📥 Save all pages' });
+    var minBtn = el('button', { type: 'button', className: 'ht-scrape-min', title: 'Collapse / expand' });
+    var head = el('div', { className: 'ht-scrape-head', title: 'Drag to move' }, [title, minBtn]);
+    var content = el('div', { className: 'ht-scrape-body' });
+    p.append(head, content);
+    scLive.title = title;
+    scLive.minBtn = minBtn;
+    scLive.content = content;
+    minBtn.addEventListener('click', function (ev) { ev.stopPropagation(); scState.min = !scState.min; scDraw(); });
+    // drag by the title bar
+    head.addEventListener('mousedown', function (ev) {
+        if (ev.button !== 0 || ev.target === minBtn) return;
+        ev.preventDefault();
+        var r = p.getBoundingClientRect();
+        var dx = ev.clientX - r.left;
+        var dy = ev.clientY - r.top;
+        var zoom = parseFloat(p.style.zoom) || 1;
+        function move(e) { scPlacePanel(p, (e.clientX - dx) / zoom, (e.clientY - dy) / zoom); }
+        function up() {
+            document.removeEventListener('mousemove', move, true);
+            document.removeEventListener('mouseup', up, true);
+            p.classList.remove('ht-dragging');
+            GM_setValue(SC_PANEL_POS_KEY, { x: parseFloat(p.style.left) || 0, y: parseFloat(p.style.top) || 0 });
+        }
+        p.classList.add('ht-dragging');
+        document.addEventListener('mousemove', move, true);
+        document.addEventListener('mouseup', up, true);
+    });
+    document.body.appendChild(p);
+    var pos = GM_getValue(SC_PANEL_POS_KEY, null);
+    if (pos && typeof pos.x === 'number') scPlacePanel(p, pos.x, pos.y);
+    return p;
+}
+
 function scDraw() {
     if (!scState.panel) {
         if (!scPending.length && !scQueue.length && !scFinished.length && !scState.error) return;
-        scState.panel = el('div', { className: 'ht-scrape', 'data-ht-ui': '' });
-        applyUiScale(scState.panel);
-        document.body.appendChild(scState.panel);
+        scState.panel = scMakePanel();
+        scLastSig = null;
     }
+    var sig = scPanelSig();
+    if (sig !== scLastSig) { scLastSig = sig; scBuildPanel(); }
+    scUpdateLive();
+}
+
+/** the parts that change every tick: title (also shown collapsed), progress line and bar */
+function scUpdateLive() {
+    var job = scState.job;
     var p = scState.panel;
-    var kids = [el('div', { className: 'ht-scrape-title', text: '📥 Save all pages — History Tracker' })];
+    if (!p) return;
+    var title = '📥 Save all pages';
+    if (scState.running && job) title += ' — ' + job.done + '/' + job.total + (scQueue.length > 1 ? ' (+' + (scQueue.length - 1) + ')' : '') + (scState.paused ? ' · paused' : '');
+    else if (scPending.length) title += ' — choose';
+    else if (scState.error) title += ' — stopped';
+    else if (scFinished.length) title += ' — done';
+    if (scLive.title.textContent !== title) scLive.title.textContent = title;
+    scLive.minBtn.textContent = scState.min ? '▢' : '–';
+    p.classList.toggle('ht-min', !!scState.min);
+    if (scLive.line && job) {
+        var line = job.done + ' of ' + job.total + ' page' + (job.total === 1 ? '' : 's') + ' fetched';
+        if (scState.paused) line += ' · paused';
+        else if (scState.waitLeft > 0) line += ' · next in ' + (scState.waitLeft / 1000).toFixed(1) + ' s' + (scState.waitLong ? ' (longer pause)' : '');
+        else if (scState.status) line += ' · ' + scState.status;
+        if (scLive.line.textContent !== line) scLive.line.textContent = line;
+    }
+    if (scLive.bar && job) scLive.bar.style.width = (job.total ? Math.round(100 * job.done / job.total) : 0) + '%';
+}
+
+function scBuildPanel() {
+    var p = scState.panel;
+    scLive.line = null;
+    scLive.bar = null;
+    var kids = [];
     var btn = function (text, cls, fn, title) {
         var b = el('button', { type: 'button', className: 'ht-btn' + (cls ? ' ' + cls : ''), text: text, title: title || null });
         b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); fn(); });
@@ -611,13 +712,14 @@ function scDraw() {
     };
     if (scPending.length) {
         var t = scPending[0];
-        var saved = Object.keys(scSavedSet(t.tid)).length;
-        var missing = 0;
         var set = scSavedSet(t.tid);
+        var saved = Object.keys(set).length;
+        var missing = 0;
         for (var n = 1; n <= t.np; n++) if (!set[n] || n === t.np) missing++;
         var d = scRange('scrapeDelay', 1, 3);
         kids.push(el('div', { className: 'ht-scrape-thread', text: t.title }));
-        kids.push(el('div', { className: 'ht-sub', text: t.np + ' page' + (t.np === 1 ? '' : 's') + ' · ' + saved + ' already saved · ' + d[0] + '–' + d[1] + ' s between pages' }));
+        kids.push(el('div', { className: 'ht-sub', text: t.np + ' page' + (t.np === 1 ? '' : 's') + ' · ' + saved + ' already saved · ' + d[0] + '–' + d[1] + ' s between pages' +
+            (scState.running ? ' · will wait for the current thread' : '') }));
         kids.push(el('div', { className: 'ht-buttons' }, [
             missing < t.np ? btn('Missing + last page (' + missing + ')', 'ht-active', function () { scPending.shift(); scQueueJob(t, 'missing'); }) : null,
             btn('All ' + t.np + ' page' + (t.np === 1 ? '' : 's'), missing < t.np ? '' : 'ht-active', function () { scPending.shift(); scQueueJob(t, 'all'); }),
@@ -626,15 +728,16 @@ function scDraw() {
     }
     var job = scState.job;
     if (scState.running && job) {
-        var pct = job.total ? Math.round(100 * job.done / job.total) : 0;
+        var bar = el('span');
+        var line = el('div', { className: 'ht-sub' });
+        scLive.bar = bar;
+        scLive.line = line;
         kids.push(el('div', { className: 'ht-scrape-thread', text: job.title }));
-        kids.push(el('div', { className: 'ht-scrape-bar' }, [el('span', { style: 'width:' + pct + '%' })]));
-        var line = job.done + ' of ' + job.total + ' page' + (job.total === 1 ? '' : 's') + ' fetched';
-        if (scState.paused) line += ' · paused';
-        else if (scState.waitLeft > 0) line += ' · next in ' + (scState.waitLeft / 1000).toFixed(1) + ' s' + (scState.waitLong ? ' (longer pause)' : '');
-        else if (scState.status) line += ' · ' + scState.status;
-        kids.push(el('div', { className: 'ht-sub', text: line }));
-        if (scQueue.length > 1) kids.push(el('div', { className: 'ht-sub', text: '+ ' + (scQueue.length - 1) + ' more thread' + (scQueue.length > 2 ? 's' : '') + ' queued' }));
+        kids.push(el('div', { className: 'ht-scrape-bar' }, [bar]));
+        kids.push(line);
+        if (scQueue.length > 1) {
+            kids.push(el('div', { className: 'ht-sub', text: 'Queued next: ' + scQueue.slice(1).map(function (j) { return j.title; }).join(', ') }));
+        }
         kids.push(el('div', { className: 'ht-buttons' }, [
             btn(scState.paused ? '▶ Resume' : '⏸ Pause', '', function () { scState.paused = !scState.paused; scDraw(); }),
             btn('⏹ Stop', 'ht-danger', function () { scState.stopped = true; scState.paused = false; scDraw(); }),
@@ -656,7 +759,7 @@ function scDraw() {
             })]));
         }
     }
-    p.replaceChildren.apply(p, kids.filter(Boolean));
+    scLive.content.replaceChildren.apply(scLive.content, kids.filter(Boolean));
 }
 
 var scSaveButtons = [];   // [button, thread] pairs on the page, refreshed after saving
@@ -722,6 +825,14 @@ function scDecorateThreadButton(btn, tid) {
 }
 
 // ── History window: Watched tab ──────────────────────────────────────────
+
+/** Threads tab: forum, pages read / saved */
+function scThreadRowExtra(t) {
+    var x = t.x || {};
+    var saved = scPageKeys(t.id, 'sc', true).length;
+    var np = Math.max(x.np || 0, (readWatched('sc')[t.id] || {}).np || 0);
+    return (x.fo ? ' · ' + x.fo : '') + (np ? ' · ' + np + ' page' + (np === 1 ? '' : 's') : '') + (saved ? ' · ' + saved + ' saved' : '');
+}
 
 function scPrefixChips(pf) {
     return (pf || []).map(function (p) { return el('span', { className: 'ht-prefix', text: p }); });

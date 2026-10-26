@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP][PLAB][SC] History Tracker
-// @version      4.6
+// @version      4.7
 // @description  Remembers the torrent pages / topics / threads you open and the searches you run on HappyFappy, Empornium, Pornolab and SimpCity (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history, each torrent's presentation and, on SimpCity, your watched threads and the posts of the thread pages you read
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -22,12 +22,15 @@
 // @grant        GM_getResourceText
 // @connect      raw.githubusercontent.com
 // @connect      cuckcapital.cr
+// @connect      u1.filester.me
+// @connect      filester.me
 // @connect      *
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.6
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.6
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.6
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.6
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.6
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.7
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.7
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.7
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.7
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.backup.js?v=4.7
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.7
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
@@ -39,7 +42,8 @@
 // ==/UserScript==
 
 /*
- * [HF][EMP][PLAB][SC] History Tracker: everything is kept in this script's Tampermonkey storage; nothing leaves the browser.
+ * [HF][EMP][PLAB][SC] History Tracker: everything is kept in this script's Tampermonkey storage; nothing leaves the browser,
+ * except the optional daily backup to your own Filester account (history_tracker.backup.js, off until you set it up).
  *
  *  • Torrent pages (torrents.php?id=N): each visit is recorded (time, title, cover URL, active time on the page and,
  *    optionally, the presentation as BBCode). A 👁 button next to the title shows your earlier visits.
@@ -85,6 +89,7 @@
 //   history_tracker.window.js         History window (tabs, settings & data, torrent details), cover zoom
 //   history_tracker.changelog.js      "What's New" window
 //   history_tracker.simpcity.js       SimpCity: watched threads, thread pages' posts, the Watched tab
+//   history_tracker.backup.js         optional daily backup to Filester (API key in Settings & data)
 //   history_tracker.styles.css        all CSS (@resource HT_STYLES)
 // When bumping @version, update the ?v= on those @require / @resource lines and SCRIPT_VERSION too.
 
@@ -124,6 +129,10 @@ var DEFAULT_SETTINGS = {
     presentationVersions: 10,     // 'every' mode: copies kept per torrent
     presentationMaxTorrents: 300, // presentations kept for this many most recently visited torrents (0 = no limit)
     dedupeSeconds: 30,            // a reload of the same page within this many seconds isn't counted again
+    backupEnabled: false,         // daily backup of the history to Filester (history_tracker.backup.js)
+    filesterKey: '',              //   Filester API key (filester.me → Account settings); never exported
+    backupFolder: 'History Tracker backups',   // private folder on Filester (created if missing)
+    backupKeep: 30,               //   backups kept there; older ones deleted (0 = keep all; unopened files expire after 45 days)
     logLevel: 'warn',             // console output: 'off' | 'error' | 'warn' | 'info' | 'debug'
 };
 var SETTINGS_KEY_PREFIX = 'ht_setting_';
@@ -210,7 +219,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.6';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.7';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -258,7 +267,8 @@ function fmtDur(sec) {
 function fmtBytes(n) {
     if (n < 1024) return n + ' B';
     if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
-    return (n / 1048576).toFixed(2) + ' MB';
+    if (n < 1073741824) return (n / 1048576).toFixed(2) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
 }
 
 /** FNV-1a 32-bit, to spot unchanged presentations */
@@ -1173,7 +1183,8 @@ function attachSearchHints() {
 
 if (typeof GM_registerMenuCommand !== 'undefined') {
     GM_registerMenuCommand('🕘 Search history', function () { openHistory('searches'); });
-    GM_registerMenuCommand('👁 Torrent history', function () { openHistory('torrents'); });
+    if (GROUP !== 'sc') GM_registerMenuCommand('👁 Torrent history', function () { openHistory('torrents'); });
+    if (GROUP === 'sc' || IS_VIEWER) GM_registerMenuCommand('🧵 Thread history (SimpCity)', function () { openHistory('threads'); });
     if (GROUP === 'sc' || IS_VIEWER) GM_registerMenuCommand('⭐ Watched threads (SimpCity)', function () { openHistory('watched'); });
     GM_registerMenuCommand('⚙️ Settings & data', function () { openHistory('settings'); });
     GM_registerMenuCommand('📜 Show Changelog', function () { showChangelogModal(); });
@@ -1201,6 +1212,7 @@ function startViewer() {
     log.info('Offline viewer — showing the saved history of all sites');
     openHistory('searches');
     checkVersionUpdate();
+    fsMaybeBackup();
 }
 
 function start() {
@@ -1281,6 +1293,7 @@ function start() {
     }
     if (getSetting('searchBoxHint')) attachSearchHints();
     checkVersionUpdate();
+    fsMaybeBackup();
 }
 
 start();

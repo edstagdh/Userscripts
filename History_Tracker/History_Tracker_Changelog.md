@@ -4,6 +4,16 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.7 - 2026-10-26
+- New: daily backup to your own Filester account (Settings & data → Backup to Filester). Enter your API key (filester.me → Account settings) and turn it on.
+  - Once a day it uploads your whole history, compressed: the same data as "Export JSON", but without your settings or the key. It goes into a private folder ("History Tracker backups", created if missing).
+  - Backups beyond the number you choose (30) are deleted. Filester also removes files nobody opened for 45 days.
+  - Buttons: Test connection, Back up now, and Show backups (with links).
+  - To restore: download a backup, then use ⬆️ Import JSON…, which now reads .json.gz files too.
+- History window: Torrents (HappyFappy, Empornium, Pornolab) and Threads (SimpCity) are now separate tabs. The Threads tab also shows each thread's forum, pages, and pages saved.
+- "Save all pages" panel: the "All N pages" / "Missing" buttons for a second thread sometimes didn't react while another thread was being saved. The panel was redrawn several times a second and replaced the button under the mouse; now only the progress text updates.
+- "Save all pages" panel: drag it anywhere by its title bar (the position is remembered), and collapse it to a one-line progress bar with "–", so it doesn't cover the History window.
+
 ## v4.6 - 2026-10-26
 - SimpCity: search inside a thread. A thread's details (🕘 History → ℹ️) have a search box above its saved pages. It finds text (or an author) in all saved pages of the thread and lists the matching posts with page, post number, author, date and a highlighted snippet. Click one to open that page at the post. The text is highlighted in every saved page you open while the search is on. Works in the offline viewer too.
 - SimpCity: the thread image in a thread's details is twice as big.
