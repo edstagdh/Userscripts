@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP][PLAB][SC] History Tracker
-// @version      4.5
+// @version      4.6
 // @description  Remembers the torrent pages / topics / threads you open and the searches you run on HappyFappy, Empornium, Pornolab and SimpCity (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history, each torrent's presentation and, on SimpCity, your watched threads and the posts of the thread pages you read
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -23,11 +23,11 @@
 // @connect      raw.githubusercontent.com
 // @connect      cuckcapital.cr
 // @connect      *
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.5
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.5
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.5
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.5
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.6
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.6
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.6
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.6
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.6
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
@@ -106,6 +106,7 @@ var DEFAULT_SETTINGS = {
     timeOnPage: true,             // record active (visible) time on torrent pages
     saveCover: true,              // remember the torrent's cover image URL (shown in History → Torrents)
     coverZoom: true,              // hovering a cover / thumbnail in the History window shows it enlarged
+    uiScale: 100,                 // size of History Tracker's windows and panels, in % (Settings & data slider)
     postImageZoom: false,         // the same for images inside a rendered presentation / saved post (they're mostly full size already)
     hideVisited: false,           // hide torrents you've already opened from the site's lists (rows and grid cards)
     crossSite: true,              // History window, search hint and notices include the other site (HappyFappy ↔ Empornium)
@@ -209,7 +210,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.5';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.6';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -284,6 +285,17 @@ function el(tag, props, kids) {
         e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
     });
     return e;
+}
+
+/**
+ * interface size (setting uiScale, %): CSS zoom on our windows / panels. Their viewport-relative sizes are divided
+ * by --ht-zoom in the CSS, so a bigger scale still fits the screen. pct: a preview value (Settings slider).
+ */
+function applyUiScale(node, pct) {
+    if (!node) return;
+    var z = Math.min(250, Math.max(50, parseInt(pct === undefined ? getSetting('uiScale') : pct, 10) || 100)) / 100;
+    node.style.setProperty('--ht-zoom', String(z));
+    node.style.zoom = z === 1 ? '' : String(z);
 }
 
 /** an element of History Tracker's own interface (not a site element we've only added a class to) */

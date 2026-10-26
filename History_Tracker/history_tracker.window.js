@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.5
+// Version 4.6
 //
 // The 🕘 History window: modal shell, Searches / Torrents (& threads) / Watched tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom. SimpCity's Watched tab and thread details are
@@ -154,6 +154,7 @@ function openModal(opts) {
     }
     var modal = el('div', { id: 'ht-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title },
         [header, opts.tabs || null, body, footer]);
+    applyUiScale(modal);
     bg.appendChild(modal);
     if (closeBtn) closeBtn.addEventListener('click', requestCloseModal);
     okBtn.addEventListener('click', closeModal);   // also when it reads "Close without saving": that's the explicit choice
@@ -454,6 +455,7 @@ function openHistory(tab, filter) {
             if (name === 'settings') return;
             if (!confirm('You have unsaved settings. Leave Settings without saving them?')) return;
             setSettingsDirty(false);
+            applyUiScale(document.getElementById('ht-modal'));   // drop a previewed interface size
         }
         closeDetails();
         Object.keys(buttons).forEach(function (k) { buttons[k].setAttribute('aria-selected', String(k === name)); });
@@ -789,6 +791,26 @@ function renderSettingsTab(body, setDirty) {
         'itself: one at a time, with a random wait in each range above (e.g. 1-3). It stops at the first error, check page or rate limit. ' +
         'Pages saved that way are kept apart from the limit on the left.' }));
 
+    // interface size: a slider, previewed live on this window
+    body.appendChild(el('div', { className: 'ht-label', text: 'Interface size' }));
+    var scaleIn = el('input', { type: 'range', min: '70', max: '200', step: '5', 'aria-label': 'Interface size' });
+    scaleIn.value = String(getSetting('uiScale') || 100);
+    var scaleOut = el('span', { className: 'ht-scale-val' });
+    var scaleReset = el('button', { type: 'button', className: 'ht-btn', text: 'Reset to 100%' });
+    function scaleShow() {
+        scaleOut.textContent = scaleIn.value + '%';
+        applyUiScale(document.getElementById('ht-modal'), scaleIn.value);
+    }
+    scaleIn.addEventListener('input', scaleShow);
+    scaleReset.addEventListener('click', function () {
+        scaleIn.value = '100';
+        scaleShow();
+        scaleIn.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    scaleShow();
+    body.appendChild(el('div', { className: 'ht-scale' }, [el('span', { className: 'ht-sub', text: 'Smaller' }), scaleIn, el('span', { className: 'ht-sub', text: 'Bigger' }), scaleOut, scaleReset]));
+    body.appendChild(el('p', { className: 'ht-note', text: 'Text and buttons of the History window, the What\'s New window and the "Save all pages" panel. You see it here as you drag; "💾 Save & reload" keeps it.' }));
+
     body.appendChild(el('div', { className: 'ht-label', text: 'Advanced' }));
     var logSel = el('select');
     [['off', 'Off'], ['error', 'Errors only'], ['warn', 'Warnings and errors (default)'], ['info', 'Info — what was recorded and saved'], ['debug', 'Debug — everything']].forEach(function (o) {
@@ -812,6 +834,7 @@ function renderSettingsTab(body, setDirty) {
         st.markStyle = styleSel.value;
         st.presentationMode = modeSel.value;
         st.logLevel = logSel.value;
+        st.uiScale = parseInt(scaleIn.value, 10) || 100;
         st.dedupeSeconds = numberValue(dedupe, 'dedupeSeconds');
         st.presentationVersions = numberValue(versions, 'presentationVersions');
         st.presentationMaxTorrents = numberValue(maxT, 'presentationMaxTorrents');

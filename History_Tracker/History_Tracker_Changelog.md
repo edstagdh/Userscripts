@@ -4,6 +4,11 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.6 - 2026-10-26
+- SimpCity: search inside a thread. A thread's details (🕘 History → ℹ️) have a search box above its saved pages. It finds text (or an author) in all saved pages of the thread and lists the matching posts with page, post number, author, date and a highlighted snippet. Click one to open that page at the post. The text is highlighted in every saved page you open while the search is on. Works in the offline viewer too.
+- SimpCity: the thread image in a thread's details is twice as big.
+- New in Settings & data: an "Interface size" slider (70–200%) for the History window, the What's New window and the "Save all pages" panel. It previews live as you drag.
+
 ## v4.5 - 2026-10-26
 - History window: the buttons on each row (🕘 times, ℹ️ details, ✕ forget / remove) are bigger and outlined, and ✕ sits further away from the others, so it's harder to hit by mistake.
 

@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — SimpCity
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.5
+// Version 4.6
 //
 // SimpCity (simpcity.cr) is a XenForo 2 forum. Here a "torrent" is a thread (/threads/slug.N/):
 //   • /watched/threads (any page): every thread listed is saved to ht_sc_watched — title, prefixes, thumbnail,
@@ -599,6 +599,7 @@ function scDraw() {
     if (!scState.panel) {
         if (!scPending.length && !scQueue.length && !scFinished.length && !scState.error) return;
         scState.panel = el('div', { className: 'ht-scrape', 'data-ht-ui': '' });
+        applyUiScale(scState.panel);
         document.body.appendChild(scState.panel);
     }
     var p = scState.panel;
@@ -843,7 +844,11 @@ function scFactsRow(w, x) {
     }));
 }
 
-/** saved pages of a thread, each one rendered here on demand */
+/**
+ * saved pages of a thread, each one rendered here on demand — with a search over all of them on top:
+ * matching posts are listed (page, post #, author, snippet); a click opens that page at the post, and the
+ * text is highlighted in every page you open while the search is on.
+ */
 function scSavedPagesSection(tid) {
     var wrap = el('div');
     var pages = scSavedPages(tid, 'sc');
@@ -854,7 +859,87 @@ function scSavedPagesSection(tid) {
             : 'Saving thread pages is off (Settings & data).' }));
         return wrap;
     }
+
+    // ── search over the saved pages ──
+    var query = '';
+    var decoded = {};            // page → Promise of [posts with .tx = plain text]
+    function postsOf(pg) {
+        if (!decoded[pg.page]) {
+            decoded[pg.page] = decodeVersion(pg.v).then(function (json) {
+                var posts = JSON.parse(json);
+                posts.forEach(function (p) {
+                    var doc = new DOMParser().parseFromString('<!doctype html><body>' + String(p.h || ''), 'text/html');
+                    p.tx = cleanText(doc.body.textContent);
+                });
+                return posts;
+            });
+        }
+        return decoded[pg.page];
+    }
+    var input = el('input', { type: 'search', placeholder: 'Search the ' + pages.length + ' saved page' + (pages.length === 1 ? '' : 's') + ' of this thread… (text or author)', autocomplete: 'off', spellcheck: 'false' });
+    var summary = el('div', { className: 'ht-sub' });
+    var results = el('div', { className: 'ht-hits' });
+    wrap.appendChild(el('div', { className: 'ht-thread-search' }, [input, summary, results]));
+
+    function runSearch() {
+        query = cleanText(input.value);
+        var q = query.toLowerCase();
+        rows.forEach(function (r) { if (r.out) scHighlight(r.out, query); });
+        results.replaceChildren();
+        if (q.length < 2) { summary.textContent = q ? 'Type at least 2 characters.' : ''; return; }
+        summary.textContent = 'Searching…';
+        var mine = q;
+        Promise.all(pages.map(function (pg) {
+            return postsOf(pg).then(function (posts) { return { pg: pg, posts: posts }; }, function () { return { pg: pg, posts: [] }; });
+        })).then(function (all) {
+            if (mine !== cleanText(input.value).toLowerCase()) return;
+            var hits = [];
+            var total = 0;
+            all.forEach(function (x) {
+                x.posts.forEach(function (p) {
+                    var n = scCount(p.tx.toLowerCase(), q);
+                    var byAuthor = String(p.a || '').toLowerCase().indexOf(q) !== -1;
+                    if (n || byAuthor) { hits.push({ page: x.pg.page, p: p, n: n }); total += n || 1; }   // a post by that author counts once
+                });
+            });
+            var nPages = {};
+            hits.forEach(function (h) { nPages[h.page] = 1; });
+            summary.textContent = hits.length
+                ? total + ' match' + (total === 1 ? '' : 'es') + ' in ' + hits.length + ' post' + (hits.length === 1 ? '' : 's') + ' on ' + Object.keys(nPages).length + ' page' + (Object.keys(nPages).length === 1 ? '' : 's') + (hits.length > 200 ? ' — showing the first 200' : '')
+                : 'No matches in the saved pages.';
+            hits.slice(0, 200).forEach(function (h) {
+                var item = el('button', { type: 'button', className: 'ht-hit', title: 'Open page ' + h.page + ' at this post' }, [
+                    el('div', { className: 'ht-hit-head' }, [
+                        el('b', { text: 'Page ' + h.page + ' · #' + (h.p.n || '?') }), ' ',
+                        el('span', { text: h.p.a || 'Guest' }),
+                        h.p.d ? el('span', { className: 'ht-sub', text: ' · ' + fmtDateTime(h.p.d) }) : null,
+                        h.n > 1 ? el('span', { className: 'ht-sub', text: ' · ' + h.n + ' matches' }) : null,
+                    ]),
+                    scSnippet(h.p.tx, query),
+                ]);
+                item.addEventListener('click', function () { openPage(h.page, h.p.i); });
+                results.appendChild(item);
+            });
+        });
+    }
+    var t;
+    input.addEventListener('input', function () { clearTimeout(t); t = setTimeout(runSearch, 250); });
+    input.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { clearTimeout(t); runSearch(); } });
+
+    // ── the pages ──
     var box = el('div', { className: 'ht-pres' });
+    var rows = [];
+    function openPage(page, postId) {
+        var r = rows.filter(function (x) { return x.page === page; })[0];
+        if (!r) return;
+        r.show(true).then(function () {
+            var target = postId ? r.out.querySelector('.ht-post[data-ht-post="' + postId + '"]') : r.out;
+            if (!target) return;
+            target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+            target.classList.add('ht-post-focus');
+            setTimeout(function () { target.classList.remove('ht-post-focus'); }, 2000);
+        });
+    }
     pages.forEach(function (pg) {
         var v = pg.v;
         var renderBtn = el('button', { type: 'button', className: 'ht-btn', text: '🖼 Read' });
@@ -866,26 +951,83 @@ function scSavedPagesSection(tid) {
             ]),
             el('div', { className: 'ht-side' }, [renderBtn, open]),
         ]);
-        var out = null;
-        renderBtn.addEventListener('click', function () {
+        var r = { page: pg.page, out: null, ready: null };
+        /** show (keepOpen) or toggle the page; resolves once its posts are on screen */
+        r.show = function (keepOpen) {
             hideZoom();
-            if (out) { out.remove(); out = null; renderBtn.classList.remove('ht-active'); return; }
+            if (r.out) {
+                if (keepOpen) return r.ready;
+                r.out.remove(); r.out = null; r.ready = null; renderBtn.classList.remove('ht-active');
+                return Promise.resolve();
+            }
             renderBtn.classList.add('ht-active');
-            out = el('div', { className: 'ht-render ht-posts', text: 'Loading…' });
-            row.appendChild(out);
-            var target = out;
-            decodeVersion(v).then(function (json) {
-                if (out !== target) return;
-                target.replaceChildren(scRenderPosts(JSON.parse(json)));
+            var target = el('div', { className: 'ht-render ht-posts', text: 'Loading…' });
+            r.out = target;
+            row.appendChild(target);
+            r.ready = postsOf(pg).then(function (posts) {
+                if (r.out !== target) return;
+                target.replaceChildren(scRenderPosts(posts));
+                if (query) scHighlight(target, query);
             }).catch(function (err) {
                 log.error('SimpCity: reading saved page ' + pg.page + ' of #' + tid + ' failed', err);
                 target.textContent = 'Couldn\'t read the saved page.';
             });
-        });
+            return r.ready;
+        };
+        renderBtn.addEventListener('click', function () { r.show(false); });
+        rows.push(r);
         box.appendChild(row);
     });
     wrap.appendChild(box);
     return wrap;
+}
+
+function scCount(hay, q) {
+    var n = 0;
+    for (var i = hay.indexOf(q); i !== -1; i = hay.indexOf(q, i + q.length)) n++;
+    return n;
+}
+
+/** ~200 characters around the first match, the match itself highlighted */
+function scSnippet(text, query) {
+    var q = query.toLowerCase();
+    var i = text.toLowerCase().indexOf(q);
+    var box = el('div', { className: 'ht-hit-snippet' });
+    if (i === -1) { box.textContent = text.slice(0, 200) + (text.length > 200 ? '…' : ''); return box; }
+    var from = Math.max(0, i - 90);
+    var to = Math.min(text.length, i + q.length + 110);
+    box.append((from > 0 ? '…' : '') + text.slice(from, i), el('mark', { className: 'ht-hl', text: text.slice(i, i + q.length) }),
+        text.slice(i + q.length, to) + (to < text.length ? '…' : ''));
+    return box;
+}
+
+/** highlight every occurrence of query in root's text (previous highlights are removed first) */
+function scHighlight(root, query) {
+    root.querySelectorAll('mark.ht-hl').forEach(function (m) { m.replaceWith(document.createTextNode(m.textContent)); });
+    root.normalize();
+    var q = String(query || '').toLowerCase();
+    if (q.length < 2) return 0;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    for (var n = walker.nextNode(); n; n = walker.nextNode()) if (n.nodeValue.toLowerCase().indexOf(q) !== -1) nodes.push(n);
+    var count = 0;
+    nodes.forEach(function (node) {
+        var text = node.nodeValue;
+        var low = text.toLowerCase();
+        var frag = document.createDocumentFragment();
+        var last = 0;
+        for (var i = low.indexOf(q); i !== -1; i = low.indexOf(q, i + q.length)) {
+            if (i > last) frag.appendChild(document.createTextNode(text.slice(last, i)));
+            frag.appendChild(el('mark', { className: 'ht-hl', text: text.slice(i, i + q.length) }));
+            last = i + q.length;
+            count++;
+        }
+        if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+        node.replaceWith(frag);
+    });
+    // open the spoilers that hold a match, so it's visible
+    root.querySelectorAll('details').forEach(function (d) { if (d.querySelector('mark.ht-hl')) d.open = true; });
+    return count;
 }
 
 /** saved posts → nodes (each post's HTML is cleaned again here, like any saved post) */
@@ -899,7 +1041,7 @@ function scRenderPosts(posts) {
         ]);
         var bodyEl = el('div', { className: 'ht-post-body' });
         bodyEl.appendChild(renderSafeHtml(String(p.h || ''), originOf('sc') + '/'));
-        frag.appendChild(el('div', { className: 'ht-post' }, [head, bodyEl]));
+        frag.appendChild(el('div', { className: 'ht-post', 'data-ht-post': String(p.i) }, [head, bodyEl]));
     });
     return frag;
 }
@@ -919,7 +1061,7 @@ function scBuildThreadDetails(tid, onForgotten, showTitle) {
     }
     var cover = (e && e.cv) || w.cv;
     body.appendChild(el('div', { className: 'ht-torrent-head' }, [
-        cover ? coverEl(cover, null, originOf('sc') + '/') : null,
+        cover ? coverEl(cover, 'ht-thread-cover', originOf('sc') + '/') : null,
         el('div', { className: 'ht-stats' }, e ? [
             el('div', { className: 'ht-stat' }, [el('b', { text: String(e.c) }), el('span', { text: 'visits' })]),
             el('div', { className: 'ht-stat' }, [el('b', { text: fmtDate(e.f) }), el('span', { text: 'first visit' })]),

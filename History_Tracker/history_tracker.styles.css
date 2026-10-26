@@ -1,7 +1,7 @@
 /* [HF][EMP][PLAB][SC] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 4.5
+ * Version 4.6
  */
 
 .ht-badge {
@@ -88,12 +88,12 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 }
 #ht-modal {
     position: relative; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 8px;
-    width: 88vw; max-width: 1600px; max-height: 92vh; display: flex; flex-direction: column;
+    width: calc(88vw / var(--ht-zoom, 1)); max-width: 1600px; max-height: calc(92vh / var(--ht-zoom, 1)); display: flex; flex-direction: column;
     color: #d0d0d0; font-family: inherit; font-size: 12px; text-align: left; box-shadow: 0 10px 50px rgba(0,0,0,0.8);
 }
 /* offline viewer: the window is the whole page */
 #ht-backdrop.ht-fullpage { background: #111; backdrop-filter: none; align-items: stretch; justify-content: stretch; }
-#ht-backdrop.ht-fullpage #ht-modal { width: 100%; max-width: none; height: 100vh; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+#ht-backdrop.ht-fullpage #ht-modal { width: 100%; max-width: none; height: calc(100vh / var(--ht-zoom, 1)); max-height: none; border: 0; border-radius: 0; box-shadow: none; }
 #ht-modal * { box-sizing: border-box; }
 #ht-modal a { color: #d0d0d0; text-decoration: none; }
 #ht-modal a:hover { color: #7ecfff; }
@@ -208,11 +208,12 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 #ht-modal .ht-note { color: #777; font-size: 11px; margin: 8px 0 0; }
 #ht-modal .ht-torrent-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
 #ht-modal .ht-torrent-head .ht-cover { width: 90px; height: 90px; }
+#ht-modal .ht-torrent-head .ht-cover.ht-thread-cover { width: 180px; height: 180px; }   /* SimpCity thread details: twice the size */
 #ht-modal .ht-torrent-head .ht-stats { flex: 1; }
 #ht-modal .ht-pres { border: 1px solid #2e2e2e; border-radius: 6px; overflow: hidden; }
 #ht-modal .ht-pres .ht-row { grid-template-columns: 1fr auto; }
 #ht-modal textarea.ht-code {
-    grid-column: 1 / -1; width: 100%; height: 60vh; resize: vertical; background: #111; color: #c0c0c0;
+    grid-column: 1 / -1; width: 100%; height: calc(60vh / var(--ht-zoom, 1)); resize: vertical; background: #111; color: #c0c0c0;
     border: 1px solid #2e2e2e; border-radius: 4px; padding: 8px; font: 11px/1.45 ui-monospace, Consolas, monospace;
 }
 #ht-modal .ht-render {
@@ -255,7 +256,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 #ht-cl-modal {
     position: relative; background: #1a1a1a;
     border: 1px solid #3a3a3a; border-radius: 8px;
-    width: 560px; max-width: 96vw; max-height: 86vh;
+    width: 560px; max-width: calc(96vw / var(--ht-zoom, 1)); max-height: calc(86vh / var(--ht-zoom, 1));
     overflow-y: auto; color: #d0d0d0;
     font-family: inherit; font-size: 12px; text-align: left;
     box-shadow: 0 10px 50px rgba(0,0,0,0.8);
@@ -378,7 +379,7 @@ h1.p-title-value .ht-tbtn { font-size: 12px; vertical-align: middle; }
 }
 .ht-rowsave:hover { background: #3e3616; color: #ffe2a8; }
 .ht-scrape {
-    position: fixed; right: 20px; bottom: 20px; z-index: 2147483006; width: 380px; max-width: calc(100vw - 40px);
+    position: fixed; right: 20px; bottom: 20px; z-index: 2147483006; width: 380px; max-width: calc((100vw - 40px) / var(--ht-zoom, 1));
     padding: 12px 14px; background: #1a1a1a; color: #c0c0c0; border: 1px solid #6a5a1a; border-radius: 8px;
     box-shadow: 0 10px 50px rgba(0,0,0,.85); font-size: 12px; line-height: 1.5; text-align: left;
 }
@@ -397,3 +398,24 @@ h1.p-title-value .ht-tbtn { font-size: 12px; vertical-align: middle; }
 .ht-scrape .ht-btn:hover { background: #354a68; color: #e0ecf8; }
 .ht-scrape .ht-btn.ht-active { border-color: #c9a040; background: #4a3a10; color: #ffd27e; }
 .ht-scrape .ht-btn.ht-danger { border-color: #7a3a3a; background: #3a1c1c; color: #f0a0a0; }
+
+/* ── Search in a thread's saved pages (v4.6) ── */
+#ht-modal .ht-thread-search { margin: 4px 0 10px; }
+#ht-modal .ht-thread-search input[type=search] { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+#ht-modal .ht-hits { display: flex; flex-direction: column; gap: 4px; max-height: calc(45vh / var(--ht-zoom, 1)); overflow-y: auto; margin-top: 6px; }
+#ht-modal .ht-hits:empty { display: none; }
+#ht-modal .ht-hit {
+    display: block; width: 100%; text-align: left; padding: 6px 10px; cursor: pointer;
+    border: 1px solid #2e2e2e; border-left: 3px solid #c9a040; border-radius: 4px; background: #1e1e1e; color: #c0c0c0;
+    font-family: inherit; font-size: 12px; line-height: 1.45;
+}
+#ht-modal .ht-hit:hover { background: #262626; border-color: #3a3a3a; border-left-color: #ffd27e; }
+#ht-modal .ht-hit-head b { color: #e0e0e0; }
+#ht-modal .ht-hit-snippet { margin-top: 2px; color: #aaa; word-break: break-word; }
+#ht-modal mark.ht-hl { background: #c9a040; color: #111; border-radius: 2px; padding: 0 1px; }
+#ht-modal .ht-post.ht-post-focus { box-shadow: 0 0 0 2px #c9a040; transition: box-shadow .3s; }
+
+/* ── Interface size slider (v4.6) ── */
+#ht-modal .ht-scale { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#ht-modal .ht-scale input[type=range] { flex: 1; min-width: 180px; max-width: 420px; accent-color: #4a9fd4; }
+#ht-modal .ht-scale .ht-scale-val { min-width: 44px; color: #7ecfff; font-weight: 700; }
