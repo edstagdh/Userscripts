@@ -4,6 +4,9 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.5 - 2026-10-26
+- History window: the buttons on each row (🕘 times, ℹ️ details, ✕ forget / remove) are bigger and outlined, and ✕ sits further away from the others, so it's harder to hit by mistake.
+
 ## v4.4 - 2026-10-26
 - Fixed: "📥 Save all pages" from the Watched Threads list stopped with "SimpCity answered 404 on page 2". The list's links go to a thread's latest post (…/latest?new=1), and the page addresses were built from that. They're now built from the thread's own address (…/threads/name.123/page-2), also for threads already in your saved watched list.
 

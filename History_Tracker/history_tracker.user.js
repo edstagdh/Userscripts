@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP][PLAB][SC] History Tracker
-// @version      4.4
+// @version      4.5
 // @description  Remembers the torrent pages / topics / threads you open and the searches you run on HappyFappy, Empornium, Pornolab and SimpCity (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history, each torrent's presentation and, on SimpCity, your watched threads and the posts of the thread pages you read
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -23,11 +23,11 @@
 // @connect      raw.githubusercontent.com
 // @connect      cuckcapital.cr
 // @connect      *
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.4
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.5
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.5
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
@@ -209,7 +209,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.4';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.5';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 

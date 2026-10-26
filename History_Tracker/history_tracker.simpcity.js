@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — SimpCity
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.4
+// Version 4.5
 //
 // SimpCity (simpcity.cr) is a XenForo 2 forum. Here a "torrent" is a thread (/threads/slug.N/):
 //   • /watched/threads (any page): every thread listed is saved to ht_sc_watched — title, prefixes, thumbnail,

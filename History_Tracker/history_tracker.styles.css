@@ -1,7 +1,7 @@
 /* [HF][EMP][PLAB][SC] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 4.4
+ * Version 4.5
  */
 
 .ht-badge {
@@ -136,7 +136,7 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 }
 #ht-modal .ht-btn:hover { background: #354a68; color: #bcd; }
 #ht-modal .ht-btn.ht-active, #ht-modal .ht-btn[aria-selected=true] { background: #1a4a7a; color: #7ecfff; border-color: #4a9fd4; }
-#ht-modal .ht-btn.ht-icon { border-color: transparent; background: none; padding: 2px 6px; }
+#ht-modal .ht-btn.ht-icon { min-width: 32px; height: 30px; padding: 3px 8px; font-size: 15px; line-height: 1; border-color: #3a3a3a; background: #222; }
 #ht-modal .ht-btn.ht-icon:hover { border-color: #4a6080; background: #29374F; }
 #ht-modal .ht-btn.ht-back { background: #2e2810; border-color: #6a5a1a; color: #f0d080; font-weight: 700; }
 #ht-modal .ht-btn.ht-back:hover { background: #3d3515; border-color: #8a7a2a; color: #ffe6a0; }
@@ -173,7 +173,8 @@ a.ht-seen-img img { outline: 2px solid #4a9fd4; outline-offset: -2px; }
 #ht-modal a.ht-title:hover { color: #7ecfff; }
 #ht-modal .ht-chips { display: flex; gap: 4px; }
 #ht-modal .ht-sub { color: #777; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#ht-modal .ht-side { display: flex; align-items: center; gap: 2px; }
+#ht-modal .ht-side { display: flex; align-items: center; gap: 8px; }
+#ht-modal .ht-side > .ht-danger { margin-left: 14px; }   /* ✕ (forget / remove) set apart from the other buttons */
 #ht-modal .ht-count {
     display: inline-block; min-width: 42px; text-align: center; padding: 1px 6px; border-radius: 3px;
     font-size: 10px; font-weight: 800; letter-spacing: 0.04em;
