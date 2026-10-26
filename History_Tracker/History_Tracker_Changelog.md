@@ -4,6 +4,14 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.3 - 2026-10-26
+- New on SimpCity: "📥 Save all pages" saves every page of a thread, to read the whole thread later in 🕘 History (also in the offline viewer). It's next to the 👁 button on a thread, and on each row of your Watched Threads list, with how many pages are saved already ("📥 3/24 pages").
+- Choose "Missing + last page" (pages not saved yet, plus the last one for new posts) or "All pages". Several threads can be queued.
+- It goes one page at a time with random waits: 1–3 s between pages, and a longer 3–5 s pause every 5–10 pages, all adjustable in Settings & data. It stops at the first error, check page, rate limit or sign of being logged out, and never retries. Only one tab runs it at a time.
+- A panel at the bottom right shows the progress (page, countdown to the next one, queued threads), with Pause and Stop. Closing or leaving the tab while it runs asks first. Everything saved until then is kept, and "Missing + last page" carries on from there.
+- Pages saved this way are kept apart from the "saved thread pages kept" limit. A thread's details have a new "Delete saved pages" button.
+- Hover enlarging now has two switches: covers & thumbnails (on), and images inside rendered presentations / saved posts (now off by default, since those are shown full size).
+
 ## v4.2 - 2026-10-26
 - Saved SimpCity pages now show embedded videos as players (loaded when you scroll to them) instead of only their address. Players run sandboxed: they can't open pop-ups or leave the page. Direct video files get the browser's own player.
 - Offline viewer: images from hosts that only serve visitors of the forum (SimpCity's) were blocked there. When an image fails, it's now fetched again through Tampermonkey with your normal cookies, and with the forum as referrer. Tampermonkey asks once to allow those image hosts. This works for saved pages, thread thumbnails and the enlarged hover view.

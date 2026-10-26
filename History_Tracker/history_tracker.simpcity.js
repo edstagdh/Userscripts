@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — SimpCity
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.2
+// Version 4.3
 //
 // SimpCity (simpcity.cr) is a XenForo 2 forum. Here a "torrent" is a thread (/threads/slug.N/):
 //   • /watched/threads (any page): every thread listed is saved to ht_sc_watched — title, prefixes, thumbnail,
@@ -111,15 +111,16 @@ function classifyScSearch(u) {
 }
 
 /** the thread title without its prefix labels ("XXX", "OnlyFans", …) */
-function scPageTitle() {
-    var h1 = document.querySelector('h1.p-title-value');
+function scPageTitle(doc) {
+    var d = doc || document;
+    var h1 = d.querySelector('h1.p-title-value');
     if (h1) {
         var c = h1.cloneNode(true);
         c.querySelectorAll('.label, .labelLink, .label-append, [data-ht-ui]').forEach(function (n) { n.remove(); });
         var t = cleanText(c.textContent);
         if (t) return t.slice(0, 300);
     }
-    return cleanText(document.title.split(' | ')[0]).replace(/^[^-]{1,30} - /, '').slice(0, 300);
+    return cleanText(String(d.title || '').split(' | ')[0]).replace(/^[^-]{1,30} - /, '').slice(0, 300);
 }
 
 function scPrefixes(root) {
@@ -211,20 +212,21 @@ function scSaveWatchedList(page, now) {
 
 // ── Thread pages ─────────────────────────────────────────────────────────
 
-/** facts about the thread from its page */
-function scThreadFacts(page) {
+/** facts about the thread from its page (doc: a fetched page, default the open one) */
+function scThreadFacts(page, doc) {
+    var d = doc || document;
     var f = {};
-    var canon = document.querySelector('link[rel="canonical"]');
+    var canon = d.querySelector('link[rel="canonical"]');
     try {
         var cp = new URL(canon ? canon.getAttribute('href') : location.href, location.href).pathname.replace(/page-\d+\/?$/i, '');
         if (/^\/threads\/[^\/]+\/$/.test(cp)) f.p = cp;
     } catch (e) { /* no path */ }
-    f.t = scPageTitle();
-    f.pf = scPrefixes(document.querySelector('h1.p-title-value'));
-    var crumbs = document.querySelectorAll('ul.p-breadcrumbs:not(.p-breadcrumbs--bottom) a[href*="/forums/"]');
+    f.t = scPageTitle(d);
+    f.pf = scPrefixes(d.querySelector('h1.p-title-value'));
+    var crumbs = d.querySelectorAll('ul.p-breadcrumbs:not(.p-breadcrumbs--bottom) a[href*="/forums/"]');
     var forum = crumbs[crumbs.length - 1];
     if (forum) { f.fo = cleanText(forum.textContent); f.fu = forum.getAttribute('href'); }
-    var desc = document.querySelector('.p-body-header .p-description') || document.querySelector('.p-description');
+    var desc = d.querySelector('.p-body-header .p-description') || d.querySelector('.p-description');
     if (desc) {
         var starter = desc.querySelector('.username');
         if (starter) f.st = cleanText(starter.textContent);
@@ -233,21 +235,22 @@ function scThreadFacts(page) {
         f.tg = Array.prototype.map.call(desc.querySelectorAll('.js-tagList a, .tagList a.tagItem'), function (a) { return cleanText(a.textContent); }).filter(Boolean).slice(0, 30);
     }
     var pages = 1;
-    var nav = document.querySelector('.pageNav-main');
+    var nav = d.querySelector('.pageNav-main');
     if (nav) nav.querySelectorAll('a').forEach(function (a) { var n = parseInt(cleanText(a.textContent), 10); if (n > pages) pages = n; });
     f.np = Math.max(pages, page);
-    var cv = coverUrl();
-    if (cv) f.cv = cv;
+    var og = d.querySelector('meta[property="og:image"]');
+    var cv = og ? cleanUrl(og.getAttribute('content')) : '';
+    if (cv && !/defaultThumbnailImage|no_image/i.test(cv)) f.cv = cv;
     // watched or not: the thread's own Watch / Unwatch button
     var watch = null;
-    document.querySelectorAll('a[href$="/watch"]').forEach(function (a) {
+    d.querySelectorAll('a[href$="/watch"]').forEach(function (a) {
         var tx = cleanText(a.textContent).toLowerCase();
         if (tx === 'unwatch') watch = true;
         else if (tx === 'watch' && watch === null) watch = false;
     });
     f.w = watch;
     // the last post — known when this is the last page
-    var posts = document.querySelectorAll('article.message--post[data-content^="post-"]');
+    var posts = d.querySelectorAll('article.message--post[data-content^="post-"]');
     if (posts.length && page >= f.np) {
         var lastPost = posts[posts.length - 1];
         f.lp = scTs(lastPost.querySelector('.message-attribution-main time'));
@@ -256,10 +259,13 @@ function scThreadFacts(page) {
     return f;
 }
 
-/** a thread page: update the thread's facts and its watched state (both only read this page) */
-function scSaveThreadInfo(tid, page, now) {
+/**
+ * a thread page: update the thread's facts and its watched state (both only read this page).
+ * doc: a page fetched by "Save all pages" — then the pages you've read aren't touched.
+ */
+function scSaveThreadInfo(tid, page, now, doc) {
     var f;
-    try { f = scThreadFacts(page); } catch (e) { log.warn('SimpCity: reading thread #' + tid + ' failed', e); return; }
+    try { f = scThreadFacts(page, doc); } catch (e) { log.warn('SimpCity: reading thread #' + tid + ' failed', e); return; }
     var keep = ['p', 'pf', 'fo', 'fu', 'st', 'sd', 'tg', 'np'];
     if (torrents().has(tid)) {
         updateTorrent(tid, function (e) {
@@ -267,8 +273,10 @@ function scSaveThreadInfo(tid, page, now) {
             var x = e.x || {};
             keep.forEach(function (k) { if (f[k] !== undefined && f[k] !== '') x[k] = f[k]; });
             if (f.lp && f.lp >= (x.lp || 0)) { x.lp = f.lp; x.lpu = f.lpu; }
-            x.rd = Math.max(x.rd || 0, page);        // furthest page read
-            x.lr = page;                              // page of the latest visit
+            if (!doc) {
+                x.rd = Math.max(x.rd || 0, page);    // furthest page read
+                x.lr = page;                          // page of the latest visit
+            }
             e.x = x;
             return e;
         });
@@ -278,7 +286,7 @@ function scSaveThreadInfo(tid, page, now) {
         var w = all[tid] || { a: now };
         keep.concat(['t', 'cv']).forEach(function (k) { if (f[k] !== undefined && f[k] !== '') w[k] = f[k]; });
         if (f.lp && f.lp >= (w.lp || 0)) { w.lp = f.lp; w.lpu = f.lpu; }
-        w.tw = now;                                   // seen watched on the thread page
+        if (!doc) w.tw = now;                         // seen watched on the thread page
         all[tid] = w;
         writeWatched(all);
     } else if (f.w === false && all[tid]) {
@@ -290,9 +298,9 @@ function scSaveThreadInfo(tid, page, now) {
 }
 
 /** the posts on this page, each cleaned: [{ i: post id, n: "41", a: author, d: time, h: html }] */
-function scCapturePosts() {
+function scCapturePosts(doc) {
     var out = [];
-    document.querySelectorAll('article.message--post[data-content^="post-"]').forEach(function (art) {
+    (doc || document).querySelectorAll('article.message--post[data-content^="post-"]').forEach(function (art) {
         if (art.closest('[data-ht-ui]')) return;
         var id = parseInt(String(art.getAttribute('data-content')).slice(5), 10);
         var body = art.querySelector('.message-body .bbWrapper') || art.querySelector('.message-body');
@@ -339,41 +347,358 @@ function scSaveThreadPage(tid, page, now) {
     var posts;
     try { posts = scCapturePosts(); } catch (e) { log.warn('SimpCity: reading the posts of #' + tid + ' failed', e); return; }
     if (!posts.length) { log.debug('SimpCity: no posts found on this page of #' + tid); return; }
+    scStorePage(tid, page, posts, now, false).then(scRefreshButtons, function () { /* logged */ });
+}
+
+/**
+ * store one page's posts → Promise of 'saved' | 'unchanged'.
+ * pin: saved by "Save all pages" — kept apart from the threadPagesMax limit (k: 1); a pinned page stays pinned.
+ */
+function scStorePage(tid, page, posts, now, pin) {
     var json = JSON.stringify(posts);
     var h = hashText(json);
-    var key = KEY.posts + tid + '_' + page;
+    var key = keysOf('sc').posts + tid + '_' + page;
     var cur = GM_getValue(key, null);
+    var keep = !!(pin || (cur && cur.k));
     if (cur && cur.h === h) {
         cur.l = now;
+        if (keep) cur.k = 1;
         GM_setValue(key, cur);
         log.debug('SimpCity: page ' + page + ' of #' + tid + ' unchanged since ' + fmtDateTime(cur.t));
-        return;
+        return Promise.resolve('unchanged');
     }
-    encodeText(json).then(function (enc) {
-        GM_setValue(key, {
-            t: now, l: now, h: h, n: posts.length, b: json.length,
-            a: posts[0].n, e: posts[posts.length - 1].n, z: enc.z, d: enc.d,
-        });
+    return encodeText(json).then(function (enc) {
+        var v = { t: now, l: now, h: h, n: posts.length, b: json.length, a: posts[0].n, e: posts[posts.length - 1].n, z: enc.z, d: enc.d };
+        if (keep) v.k = 1;
+        GM_setValue(key, v);
         log.info('SimpCity: saved page ' + page + ' of #' + tid + ': ' + posts.length + ' posts (#' + posts[0].n + '–#' + posts[posts.length - 1].n + '), ' +
-            fmtBytes(json.length) + ', stored as ' + fmtBytes(enc.d.length) + (enc.z ? ' (gzip)' : ' (uncompressed)'));
-        scPrunePages(key);
-    }).catch(function (e) { log.error('SimpCity: saving page ' + page + ' of #' + tid + ' failed', e); });
+            fmtBytes(json.length) + ', stored as ' + fmtBytes(enc.d.length) + (enc.z ? ' (gzip)' : ' (uncompressed)') + (keep ? ' · kept (saved with "Save all pages")' : ''));
+        if (!keep) scPrunePages(key);
+        return 'saved';
+    }).catch(function (e) { log.error('SimpCity: saving page ' + page + ' of #' + tid + ' failed', e); throw e; });
 }
 
 /** keep at most N saved thread pages: the ones you've looked at least recently go first */
 function scPrunePages(keepKey) {
     var max = parseInt(getSetting('threadPagesMax'), 10) || 0;
     if (max <= 0) return;
-    var keys = GM_listValues().filter(function (k) { return k.indexOf(KEY.posts) === 0; });
-    if (keys.length <= max) return;
-    var dated = keys.filter(function (k) { return k !== keepKey; }).map(function (k) {
+    // pages saved with "Save all pages" (k: 1) don't count and are never dropped here
+    var keys = [];
+    var dated = [];
+    GM_listValues().forEach(function (k) {
+        if (k.indexOf(keysOf('sc').posts) !== 0) return;
         var v = GM_getValue(k, null);
-        return [k, v ? v.l || v.t || 0 : 0];
-    }).sort(function (a, b) { return a[1] - b[1]; });
+        if (v && v.k) return;
+        keys.push(k);
+        if (k !== keepKey) dated.push([k, v ? v.l || v.t || 0 : 0]);
+    });
+    if (keys.length <= max) return;
+    dated.sort(function (a, b) { return a[1] - b[1]; });
     var drop = dated.slice(0, keys.length - max);
     drop.forEach(function (x) { GM_deleteValue(x[0]); });
     log.info('SimpCity: removed ' + drop.length + ' old saved thread page(s) (keeping ' + max + ')');
 }
+
+// ── "📥 Save all pages" ─────────────────────────────────────────────────
+// The only place this script requests SimpCity pages itself, and only when you click the button. One page at a
+// time, with random pauses — settings scrapeDelay / scrapeBurst / scrapePause, by default 1–3 s between pages
+// and a longer 3–5 s pause every 5–10 pages. It stops at once on anything unexpected (an error status such as
+// 429 "too many requests", a check page, being logged out, a page of another thread) and never retries.
+// One tab at a time: a lock in storage (ht_sc_scrape) refreshed while it runs. Threads can be queued.
+// Pages saved this way are "kept" (k: 1): not counted against, nor dropped by, the threadPagesMax limit.
+
+var SC_LOCK_KEY = 'ht_sc_scrape';
+var SC_LOCK_STALE_MS = 20000;
+var scTabId = uuid();
+var scPending = [];      // threads waiting for you to choose "missing" or "all"
+var scQueue = [];        // jobs: { tid, title, path, np, pages: [n, …], total, done, saved, same }
+var scFinished = [];
+var scState = { running: false, paused: false, stopped: false, error: '', status: '', waitLeft: 0, waitLong: false, panel: null, job: null };
+
+function scRange(name, defMin, defMax) {
+    var m = String(getSetting(name) || '').match(/^\s*(\d+(?:\.\d+)?)\s*(?:[-–]\s*(\d+(?:\.\d+)?))?\s*$/);
+    var a = m ? parseFloat(m[1]) : defMin;
+    var b = m && m[2] !== undefined ? parseFloat(m[2]) : (m ? a : defMax);
+    if (!(a >= 0)) a = defMin;
+    if (!(b >= a)) b = a;
+    return [a, b];
+}
+function scRand(r) { return r[0] + Math.random() * (r[1] - r[0]); }
+
+function scLockHeld() {
+    var l = GM_getValue(SC_LOCK_KEY, null);
+    return !!(l && l.id !== scTabId && Date.now() - l.ts < SC_LOCK_STALE_MS);
+}
+function scTakeLock() {
+    if (scLockHeld()) return false;
+    GM_setValue(SC_LOCK_KEY, { id: scTabId, ts: Date.now() });
+    return true;
+}
+function scDropLock() {
+    var l = GM_getValue(SC_LOCK_KEY, null);
+    if (l && l.id === scTabId) GM_deleteValue(SC_LOCK_KEY);
+}
+
+/** a thread to save: { tid, title, path, np } — asks "missing pages" or "all pages" in the panel */
+function scRequestSaveAll(t) {
+    if (scQueue.some(function (j) { return j.tid === t.tid; }) || scPending.some(function (j) { return j.tid === t.tid; })) {
+        scDraw();
+        return;
+    }
+    scPending.push(t);
+    scDraw();
+}
+
+function scSavedSet(tid) {
+    var set = {};
+    scSavedPages(tid, 'sc').forEach(function (p) { set[p.page] = 1; });
+    return set;
+}
+
+function scQueueJob(t, mode) {
+    var saved = scSavedSet(t.tid);
+    var pages = [];
+    for (var n = 1; n <= t.np; n++) {
+        if (mode === 'all' || !saved[n] || n === t.np) pages.push(n);   // the last page may have new posts
+    }
+    scQueue.push({ tid: t.tid, title: t.title, path: t.path, np: t.np, mode: mode, pages: pages, total: pages.length, done: 0, saved: 0, same: 0 });
+    log.info('SimpCity: queued "' + t.title + '" — ' + pages.length + ' page(s) to fetch (' + mode + ')');
+    scRunQueue();
+}
+
+function scStopError(msg) { var e = new Error(msg); e.scStop = true; return e; }
+
+/** fetch one page of a thread and check it's really that page of that thread */
+function scFetchPage(job, n) {
+    var url = location.origin + job.path + (n > 1 ? 'page-' + n : '');
+    return fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html' } }).then(function (res) {
+        if (res.status === 429) throw scStopError('SimpCity answered 429 (too many requests) on page ' + n);
+        if (!res.ok) throw scStopError('SimpCity answered ' + res.status + ' on page ' + n);
+        return res.text();
+    }).then(function (html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var root = doc.documentElement;
+        if (root.getAttribute('data-template') !== 'thread_view') throw scStopError('page ' + n + ' isn\'t a thread page (a check page, or logged out?)');
+        if (root.getAttribute('data-logged-in') === 'false') throw scStopError('you seem to be logged out');
+        var ck = root.getAttribute('data-content-key');
+        if (ck && ck !== 'thread-' + job.tid) throw scStopError('page ' + n + ' belongs to another thread (' + ck + ')');
+        var cur = doc.querySelector('.pageNav-page--current a');
+        var page = cur ? parseInt(cleanText(cur.textContent), 10) || 1 : 1;
+        return { doc: doc, page: page };
+    });
+}
+
+/** wait ms, showing the countdown; Pause holds it, Stop ends it; the lock is refreshed meanwhile */
+function scWait(ms, isLong) {
+    return new Promise(function (resolve) {
+        var left = ms;
+        var last = Date.now();
+        var tick = setInterval(function () {
+            var now = Date.now();
+            if (!scState.paused) left -= now - last;
+            last = now;
+            scState.waitLeft = Math.max(0, left);
+            scState.waitLong = isLong;
+            GM_setValue(SC_LOCK_KEY, { id: scTabId, ts: now });
+            scDraw();
+            if (left <= 0 || scState.stopped) { clearInterval(tick); scState.waitLeft = 0; resolve(); }
+        }, 200);
+    });
+}
+
+async function scRunQueue() {
+    if (scState.running || !scQueue.length) { scDraw(); return; }
+    if (!scTakeLock()) {
+        scState.error = 'Another SimpCity tab is saving thread pages — try again when it\'s done.';
+        scQueue.length = 0;
+        scDraw();
+        return;
+    }
+    scState.running = true;
+    scState.stopped = false;
+    scState.paused = false;
+    scState.error = '';
+    var sinceBreak = 0;
+    var burst = Math.round(scRand(scRange('scrapeBurst', 5, 10)));
+    var first = true;
+    try {
+        while (scQueue.length && !scState.stopped) {
+            var job = scQueue[0];
+            scState.job = job;
+            while (job.pages.length && !scState.stopped) {
+                if (!first) {
+                    var isLong = sinceBreak >= burst;
+                    var ms = 1000 * scRand(isLong ? scRange('scrapePause', 3, 5) : scRange('scrapeDelay', 1, 3));
+                    if (isLong) { sinceBreak = 0; burst = Math.round(scRand(scRange('scrapeBurst', 5, 10))); }
+                    await scWait(ms, isLong);
+                    while (scState.paused && !scState.stopped) await scWait(400, false);
+                    if (scState.stopped) break;
+                }
+                first = false;
+                var n = job.pages[0];
+                scState.status = 'Fetching page ' + n + ' of ' + job.np + '…';
+                scDraw();
+                var r = await scFetchPage(job, n);
+                sinceBreak++;
+                job.pages.shift();
+                if (r.page !== n) {
+                    // past the end (the forum sends you to the last page): the thread is shorter than listed
+                    log.info('SimpCity: page ' + n + ' of #' + job.tid + ' doesn\'t exist (got page ' + r.page + ') — thread has ' + r.page + ' pages');
+                    job.np = r.page;
+                    job.pages = job.pages.filter(function (p) { return p <= r.page; });
+                    job.total = job.done + job.pages.length;
+                    continue;
+                }
+                var posts = scCapturePosts(r.doc);
+                if (!posts.length) throw scStopError('no posts found on page ' + n);
+                var facts = scThreadFacts(n, r.doc);
+                if (facts.np > job.np) {          // the thread grew while saving: add the new pages
+                    for (var q = job.np + 1; q <= facts.np; q++) job.pages.push(q);
+                    job.total += facts.np - job.np;
+                    job.np = facts.np;
+                }
+                if (n === 1 || n === job.np) scSaveThreadInfo(job.tid, n, Date.now(), r.doc);
+                var res = await scStorePage(job.tid, n, posts, Date.now(), true);
+                job.done++;
+                if (res === 'saved') job.saved++; else job.same++;
+                scDraw();
+            }
+            if (!scState.stopped) {
+                scQueue.shift();
+                scFinished.push(job);
+                log.info('SimpCity: "' + job.title + '" — ' + job.done + ' page(s) fetched: ' + job.saved + ' saved, ' + job.same + ' unchanged');
+            }
+        }
+    } catch (e) {
+        scState.error = e.scStop ? e.message : 'Stopped: ' + (e && e.message || e);
+        log.warn('SimpCity: "Save all pages" stopped — ' + scState.error, e.scStop ? '' : e);
+        scState.stopped = true;
+    } finally {
+        if (scState.stopped && scState.job && scQueue.indexOf(scState.job) !== -1) scFinished.push(scState.job);
+        if (scState.stopped) scQueue.length = 0;
+        scState.running = false;
+        scState.status = '';
+        scState.job = null;
+        scDropLock();
+        scDraw();
+        scRefreshButtons();
+    }
+}
+
+// the progress panel (bottom right)
+function scDraw() {
+    if (!scState.panel) {
+        if (!scPending.length && !scQueue.length && !scFinished.length && !scState.error) return;
+        scState.panel = el('div', { className: 'ht-scrape', 'data-ht-ui': '' });
+        document.body.appendChild(scState.panel);
+    }
+    var p = scState.panel;
+    var kids = [el('div', { className: 'ht-scrape-title', text: '📥 Save all pages — History Tracker' })];
+    var btn = function (text, cls, fn, title) {
+        var b = el('button', { type: 'button', className: 'ht-btn' + (cls ? ' ' + cls : ''), text: text, title: title || null });
+        b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); fn(); });
+        return b;
+    };
+    if (scPending.length) {
+        var t = scPending[0];
+        var saved = Object.keys(scSavedSet(t.tid)).length;
+        var missing = 0;
+        var set = scSavedSet(t.tid);
+        for (var n = 1; n <= t.np; n++) if (!set[n] || n === t.np) missing++;
+        var d = scRange('scrapeDelay', 1, 3);
+        kids.push(el('div', { className: 'ht-scrape-thread', text: t.title }));
+        kids.push(el('div', { className: 'ht-sub', text: t.np + ' page' + (t.np === 1 ? '' : 's') + ' · ' + saved + ' already saved · ' + d[0] + '–' + d[1] + ' s between pages' }));
+        kids.push(el('div', { className: 'ht-buttons' }, [
+            missing < t.np ? btn('Missing + last page (' + missing + ')', 'ht-active', function () { scPending.shift(); scQueueJob(t, 'missing'); }) : null,
+            btn('All ' + t.np + ' page' + (t.np === 1 ? '' : 's'), missing < t.np ? '' : 'ht-active', function () { scPending.shift(); scQueueJob(t, 'all'); }),
+            btn('Cancel', '', function () { scPending.shift(); scDraw(); }),
+        ]));
+    }
+    var job = scState.job;
+    if (scState.running && job) {
+        var pct = job.total ? Math.round(100 * job.done / job.total) : 0;
+        kids.push(el('div', { className: 'ht-scrape-thread', text: job.title }));
+        kids.push(el('div', { className: 'ht-scrape-bar' }, [el('span', { style: 'width:' + pct + '%' })]));
+        var line = job.done + ' of ' + job.total + ' page' + (job.total === 1 ? '' : 's') + ' fetched';
+        if (scState.paused) line += ' · paused';
+        else if (scState.waitLeft > 0) line += ' · next in ' + (scState.waitLeft / 1000).toFixed(1) + ' s' + (scState.waitLong ? ' (longer pause)' : '');
+        else if (scState.status) line += ' · ' + scState.status;
+        kids.push(el('div', { className: 'ht-sub', text: line }));
+        if (scQueue.length > 1) kids.push(el('div', { className: 'ht-sub', text: '+ ' + (scQueue.length - 1) + ' more thread' + (scQueue.length > 2 ? 's' : '') + ' queued' }));
+        kids.push(el('div', { className: 'ht-buttons' }, [
+            btn(scState.paused ? '▶ Resume' : '⏸ Pause', '', function () { scState.paused = !scState.paused; scDraw(); }),
+            btn('⏹ Stop', 'ht-danger', function () { scState.stopped = true; scState.paused = false; scDraw(); }),
+        ]));
+    }
+    if (!scState.running && (scFinished.length || scState.error)) {
+        scFinished.slice(-5).forEach(function (j) {
+            kids.push(el('div', { className: 'ht-sub' }, [
+                el('b', { text: j.title }), ': ' + j.done + ' of ' + j.total + ' page' + (j.total === 1 ? '' : 's') + ' fetched · ' + j.saved + ' saved · ' + j.same + ' unchanged',
+            ]));
+        });
+        if (scState.error) kids.push(el('div', { className: 'ht-scrape-error', text: '⚠ ' + scState.error }));
+        if (!scPending.length) {
+            kids.push(el('div', { className: 'ht-buttons' }, [btn('Close', '', function () {
+                scFinished.length = 0;
+                scState.error = '';
+                p.remove();
+                scState.panel = null;
+            })]));
+        }
+    }
+    p.replaceChildren.apply(p, kids.filter(Boolean));
+}
+
+var scSaveButtons = [];   // [button, thread] pairs on the page, refreshed after saving
+
+function scSaveButtonText(tid, np) {
+    var saved = Object.keys(scSavedSet(tid)).length;
+    return '📥 ' + (saved ? saved + '/' + np : np) + ' page' + (np === 1 ? '' : 's');
+}
+
+function scMakeSaveButton(t, cls) {
+    var b = el('button', {
+        type: 'button', className: cls, 'data-ht-ui': '',
+        title: 'History Tracker: save all pages of this thread (one at a time, with pauses) to read them later in 🕘 History — even offline',
+    });
+    b.textContent = scSaveButtonText(t.tid, t.np);
+    b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); scRequestSaveAll(t); });
+    scSaveButtons.push([b, t]);
+    return b;
+}
+
+function scRefreshButtons() {
+    scSaveButtons.forEach(function (x) { if (x[0].isConnected) x[0].textContent = scSaveButtonText(x[1].tid, x[1].np); });
+}
+
+/** thread page: "📥 Save all pages" next to the 👁 button */
+function scAddThreadSaveButton(tid, page) {
+    var f = scThreadFacts(page);
+    var path = f.p || scThreadPath(tid);
+    var b = scMakeSaveButton({ tid: tid, title: f.t || 'Thread #' + tid, path: path, np: f.np || 1 }, 'ht-tbtn ht-tbtn-save');
+    var anchor = document.querySelector('h1.p-title-value .ht-tbtn');
+    if (anchor) anchor.insertAdjacentElement('afterend', b);
+    else (document.querySelector('h1.p-title-value') || document.body).appendChild(b);
+}
+
+/** watched threads page: a small 📥 button on each row */
+function scAddListSaveButtons() {
+    document.querySelectorAll('.structItem--thread').forEach(function (row) {
+        if (row.querySelector('.ht-rowsave')) return;
+        var r = scParseListRow(row);
+        if (!r || !r.item.p) return;
+        var b = scMakeSaveButton({ tid: r.id, title: r.item.t, path: r.item.p, np: r.item.np || 1 }, 'ht-rowsave');
+        var title = row.querySelector('.structItem-title');
+        if (title) title.appendChild(b);
+    });
+}
+
+window.addEventListener('beforeunload', function (ev) {
+    if (!scState.running) return;
+    ev.preventDefault();
+    ev.returnValue = 'History Tracker is still saving thread pages.';
+});
+window.addEventListener('pagehide', scDropLock);
 
 // ── Thread page button ───────────────────────────────────────────────────
 
@@ -604,6 +929,16 @@ function scBuildThreadDetails(tid, onForgotten, showTitle) {
     }
     body.appendChild(scSavedPagesSection(tid));
     var btns = el('div', { className: 'ht-buttons' });
+    var nSaved = scPageKeys(tid, 'sc').length;
+    if (nSaved) {
+        var delPages = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete saved pages (' + nSaved + ')' });
+        delPages.addEventListener('click', function () {
+            if (!confirm('Delete the ' + nSaved + ' saved page(s) of "' + title + '"? Your visits are kept.')) return;
+            scPageKeys(tid, 'sc').forEach(function (k) { GM_deleteValue(k); });
+            if (onForgotten) onForgotten();
+        });
+        btns.appendChild(delPages);
+    }
     if (e) {
         var forget = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Forget this thread' });
         forget.addEventListener('click', function () {

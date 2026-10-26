@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.2
+// Version 4.3
 //
 // The 🕘 History window: modal shell, Searches / Torrents (& threads) / Watched tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom. SimpCity's Watched tab and thread details are
@@ -76,7 +76,9 @@ function setupCoverZoom() {
 
     document.addEventListener('mouseover', function (ev) {
         var t = ev.target.closest && ev.target.closest('[data-ht-zoom]');
-        if (!t || t === current || !getSetting('coverZoom')) return;
+        if (!t || t === current) return;
+        // covers / thumbnails and images inside a rendered post have separate switches
+        if (!getSetting(t.closest('.ht-render') ? 'postImageZoom' : 'coverZoom')) return;
         hide();
         current = t;
         timer = setTimeout(function () { show(t.getAttribute('data-ht-zoom'), t.getAttribute('data-ht-ref')); }, ZOOM_DELAY_MS);
@@ -694,7 +696,8 @@ var CHECKS = [
         ['torrentButton', '👁 history button on torrent pages'],
         ['searchToast', 'Notice when I repeat a search'],
         ['searchBoxHint', '"Searched before" hint by the search box'],
-        ['coverZoom', 'Enlarge covers on hover (History window)'],
+        ['coverZoom', 'Enlarge covers & thumbnails on hover (History window)'],
+        ['postImageZoom', 'Enlarge images inside rendered presentations / saved posts on hover'],
         ['crossSite', 'Show all sites\' history together (HappyFappy, Empornium, Pornolab, SimpCity)'],
     ]],
 ];
@@ -703,6 +706,21 @@ function numberField(label, name, min, max) {
     var input = el('input', { type: 'number', min: String(min), max: String(max), step: '1' });
     input.value = getSetting(name);
     return { input: input, field: el('label', { className: 'ht-field' }, [el('span', { text: label }), input]) };
+}
+
+/** a "min-max" field (e.g. 1-3); a single number means exactly that */
+function rangeField(label, name) {
+    var input = el('input', { type: 'text', inputmode: 'decimal', pattern: '\\s*\\d+(\\.\\d+)?\\s*([-–]\\s*\\d+(\\.\\d+)?)?\\s*', placeholder: DEFAULT_SETTINGS[name] });
+    input.value = getSetting(name);
+    return { input: input, field: el('label', { className: 'ht-field' }, [el('span', { text: label + ' (min-max)' }), input]) };
+}
+
+function rangeValue(f, name) {
+    var m = String(f.input.value).match(/^\s*(\d+(?:\.\d+)?)\s*(?:[-–]\s*(\d+(?:\.\d+)?))?\s*$/);
+    if (!m) return DEFAULT_SETTINGS[name];
+    var a = parseFloat(m[1]);
+    var b = m[2] !== undefined ? parseFloat(m[2]) : a;
+    return b > a ? a + '-' + b : String(a);
 }
 
 function renderSettingsTab(body, setDirty) {
@@ -762,9 +780,14 @@ function renderSettingsTab(body, setDirty) {
         ['saveThreadPosts', 'Save the posts of each thread page I open (that page only)'],
     ]]);
     var pagesMax = numberField('Saved thread pages kept (0 = all; least recently seen go first)', 'threadPagesMax', 0, 100000);
-    body.appendChild(el('div', { className: 'ht-grid', style: 'margin-top:10px' }, [pagesMax.field]));
+    var rDelay = rangeField('📥 Save all pages: seconds between two pages', 'scrapeDelay');
+    var rBurst = rangeField('… after this many pages', 'scrapeBurst');
+    var rPause = rangeField('… a longer pause of (seconds)', 'scrapePause');
+    body.appendChild(el('div', { className: 'ht-grid', style: 'margin-top:10px;gap:10px 18px' }, [pagesMax.field, rDelay.field, rBurst.field, rPause.field]));
     body.appendChild(el('p', { className: 'ht-note', text:
-        'SimpCity is only read from the pages you open — the script never sends it a request (it rate-limits and blocks bots).' }));
+        'SimpCity is read from the pages you open. Only "📥 Save all pages" (on a thread, or on each row of your Watched Threads) requests pages ' +
+        'itself: one at a time, with a random wait in each range above (e.g. 1-3). It stops at the first error, check page or rate limit. ' +
+        'Pages saved that way are kept apart from the limit on the left.' }));
 
     body.appendChild(el('div', { className: 'ht-label', text: 'Advanced' }));
     var logSel = el('select');
@@ -793,6 +816,9 @@ function renderSettingsTab(body, setDirty) {
         st.presentationVersions = numberValue(versions, 'presentationVersions');
         st.presentationMaxTorrents = numberValue(maxT, 'presentationMaxTorrents');
         st.threadPagesMax = numberValue(pagesMax, 'threadPagesMax');
+        st.scrapeDelay = rangeValue(rDelay, 'scrapeDelay');
+        st.scrapeBurst = rangeValue(rBurst, 'scrapeBurst');
+        st.scrapePause = rangeValue(rPause, 'scrapePause');
         return st;
     }
 

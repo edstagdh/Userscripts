@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP][PLAB][SC] History Tracker
-// @version      4.2
+// @version      4.3
 // @description  Remembers the torrent pages / topics / threads you open and the searches you run on HappyFappy, Empornium, Pornolab and SimpCity (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history, each torrent's presentation and, on SimpCity, your watched threads and the posts of the thread pages you read
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -23,11 +23,11 @@
 // @connect      raw.githubusercontent.com
 // @connect      cuckcapital.cr
 // @connect      *
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.2
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.2
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.2
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.2
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.2
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.3
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.3
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
@@ -105,7 +105,8 @@ var DEFAULT_SETTINGS = {
     searchBoxHint: true,          // "searched N× before" next to the site's search box while typing
     timeOnPage: true,             // record active (visible) time on torrent pages
     saveCover: true,              // remember the torrent's cover image URL (shown in History → Torrents)
-    coverZoom: true,              // hovering a cover in the History window shows it enlarged
+    coverZoom: true,              // hovering a cover / thumbnail in the History window shows it enlarged
+    postImageZoom: false,         // the same for images inside a rendered presentation / saved post (they're mostly full size already)
     hideVisited: false,           // hide torrents you've already opened from the site's lists (rows and grid cards)
     crossSite: true,              // History window, search hint and notices include the other site (HappyFappy ↔ Empornium)
     historySite: 'all',           // History window site filter last used: 'all' | 'hf' | 'emp'
@@ -114,6 +115,10 @@ var DEFAULT_SETTINGS = {
     saveWatched: true,            // SimpCity: save the watched-threads list each time you open it
     saveThreadPosts: true,        // SimpCity: save the posts of each thread page you open (that page only)
     threadPagesMax: 200,          // SimpCity: saved thread pages kept, least recently seen dropped first (0 = no limit)
+                                  //   pages saved with "📥 Save all pages" are kept apart from this limit
+    scrapeDelay: '1-3',           // SimpCity "Save all pages": seconds between two pages (random in the range)
+    scrapeBurst: '5-10',          //   after this many pages (random) …
+    scrapePause: '3-5',           //   … a longer pause, in seconds (random)
     presentationMode: 'latest',   // 'latest' = only from your latest visit | 'every' = a new copy whenever it changed
     presentationVersions: 10,     // 'every' mode: copies kept per torrent
     presentationMaxTorrents: 300, // presentations kept for this many most recently visited torrents (0 = no limit)
@@ -204,7 +209,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.2';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.3';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -1234,8 +1239,10 @@ function start() {
             if (getSetting('saveFileList')) savePlabFileList(tid, now);
         }
         if (getSetting('torrentButton')) addTorrentButton(tid, visit);
+        if (GROUP === 'sc' && siteOn) scAddThreadSaveButton(tid, info.page || 1);
     } else if (info.type === 'watched') {
         if (siteOn && getSetting('saveWatched')) scSaveWatchedList(info.page || 1, now);
+        if (siteOn) scAddListSaveButtons();
     } else if (info.type === 'search' && siteOn && getSetting('trackSearches') && !isReload) {
         var sv = recordSearchVisit(info, now);
         var elsewhere = viewGroups().filter(function (g) { return g !== GROUP; }).map(function (g) {
