@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — Backup to Filester
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.7
+// Version 4.8
 //
 // Opt-in daily backup of the whole history (the same data as "⬇️ Export JSON", gzip-compressed) to your own
 // Filester account (https://filester.me, API: https://filester.me/api-docs), into a private folder.

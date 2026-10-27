@@ -4,6 +4,14 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.8 - 2026-10-27
+- SimpCity: removed and edited posts are kept. When a saved page is saved again (a visit or "Save all pages") and a post is no longer there, or its text or links changed, the version you had is kept in the thread's new "🗑 Removed & edited posts" section (in its details, under the saved pages). Nothing there is ever trimmed by the limits.
+  - Posts are matched by their post number across all saved pages of the thread, so posts that only moved to another page (because an earlier one was deleted) aren't counted as removed.
+  - "🗑 Removed": it was between other posts of the page and disappeared. "🗑 Gone from page N": it was at the page's edge and isn't on any other saved page (deleted, or moved to a page you haven't saved).
+  - Edited posts keep each earlier version (up to 20) with when it was saved and replaced. In a rendered page they have a "✏️ edited · earlier version" button.
+  - The thread search also finds text in removed posts and earlier versions. The Threads tab shows how many were removed / edited.
+- SimpCity: a saved page that's unchanged on a later visit is no longer written to storage again. Only its "last seen" time is noted, in the thread's own record. Saved pages now say "unchanged, last seen …".
+
 ## v4.7 - 2026-10-26
 - New: daily backup to your own Filester account (Settings & data → Backup to Filester). Enter your API key (filester.me → Account settings) and turn it on.
   - Once a day it uploads your whole history, compressed: the same data as "Export JSON", but without your settings or the key. It goes into a private folder ("History Tracker backups", created if missing).

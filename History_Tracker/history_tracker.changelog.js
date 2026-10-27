@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — Changelog ("What's New")
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.7
+// Version 4.8
 //
 // Fetches History_Tracker_Changelog.md from GitHub and shows it after an update or on request,
 // in the same window as Advanced Better filelist (its CSS is in history_tracker.styles.css).

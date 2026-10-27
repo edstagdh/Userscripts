@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP][PLAB][SC] History Tracker
-// @version      4.7
+// @version      4.8
 // @description  Remembers the torrent pages / topics / threads you open and the searches you run on HappyFappy, Empornium, Pornolab and SimpCity (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history, each torrent's presentation and, on SimpCity, your watched threads and the posts of the thread pages you read
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -25,12 +25,12 @@
 // @connect      u1.filester.me
 // @connect      filester.me
 // @connect      *
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.backup.js?v=4.7
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.7
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.8
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.8
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.8
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.8
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.backup.js?v=4.8
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.8
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
@@ -76,7 +76,8 @@
  *   ht_G_pres_<id>            saved presentations: [{ t: first seen, l: last seen, h: hash, n: chars, z: 1 = gzip, d: data }]
  *   ht_G_files_<id>           Pornolab: the topic's file list
  *   ht_sc_watched             SimpCity: watched threads { id: { t, p: path, cv, pf: prefixes, fo, lp: last post, … } }
- *   ht_sc_posts_<id>_<page>   SimpCity: the posts of one thread page: { t, l, h, n: posts, a / e: first / last #, z, d }
+ *   ht_sc_posts_<id>_<page>   SimpCity: the posts of one thread page: { t, l, h, n: posts, a / e: first / last #, k, z, d }
+ *   ht_sc_arch_<id>           SimpCity: posts removed from the thread / earlier versions of edited ones (see simpcity.js)
  *   ht_last                   last page recorded (reloads within a few seconds aren't counted twice)
  */
 
@@ -207,10 +208,11 @@ var KEY = {
     pres: 'ht_' + GROUP + '_pres_',
     files: 'ht_' + GROUP + '_files_',
     posts: 'ht_' + GROUP + '_posts_',
+    arch: 'ht_' + GROUP + '_arch_',
     watched: 'ht_' + GROUP + '_watched',
     last: 'ht_last',
 };
-var DATA_KEY_RE = /^ht_(hf|emp|plab|sc)_(tor_\d+|searches|log_\d{4}-\d{2}|pres_\d+|files_\d+|posts_\d+_\d+|watched)$/;
+var DATA_KEY_RE = /^ht_(hf|emp|plab|sc)_(tor_\d+|searches|log_\d{4}-\d{2}|pres_\d+|files_\d+|posts_\d+_\d+|arch_\d+|watched)$/;
 var SHARDS = 16;
 var MAX_ITEM_VISITS = 200;
 var LIST_PAGE = 150;
@@ -219,7 +221,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.7';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.8';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -515,7 +517,7 @@ function keysOf(g) {
     g = g || GROUP;
     return {
         shard: 'ht_' + g + '_tor_', searches: 'ht_' + g + '_searches', log: 'ht_' + g + '_log_', pres: 'ht_' + g + '_pres_',
-        files: 'ht_' + g + '_files_', posts: 'ht_' + g + '_posts_', watched: 'ht_' + g + '_watched',
+        files: 'ht_' + g + '_files_', posts: 'ht_' + g + '_posts_', arch: 'ht_' + g + '_arch_', watched: 'ht_' + g + '_watched',
     };
 }
 
@@ -599,7 +601,7 @@ function forgetTorrent(tid, g) {
     removeFromLog('t', tid, g);
     GM_deleteValue(keysOf(g).pres + tid);
     GM_deleteValue(keysOf(g).files + tid);
-    if ((g || GROUP) === 'sc') scPageKeys(tid, 'sc').forEach(function (k) { GM_deleteValue(k); });
+    if ((g || GROUP) === 'sc') { scPageKeys(tid, 'sc').forEach(function (k) { GM_deleteValue(k); }); GM_deleteValue(keysOf('sc').arch + tid); }
 }
 
 function forgetSearch(key, g) {

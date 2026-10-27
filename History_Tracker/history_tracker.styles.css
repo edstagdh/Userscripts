@@ -1,7 +1,7 @@
 /* [HF][EMP][PLAB][SC] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 4.7
+ * Version 4.8
  */
 
 .ht-badge {
@@ -450,3 +450,19 @@ h1.p-title-value .ht-tbtn { font-size: 12px; vertical-align: middle; }
 #ht-modal .ht-ok-text { color: #8fc88f; font-weight: 700; }
 #ht-modal .ht-backup-out { margin-top: 8px; }
 #ht-modal .ht-backup-list { max-height: 220px; overflow-y: auto; margin-top: 4px; }
+
+/* ── Removed & edited posts (v4.8) ── */
+#ht-modal .ht-label.ht-label-arch { color: #f0a0a0; border-color: #7a3a3a; background: #3a1c1c; }
+#ht-modal .ht-arch { margin-top: 14px; }
+#ht-modal .ht-arch-chip {
+    display: inline-block; flex-shrink: 0; padding: 0 6px; border: 1px solid #7a3a3a; border-radius: 3px; background: #3a1c1c;
+    color: #f0a0a0; font-size: 10px; font-weight: 700; line-height: 16px; white-space: nowrap;
+}
+#ht-modal .ht-arch-chip.ht-arch-ed { border-color: #6a5a1a; background: #2e2810; color: #f0d080; }
+#ht-modal button.ht-arch-btn { cursor: pointer; font-family: inherit; }
+#ht-modal button.ht-arch-btn:hover, #ht-modal button.ht-arch-btn.ht-active { background: #4a3a10; color: #ffe2a8; }
+#ht-modal .ht-post.ht-post-arch { border-color: #4a2a2a; }
+#ht-modal .ht-post-earlier { margin: 0 10px 10px; padding-top: 2px; border-top: 1px dashed #4a4020; }
+#ht-modal .ht-post-earlier .ht-post-arch { border-color: #4a4020; }
+#ht-modal .ht-hit.ht-hit-arch { border-left-color: #c96060; }
+#ht-modal .ht-hit-arch .ht-arch-chip { margin-right: 6px; }

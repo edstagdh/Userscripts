@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — SimpCity
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.7
+// Version 4.8
 //
 // SimpCity (simpcity.cr) is a XenForo 2 forum. Here a "torrent" is a thread (/threads/slug.N/):
 //   • /watched/threads (any page): every thread listed is saved to ht_sc_watched — title, prefixes, thumbnail,
@@ -285,6 +285,8 @@ function scSaveThreadInfo(tid, page, now, doc) {
             if (!doc) {
                 x.rd = Math.max(x.rd || 0, page);    // furthest page read
                 x.lr = page;                          // page of the latest visit
+                x.ls = x.ls || {};                    // when each page was last seen (the saved copy isn't rewritten for that)
+                x.ls[page] = now;
             }
             e.x = x;
             return e;
@@ -378,21 +380,137 @@ function scStorePage(tid, page, posts, now, pin) {
     var cur = GM_getValue(key, null);
     var keep = !!(pin || (cur && cur.k));
     if (cur && cur.h === h) {
-        cur.l = now;
-        if (keep) cur.k = 1;
-        GM_setValue(key, cur);
-        log.debug('SimpCity: page ' + page + ' of #' + tid + ' unchanged since ' + fmtDateTime(cur.t));
+        // identical: nothing is rewritten ("last seen" lives in the thread's record, x.ls); only pinning writes once
+        if (keep && !cur.k) { cur.k = 1; GM_setValue(key, cur); }
+        log.debug('SimpCity: page ' + page + ' of #' + tid + ' unchanged since ' + fmtDateTime(cur.t) + ' — not saved again');
         return Promise.resolve('unchanged');
     }
-    return encodeText(json).then(function (enc) {
+    var oldPosts = cur ? decodeVersion(cur).then(JSON.parse).catch(function () { return null; }) : Promise.resolve(null);
+    return oldPosts.then(function (old) {
+        // before replacing the page: keep removed posts and earlier versions of edited ones in the thread's archive
+        return scArchiveChanges(tid, page, old, posts, cur ? cur.t : 0, now)
+            .catch(function (e) { log.warn('SimpCity: comparing page ' + page + ' of #' + tid + ' with the saved copy failed', e); });
+    }).then(function () { return encodeText(json); }).then(function (enc) {
         var v = { t: now, l: now, h: h, n: posts.length, b: json.length, a: posts[0].n, e: posts[posts.length - 1].n, z: enc.z, d: enc.d };
         if (keep) v.k = 1;
         GM_setValue(key, v);
         log.info('SimpCity: saved page ' + page + ' of #' + tid + ': ' + posts.length + ' posts (#' + posts[0].n + '–#' + posts[posts.length - 1].n + '), ' +
-            fmtBytes(json.length) + ', stored as ' + fmtBytes(enc.d.length) + (enc.z ? ' (gzip)' : ' (uncompressed)') + (keep ? ' · kept (saved with "Save all pages")' : ''));
+            fmtBytes(json.length) + ', stored as ' + fmtBytes(enc.d.length) + (enc.z ? ' (gzip)' : ' (uncompressed)') + (keep ? ' · kept (saved with "Save all pages")' : '') +
+            (cur ? ' · replaced the copy of ' + fmtDateTime(cur.t) : ''));
         if (!keep) scPrunePages(key);
         return 'saved';
     }).catch(function (e) { log.error('SimpCity: saving page ' + page + ' of #' + tid + ' failed', e); throw e; });
+}
+
+/** when a saved page was last seen: on the page copy (older versions) or in the thread's record (x.ls) */
+function scPageLastSeen(tid, page, v) {
+    var e = torrents('sc').get(tid);
+    var ls = e && e.x && e.x.ls ? e.x.ls[page] || 0 : 0;
+    return Math.max(v ? v.l || v.t || 0 : 0, ls);
+}
+
+// ── Removed & edited posts (archive) ─────────────────────────────────────
+// ht_sc_arch_<thread> { t: updated, n: removed, e: edited, z, d: gzip JSON { <post id>: entry } }, entry:
+//   { n: "41", a: author, d: posted, pg: page it was on, h: html (removed posts), del: noticed removed,
+//     sure: 1 = it was between other posts of the page (deleted) / 0 = gone from the page's edge (removed or moved
+//     to a page that isn't saved), ls: last saved copy that had it, ed: [{ h: earlier html, s: saved, u: replaced }] }
+// Built when a saved page changes: its posts are matched by post id with the previous copy of that page and with
+// the thread's other saved pages (a deletion shifts posts across pages). Edits compare the post's text and links,
+// so a change in how this script cleans posts doesn't count as an edit. Nothing here is ever trimmed by limits.
+
+function scArchKey(tid, g) { return keysOf(g || 'sc').arch + tid; }
+
+function scReadArchive(tid, g) {
+    var v = GM_getValue(scArchKey(tid, g), null);
+    if (!v || !v.d) return Promise.resolve({});
+    return decodeVersion(v).then(function (j) { var o = JSON.parse(j); return o && typeof o === 'object' ? o : {}; }).catch(function () { return {}; });
+}
+
+function scArchiveCounts(tid, g) {
+    var v = GM_getValue(scArchKey(tid, g), null);
+    return v ? { n: v.n || 0, e: v.e || 0 } : { n: 0, e: 0 };
+}
+
+function scWriteArchive(tid, arch) {
+    var ids = Object.keys(arch);
+    if (!ids.length) { GM_deleteValue(scArchKey(tid)); return Promise.resolve(); }
+    var nDel = ids.filter(function (k) { return arch[k].del; }).length;
+    var nEd = ids.filter(function (k) { return arch[k].ed && arch[k].ed.length; }).length;
+    return encodeText(JSON.stringify(arch)).then(function (enc) {
+        GM_setValue(scArchKey(tid), { t: Date.now(), n: nDel, e: nEd, z: enc.z, d: enc.d });
+    });
+}
+
+/** what a post says — its text and the addresses it links / shows — independent of markup details */
+function scPostSig(html) {
+    var doc = new DOMParser().parseFromString('<!doctype html><body>' + String(html || ''), 'text/html');
+    var urls = [];
+    doc.querySelectorAll('a[href], img[src]').forEach(function (n) { urls.push(n.getAttribute('href') || n.getAttribute('src')); });
+    doc.querySelectorAll('.ht-embed').forEach(function (n) { n.remove(); });   // our own label text
+    return cleanText(doc.body.textContent) + '\u0001' + urls.sort().join('\u0001');
+}
+
+/** decoded saved pages, kept in memory by content hash (saving a long thread compares each page with the others) */
+var scDecodedCache = new Map();
+function scDecodePage(v) {
+    var ck = v.h + ':' + (v.d ? v.d.length : 0);
+    if (!scDecodedCache.has(ck)) {
+        if (scDecodedCache.size > 400) scDecodedCache.clear();
+        scDecodedCache.set(ck, decodeVersion(v).then(JSON.parse));
+    }
+    return scDecodedCache.get(ck);
+}
+
+function scArchiveChanges(tid, page, oldPosts, newPosts, oldSavedAt, now) {
+    var others = scSavedPages(tid, 'sc').filter(function (p) { return p.page !== page; });
+    return Promise.all(others.map(function (p) {
+        return scDecodePage(p.v).then(function (posts) { return { page: p.page, t: p.v.t, posts: posts }; }).catch(function () { return null; });
+    })).then(function (pagesSaved) {
+        pagesSaved = pagesSaved.filter(Boolean);
+        var known = {};      // post id → { p, page, t } — the saved copy of it we'd lose / compare with
+        pagesSaved.forEach(function (x) { x.posts.forEach(function (p) { known[p.i] = { p: p, page: x.page, t: x.t }; }); });
+        (oldPosts || []).forEach(function (p) { known[p.i] = { p: p, page: page, t: oldSavedAt }; });
+        return scReadArchive(tid).then(function (arch) {
+            var changed = false;
+            var nowIds = {};
+            var ids = newPosts.map(function (p) { return p.i; });
+            var lo = Math.min.apply(null, ids);
+            var hi = Math.max.apply(null, ids);
+            var edits = 0;
+            var removed = 0;
+            newPosts.forEach(function (p) {
+                nowIds[p.i] = 1;
+                var a = arch[p.i];
+                if (a && a.del) {                                    // it's back (it had only moved, or was restored)
+                    delete a.del; delete a.sure; delete a.h; delete a.ls;
+                    if (!a.ed || !a.ed.length) delete arch[p.i];
+                    changed = true;
+                }
+                var k = known[p.i];
+                if (k && k.p.h !== p.h && scPostSig(k.p.h) !== scPostSig(p.h)) {
+                    a = arch[p.i] || (arch[p.i] = { n: p.n, a: p.a, d: p.d });
+                    a.ed = (a.ed || []).concat([{ h: k.p.h, s: k.t, u: now }]).slice(-20);
+                    a.pg = page;
+                    changed = true;
+                    edits++;
+                }
+            });
+            (oldPosts || []).forEach(function (p) {
+                if (nowIds[p.i]) return;
+                var inside = p.i > lo && p.i < hi;
+                var elsewhere = pagesSaved.some(function (x) { return x.posts.some(function (q) { return q.i === p.i; }); });
+                if (!inside && elsewhere) return;                   // moved to a neighbouring page we have
+                var a = arch[p.i] || (arch[p.i] = { n: p.n, a: p.a, d: p.d });
+                if (a.del) return;
+                a.del = now; a.sure = inside ? 1 : 0; a.h = p.h; a.pg = page; a.ls = oldSavedAt;
+                changed = true;
+                removed++;
+            });
+            if (!changed) return;
+            if (edits || removed) log.info('SimpCity: thread #' + tid + ' page ' + page + ' — ' + (removed ? removed + ' post(s) gone' : '') + (removed && edits ? ', ' : '') + (edits ? edits + ' edited' : '') + ' since the saved copy; kept in the thread\'s archive');
+            return scWriteArchive(tid, arch);
+        });
+    });
 }
 
 /** keep at most N saved thread pages: the ones you've looked at least recently go first */
@@ -407,7 +525,8 @@ function scPrunePages(keepKey) {
         var v = GM_getValue(k, null);
         if (v && v.k) return;
         keys.push(k);
-        if (k !== keepKey) dated.push([k, v ? v.l || v.t || 0 : 0]);
+        var m = k.slice(keysOf('sc').posts.length).match(/^(\d+)_(\d+)$/);
+        if (k !== keepKey) dated.push([k, m ? scPageLastSeen(parseInt(m[1], 10), parseInt(m[2], 10), v) : (v ? v.l || v.t || 0 : 0)]);
     });
     if (keys.length <= max) return;
     dated.sort(function (a, b) { return a[1] - b[1]; });
@@ -831,7 +950,9 @@ function scThreadRowExtra(t) {
     var x = t.x || {};
     var saved = scPageKeys(t.id, 'sc', true).length;
     var np = Math.max(x.np || 0, (readWatched('sc')[t.id] || {}).np || 0);
-    return (x.fo ? ' · ' + x.fo : '') + (np ? ' · ' + np + ' page' + (np === 1 ? '' : 's') : '') + (saved ? ' · ' + saved + ' saved' : '');
+    var ac = scArchiveCounts(t.id, 'sc');
+    return (x.fo ? ' · ' + x.fo : '') + (np ? ' · ' + np + ' page' + (np === 1 ? '' : 's') : '') + (saved ? ' · ' + saved + ' saved' : '') +
+        (ac.n ? ' · 🗑 ' + ac.n + ' removed' : '') + (ac.e ? ' · ✏️ ' + ac.e + ' edited' : '');
 }
 
 function scPrefixChips(pf) {
@@ -963,11 +1084,21 @@ function scFactsRow(w, x) {
 function scSavedPagesSection(tid) {
     var wrap = el('div');
     var pages = scSavedPages(tid, 'sc');
+    // removed & edited posts: their own section under the pages (shown once there are any)
+    var archP = scReadArchive(tid);
+    var archHolder = el('div');
+    var archBlock = null;
+    archP.then(function (arch) {
+        if (!Object.keys(arch).length) return;
+        archBlock = scArchiveBlock(tid, arch);
+        archHolder.replaceChildren(archBlock.el);
+    });
     wrap.appendChild(el('div', { className: 'ht-label', text: 'Saved pages' + (pages.length ? ' (' + pages.length + ')' : '') }));
     if (!pages.length) {
         wrap.appendChild(el('p', { className: 'ht-note', text: getSetting('saveThreadPosts')
             ? 'None saved yet — each page of the thread you open is saved (that page\'s posts only).'
             : 'Saving thread pages is off (Settings & data).' }));
+        wrap.appendChild(archHolder);
         return wrap;
     }
 
@@ -1000,9 +1131,11 @@ function scSavedPagesSection(tid) {
         if (q.length < 2) { summary.textContent = q ? 'Type at least 2 characters.' : ''; return; }
         summary.textContent = 'Searching…';
         var mine = q;
-        Promise.all(pages.map(function (pg) {
+        Promise.all([Promise.all(pages.map(function (pg) {
             return postsOf(pg).then(function (posts) { return { pg: pg, posts: posts }; }, function () { return { pg: pg, posts: [] }; });
-        })).then(function (all) {
+        })), archP]).then(function (both) {
+            var all = both[0];
+            var arch = both[1];
             if (mine !== cleanText(input.value).toLowerCase()) return;
             var hits = [];
             var total = 0;
@@ -1013,22 +1146,38 @@ function scSavedPagesSection(tid) {
                     if (n || byAuthor) { hits.push({ page: x.pg.page, p: p, n: n }); total += n || 1; }   // a post by that author counts once
                 });
             });
+            // removed posts and earlier versions of edited ones (the archive)
+            Object.keys(arch).forEach(function (id) {
+                var a = arch[id];
+                var texts = [];
+                if (a.del && a.h) texts.push({ kind: 'removed', h: a.h });
+                (a.ed || []).forEach(function (v) { texts.push({ kind: 'earlier', h: v.h }); });
+                texts.forEach(function (tx) {
+                    var plain = scPlain(tx.h);
+                    var n = scCount(plain.toLowerCase(), q);
+                    var byAuthor = String(a.a || '').toLowerCase().indexOf(q) !== -1;
+                    if (!n && !byAuthor) return;
+                    hits.push({ page: a.pg, p: { i: parseInt(id, 10), n: a.n, a: a.a, d: a.d, tx: plain }, n: n, arch: tx.kind });
+                    total += n || 1;
+                });
+            });
             var nPages = {};
             hits.forEach(function (h) { nPages[h.page] = 1; });
             summary.textContent = hits.length
                 ? total + ' match' + (total === 1 ? '' : 'es') + ' in ' + hits.length + ' post' + (hits.length === 1 ? '' : 's') + ' on ' + Object.keys(nPages).length + ' page' + (Object.keys(nPages).length === 1 ? '' : 's') + (hits.length > 200 ? ' — showing the first 200' : '')
                 : 'No matches in the saved pages.';
             hits.slice(0, 200).forEach(function (h) {
-                var item = el('button', { type: 'button', className: 'ht-hit', title: 'Open page ' + h.page + ' at this post' }, [
+                var item = el('button', { type: 'button', className: 'ht-hit' + (h.arch ? ' ht-hit-arch' : ''), title: h.arch ? 'Show it under "Removed & edited posts"' : 'Open page ' + h.page + ' at this post' }, [
                     el('div', { className: 'ht-hit-head' }, [
-                        el('b', { text: 'Page ' + h.page + ' · #' + (h.p.n || '?') }), ' ',
+                        h.arch ? el('span', { className: 'ht-arch-chip', text: h.arch === 'removed' ? '🗑 removed' : '✏️ earlier version' }) : null,
+                        el('b', { text: (h.page ? 'Page ' + h.page + ' · ' : '') + '#' + (h.p.n || '?') }), ' ',
                         el('span', { text: h.p.a || 'Guest' }),
                         h.p.d ? el('span', { className: 'ht-sub', text: ' · ' + fmtDateTime(h.p.d) }) : null,
                         h.n > 1 ? el('span', { className: 'ht-sub', text: ' · ' + h.n + ' matches' }) : null,
                     ]),
                     scSnippet(h.p.tx, query),
                 ]);
-                item.addEventListener('click', function () { openPage(h.page, h.p.i); });
+                item.addEventListener('click', function () { if (h.arch) { if (archBlock) archBlock.open(h.p.i, query); } else openPage(h.page, h.p.i); });
                 results.appendChild(item);
             });
         });
@@ -1058,7 +1207,7 @@ function scSavedPagesSection(tid) {
         var row = el('div', { className: 'ht-row' }, [
             el('div', { className: 'ht-main' }, [
                 el('div', { style: 'color:#e0e0e0;font-weight:600', text: 'Page ' + pg.page + ' · ' + v.n + ' post' + (v.n === 1 ? '' : 's') + (v.a ? ' (#' + v.a + (v.e && v.e !== v.a ? '–#' + v.e : '') + ')' : '') }),
-                el('div', { className: 'ht-sub', text: 'saved ' + fmtDateTime(v.t) + (v.l && v.l - v.t > 60000 ? ' · last seen ' + ago(v.l) : '') + ' · ' + fmtBytes(v.b || 0) }),
+                el('div', { className: 'ht-sub', text: 'saved ' + fmtDateTime(v.t) + (scPageLastSeen(tid, pg.page, v) - v.t > 60000 ? ' · unchanged, last seen ' + ago(scPageLastSeen(tid, pg.page, v)) : '') + ' · ' + fmtBytes(v.b || 0) }),
             ]),
             el('div', { className: 'ht-side' }, [renderBtn, open]),
         ]);
@@ -1075,9 +1224,10 @@ function scSavedPagesSection(tid) {
             var target = el('div', { className: 'ht-render ht-posts', text: 'Loading…' });
             r.out = target;
             row.appendChild(target);
-            r.ready = postsOf(pg).then(function (posts) {
+            r.ready = Promise.all([postsOf(pg), archP]).then(function (both) {
+                var posts = both[0];
                 if (r.out !== target) return;
-                target.replaceChildren(scRenderPosts(posts));
+                target.replaceChildren(scRenderPosts(posts, both[1]));
                 if (query) scHighlight(target, query);
             }).catch(function (err) {
                 log.error('SimpCity: reading saved page ' + pg.page + ' of #' + tid + ' failed', err);
@@ -1090,7 +1240,95 @@ function scSavedPagesSection(tid) {
         box.appendChild(row);
     });
     wrap.appendChild(box);
+    wrap.appendChild(archHolder);
     return wrap;
+}
+
+/** a saved post's plain text (cached) */
+var scPlainCache = new Map();
+function scPlain(html) {
+    var k = String(html || '');
+    if (!scPlainCache.has(k)) {
+        if (scPlainCache.size > 2000) scPlainCache.clear();
+        scPlainCache.set(k, cleanText(new DOMParser().parseFromString('<!doctype html><body>' + k, 'text/html').body.textContent));
+    }
+    return scPlainCache.get(k);
+}
+
+/** the "Removed & edited posts" section of a thread: { el, open(postId, query) } */
+function scArchiveBlock(tid, arch) {
+    var ids = Object.keys(arch).sort(function (a, b) { return parseInt(a, 10) - parseInt(b, 10); });
+    var nDel = ids.filter(function (k) { return arch[k].del; }).length;
+    var nEd = ids.filter(function (k) { return arch[k].ed && arch[k].ed.length; }).length;
+    var wrap = el('div', { className: 'ht-arch' });
+    wrap.appendChild(el('div', { className: 'ht-label ht-label-arch', text: '🗑 Removed & edited posts (' + [nDel ? nDel + ' removed' : '', nEd ? nEd + ' edited' : ''].filter(Boolean).join(' · ') + ')' }));
+    wrap.appendChild(el('p', { className: 'ht-note', text: 'Posts that disappeared from SimpCity, and earlier versions of edited posts, noticed when a saved page was saved again. They\'re kept here for good (no limit applies).' }));
+    var rows = {};
+    var list = el('div', { className: 'ht-pres' });
+    wrap.appendChild(list);
+    ids.forEach(function (id) {
+        var a = arch[id];
+        var chips = [];
+        if (a.del) {
+            chips.push(el('span', {
+                className: 'ht-arch-chip', text: a.sure ? '🗑 Removed' : '🗑 Gone from page ' + (a.pg || '?'),
+                title: a.sure ? 'It was between other posts of page ' + a.pg + ' and isn\'t there any more: deleted on the forum'
+                    : 'Not on page ' + a.pg + ' any more, nor on another saved page: deleted, or moved to a page that isn\'t saved',
+            }));
+        }
+        if (a.ed && a.ed.length) chips.push(el('span', { className: 'ht-arch-chip ht-arch-ed', text: '✏️ Edited' + (a.ed.length > 1 ? ' ×' + a.ed.length : '') }));
+        var info = [];
+        if (a.del) info.push('noticed ' + fmtDateTime(a.del) + (a.ls ? ' · last in the copy saved ' + fmtDateTime(a.ls) : ''));
+        if (a.ed && a.ed.length) info.push('edit noticed ' + fmtDateTime(a.ed[a.ed.length - 1].u) + (a.del ? '' : ' · current version on page ' + a.pg));
+        var showBtn = el('button', { type: 'button', className: 'ht-btn', text: '👁 Show' });
+        var row = el('div', { className: 'ht-row ht-arch-row', 'data-ht-arch': id }, [
+            el('div', { className: 'ht-main' }, [
+                el('div', { className: 'ht-titleline' }, chips.concat([
+                    el('a', linkProps('sc', originOf('sc') + '/posts/' + id + '/', { target: '_blank', rel: 'noopener', className: 'ht-title', text: '#' + (a.n || '?') + ' · ' + (a.a || 'Guest') })),
+                    a.d ? el('span', { className: 'ht-sub', text: fmtDateTime(a.d) }) : null,
+                ])),
+                el('div', { className: 'ht-sub', text: (a.pg ? 'page ' + a.pg + ' · ' : '') + info.join(' · ') }),
+            ]),
+            el('div', { className: 'ht-side' }, [showBtn]),
+        ]);
+        var out = null;
+        function toggle(force, query) {
+            if (out && !force) { out.remove(); out = null; showBtn.classList.remove('ht-active'); return; }
+            if (!out) {
+                out = el('div', { className: 'ht-render ht-posts' });
+                if (a.del && a.h) out.appendChild(scArchivedPost(a, a.h, a.sure ? 'Removed post' : 'Last saved version', a.ls));
+                (a.ed || []).slice().reverse().forEach(function (v, i) {
+                    out.appendChild(scArchivedPost(a, v.h, 'Earlier version' + (a.ed.length > 1 ? ' ' + (a.ed.length - i) : ''), v.s, v.u));
+                });
+                row.appendChild(out);
+                showBtn.classList.add('ht-active');
+            }
+            if (query) scHighlight(out, query);
+        }
+        showBtn.addEventListener('click', function () { toggle(false); });
+        rows[id] = { row: row, open: function (q) { toggle(true, q); row.scrollIntoView({ block: 'start', behavior: 'smooth' }); } };
+        list.appendChild(row);
+    });
+    var del = el('button', { type: 'button', className: 'ht-btn ht-danger', text: 'Delete these kept posts' });
+    del.addEventListener('click', function () {
+        if (!confirm('Delete the ' + ids.length + ' kept removed / earlier-version post(s) of this thread? This can\'t be undone.')) return;
+        GM_deleteValue(scArchKey(tid));
+        wrap.remove();
+    });
+    wrap.appendChild(el('div', { className: 'ht-buttons' }, [del]));
+    return { el: wrap, open: function (id, q) { if (rows[id]) rows[id].open(q); } };
+}
+
+/** one kept version of a post, with what it is and when */
+function scArchivedPost(a, html, label, savedAt, replacedAt) {
+    var head = el('div', { className: 'ht-post-head' }, [
+        el('span', { className: 'ht-arch-chip', text: label }),
+        el('b', { text: a.a || 'Guest' }),
+        el('span', { className: 'ht-sub', text: (savedAt ? 'saved ' + fmtDateTime(savedAt) : '') + (replacedAt ? ' · replaced ' + fmtDateTime(replacedAt) : '') }),
+    ]);
+    var body = el('div', { className: 'ht-post-body' });
+    body.appendChild(renderSafeHtml(String(html || ''), originOf('sc') + '/'));
+    return el('div', { className: 'ht-post ht-post-arch' }, [head, body]);
 }
 
 function scCount(hay, q) {
@@ -1142,17 +1380,35 @@ function scHighlight(root, query) {
 }
 
 /** saved posts → nodes (each post's HTML is cleaned again here, like any saved post) */
-function scRenderPosts(posts) {
+function scRenderPosts(posts, arch) {
     var frag = document.createDocumentFragment();
     (Array.isArray(posts) ? posts : []).forEach(function (p) {
+        var a = arch && arch[p.i];
+        var edited = a && a.ed && a.ed.length ? a : null;
+        var edBtn = edited ? el('button', { type: 'button', className: 'ht-arch-chip ht-arch-ed ht-arch-btn', title: 'This post was edited after it was first saved — show the earlier version',
+            text: '✏️ edited · earlier version' + (edited.ed.length > 1 ? 's (' + edited.ed.length + ')' : '') }) : null;
         var head = el('div', { className: 'ht-post-head' }, [
             el('a', linkProps('sc', originOf('sc') + '/posts/' + p.i + '/', { target: '_blank', rel: 'noopener', title: 'Open this post on SimpCity', text: '#' + (p.n || '?') })),
             el('b', { text: p.a || 'Guest' }),
             p.d ? el('span', { className: 'ht-sub', title: fmtDateTime(p.d), text: fmtDateTime(p.d) }) : null,
+            edBtn,
         ]);
         var bodyEl = el('div', { className: 'ht-post-body' });
         bodyEl.appendChild(renderSafeHtml(String(p.h || ''), originOf('sc') + '/'));
-        frag.appendChild(el('div', { className: 'ht-post', 'data-ht-post': String(p.i) }, [head, bodyEl]));
+        var post = el('div', { className: 'ht-post', 'data-ht-post': String(p.i) }, [head, bodyEl]);
+        if (edBtn) {
+            var earlier = null;
+            edBtn.addEventListener('click', function () {
+                if (earlier) { earlier.remove(); earlier = null; edBtn.classList.remove('ht-active'); return; }
+                earlier = el('div', { className: 'ht-post-earlier' });
+                edited.ed.slice().reverse().forEach(function (v, i) {
+                    earlier.appendChild(scArchivedPost(edited, v.h, 'Earlier version' + (edited.ed.length > 1 ? ' ' + (edited.ed.length - i) : ''), v.s, v.u));
+                });
+                post.appendChild(earlier);
+                edBtn.classList.add('ht-active');
+            });
+        }
+        frag.appendChild(post);
     });
     return frag;
 }

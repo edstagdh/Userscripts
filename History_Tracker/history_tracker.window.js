@@ -1,7 +1,7 @@
 // [HF][EMP][PLAB][SC] History Tracker — History window
 // Part of history_tracker.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install history_tracker.user.js.
-// Version 4.7
+// Version 4.8
 //
 // The 🕘 History window: modal shell, Searches / Torrents (& threads) / Watched tabs, Settings & data (export / import),
 // torrent details with saved presentations, and the cover zoom. SimpCity's Watched tab and thread details are
@@ -911,13 +911,14 @@ function siteDataBlock(g) {
     var pres = keysOf(g).pres;
     var files = keysOf(g).files;
     var posts = keysOf(g).posts;
+    var arch = keysOf(g).arch;
     var histBytes = 0;
     var presBytes = 0;
     var presCount = 0;
     keys.forEach(function (k) {
         var size = JSON.stringify(GM_getValue(k, null)).length;
         if (k.indexOf(pres) === 0 || k.indexOf(posts) === 0) { presBytes += size; presCount++; }
-        else if (k.indexOf(files) === 0) presBytes += size;
+        else if (k.indexOf(files) === 0 || k.indexOf(arch) === 0) presBytes += size;   // file lists, kept removed / edited posts
         else histBytes += size;
     });
     var isSc = g === 'sc';
