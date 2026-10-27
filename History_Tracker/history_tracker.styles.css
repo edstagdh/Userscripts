@@ -1,7 +1,7 @@
 /* [HF][EMP][PLAB][SC] History Tracker — stylesheet
  * Loaded by history_tracker.user.js via @resource HT_STYLES.
  * Palette of Advanced Better filelist; badges, History window, toasts, Poster Wall chip, What's New window.
- * Version 4.8
+ * Version 4.9
  */
 
 .ht-badge {
@@ -466,3 +466,17 @@ h1.p-title-value .ht-tbtn { font-size: 12px; vertical-align: middle; }
 #ht-modal .ht-post-earlier .ht-post-arch { border-color: #4a4020; }
 #ht-modal .ht-hit.ht-hit-arch { border-left-color: #c96060; }
 #ht-modal .ht-hit-arch .ht-arch-chip { margin-right: 6px; }
+
+/* ── "Searched before" hint: a floating, draggable box (v4.9) ── */
+.ht-hintfloat {
+    position: fixed; z-index: 2147483004; display: flex; align-items: center; gap: 6px; max-width: min(460px, calc(100vw - 16px));
+    padding: 4px 6px 4px 4px; border: 1px solid #4a9fd4; border-radius: 6px; background: #1a1a1a; color: #7ecfff;
+    box-shadow: 0 6px 24px rgba(0,0,0,.6); font-family: inherit; font-size: 12px; line-height: 1.4; text-align: left;
+}
+.ht-hintfloat.ht-hidden { display: none; }
+.ht-hintfloat.ht-dragging { opacity: .85; }
+.ht-hintfloat-grip { cursor: move; padding: 0 4px; color: #4a9fd4; font-size: 14px; user-select: none; }
+.ht-hintfloat-text { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ht-hintfloat-text:hover { text-decoration: underline; color: #bfe8ff; }
+.ht-hintfloat-x { border: 0; background: none; color: #777; font-size: 11px; cursor: pointer; padding: 0 2px; }
+.ht-hintfloat-x:hover { color: #f0a0a0; }

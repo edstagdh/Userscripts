@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP][PLAB][SC] History Tracker
-// @version      4.8
+// @version      4.9
 // @description  Remembers the torrent pages / topics / threads you open and the searches you run on HappyFappy, Empornium, Pornolab and SimpCity (stored locally in Tampermonkey), marks what you've already visited, keeps a searchable search history, each torrent's presentation and, on SimpCity, your watched threads and the posts of the thread pages you read
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -25,12 +25,12 @@
 // @connect      u1.filester.me
 // @connect      filester.me
 // @connect      *
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.8
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.8
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.8
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.8
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.backup.js?v=4.8
-// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.8
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.presentation.js?v=4.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.window.js?v=4.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.changelog.js?v=4.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.simpcity.js?v=4.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.backup.js?v=4.9
+// @resource     HT_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.styles.css?v=4.9
 // @run-at       document-end
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/History_Tracker/history_tracker.user.js
@@ -221,7 +221,7 @@ var ZOOM_DELAY_MS = 150;
 var ZOOM_MARGIN = 16;
 
 var SCRIPT_NAME = 'History Tracker';
-var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.8';
+var SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '4.9';
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -1136,6 +1136,14 @@ function addMenuButton() {
     }
 }
 
+/**
+ * "Searched before" hint for the site's search boxes: a small floating box, not squeezed in next to the box (on
+ * SimpCity's search menu it covered what you typed). It appears under the search box you're typing in; drag it by
+ * its ⠿ handle anywhere and it stays there (remembered per site, ht_ui_hint_pos_<site>). ✕ hides it until the
+ * next page. Its mouse events don't reach the page, so the site's search menu doesn't close when you use it.
+ */
+var HINT_POS_KEY = 'ht_ui_hint_pos_' + GROUP;
+
 function attachSearchHints() {
     var inputs = document.querySelectorAll('input[name="searchtext"], input[name="nm"], input[name="keywords"]');
     if (!inputs.length) return;
@@ -1144,41 +1152,110 @@ function attachSearchHints() {
         if (!cache) cache = viewGroups().map(function (g) { return { g: g, all: readSearches(g) }; });
         return cache;
     }
-    inputs.forEach(function (input) {
-        var hint = el('span', { className: 'ht-hint ht-hidden', 'data-ht-ui': '', role: 'status' });
-        input.insertAdjacentElement('afterend', hint);
-        var text = '';
-        function update() {
-            text = cleanText(input.value);
-            var q = text.toLowerCase();
-            if (!q) { hint.classList.add('ht-hidden'); return; }
-            var found = [];
-            var similar = 0;
-            searches().forEach(function (x) {
-                var s = x.all['text:' + q];
-                if (s) found.push({ g: x.g, c: s.c, l: s.l });
-                similar += Object.keys(x.all).filter(function (k) { return k.indexOf(q) !== -1; }).length;
-            });
-            if (found.length) {
-                var last = Math.max.apply(null, found.map(function (f) { return f.l; }));
-                var onlyHere = found.length === 1 && found[0].g === GROUP;
-                hint.textContent = '🕘 searched ' + (onlyHere ? found[0].c + '×' : perSiteCounts(found)) + ' · last ' + ago(last);
-                hint.title = 'Last: ' + fmtDateTime(last) + ' — click to see your searches';
-            } else if (similar) {
-                hint.textContent = '🕘 ' + similar + ' past search' + (similar === 1 ? '' : 'es') + ' with “' + text + '”';
-                hint.title = 'Click to see them';
-            } else {
-                hint.classList.add('ht-hidden');
-                return;
-            }
-            hint.classList.remove('ht-hidden');
+    var grip = el('span', { className: 'ht-hintfloat-grip', title: 'Drag to move', text: '⠿' });
+    var label = el('span', { className: 'ht-hintfloat-text', role: 'status' });
+    var close = el('button', { type: 'button', className: 'ht-hintfloat-x', title: 'Hide until the next page', text: '✕' });
+    var box = el('div', { className: 'ht-hintfloat ht-hidden', 'data-ht-ui': '' }, [grip, label, close]);
+    document.body.appendChild(box);
+    var current = null;     // the input it's showing for
+    var text = '';
+    var dismissed = false;
+    var dragging = false;
+
+    function place() {
+        var saved = GM_getValue(HINT_POS_KEY, null);
+        var w = box.offsetWidth;
+        var h = box.offsetHeight;
+        var x;
+        var y;
+        if (saved && typeof saved.x === 'number') { x = saved.x; y = saved.y; }
+        else if (current) {
+            var r = current.getBoundingClientRect();               // under the search box, never on top of it
+            x = r.left;
+            y = r.bottom + 6;
+            if (y + h > window.innerHeight - 8) y = r.top - h - 6;
+        } else { x = 14; y = 14; }
+        box.style.left = Math.min(Math.max(4, x), Math.max(4, window.innerWidth - w - 4)) + 'px';
+        box.style.top = Math.min(Math.max(4, y), Math.max(4, window.innerHeight - h - 4)) + 'px';
+    }
+
+    function hide() { box.classList.add('ht-hidden'); }
+
+    function update(input) {
+        current = input;
+        text = cleanText(input.value);
+        var q = text.toLowerCase();
+        if (!q || dismissed) { hide(); return; }
+        var found = [];
+        var similar = 0;
+        searches().forEach(function (x) {
+            var s = x.all['text:' + q];
+            if (s) found.push({ g: x.g, c: s.c, l: s.l });
+            similar += Object.keys(x.all).filter(function (k) { return k.indexOf(q) !== -1; }).length;
+        });
+        if (found.length) {
+            var last = Math.max.apply(null, found.map(function (f) { return f.l; }));
+            var onlyHere = found.length === 1 && found[0].g === GROUP;
+            label.textContent = '🕘 “' + text + '” searched ' + (onlyHere ? found[0].c + '×' : perSiteCounts(found)) + ' · last ' + ago(last);
+            label.title = 'Last: ' + fmtDateTime(last) + ' — click to see your searches';
+        } else if (similar) {
+            label.textContent = '🕘 ' + similar + ' past search' + (similar === 1 ? '' : 'es') + ' with “' + text + '”';
+            label.title = 'Click to see them';
+        } else {
+            hide();
+            return;
         }
-        var t;
-        input.addEventListener('input', function () { clearTimeout(t); t = setTimeout(update, 150); });
-        input.addEventListener('focus', function () { cache = null; update(); });
-        hint.addEventListener('click', function () { openHistory('searches', text); });
-        update();
+        box.classList.remove('ht-hidden');
+        place();
+    }
+
+    // keep the page out of it: focus stays in the search box, the site's menu doesn't see clicks outside itself
+    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup'].forEach(function (type) {
+        // (only mousedown is cancelled: cancelling pointerdown would also cancel the mousedown the ⠿ handle listens for)
+        box.addEventListener(type, function (ev) { ev.stopPropagation(); if (type === 'mousedown') ev.preventDefault(); });
     });
+    label.addEventListener('click', function () { openHistory('searches', text); });
+    close.addEventListener('click', function () { dismissed = true; hide(); });
+    grip.addEventListener('mousedown', function (ev) {
+        if (ev.button !== 0) return;
+        var r = box.getBoundingClientRect();
+        var dx = ev.clientX - r.left;
+        var dy = ev.clientY - r.top;
+        dragging = true;
+        box.classList.add('ht-dragging');
+        function move(e) {
+            box.style.left = Math.min(Math.max(4, e.clientX - dx), window.innerWidth - box.offsetWidth - 4) + 'px';
+            box.style.top = Math.min(Math.max(4, e.clientY - dy), window.innerHeight - box.offsetHeight - 4) + 'px';
+        }
+        function up(e) {
+            e.stopPropagation();
+            document.removeEventListener('mousemove', move, true);
+            document.removeEventListener('mouseup', up, true);
+            dragging = false;
+            box.classList.remove('ht-dragging');
+            GM_setValue(HINT_POS_KEY, { x: parseFloat(box.style.left) || 0, y: parseFloat(box.style.top) || 0 });
+            // the click that ends a drag lands outside the box: keep it from the page (it would close the site's search menu)
+            var swallow = function (c) { c.stopPropagation(); c.preventDefault(); };
+            window.addEventListener('click', swallow, true);
+            setTimeout(function () { window.removeEventListener('click', swallow, true); }, 0);
+            if (current) current.focus();
+        }
+        document.addEventListener('mousemove', move, true);
+        document.addEventListener('mouseup', up, true);
+    });
+    grip.addEventListener('dblclick', function () { GM_deleteValue(HINT_POS_KEY); place(); });   // back under the search box
+    grip.title = 'Drag to move · double-click to put it back under the search box';
+
+    inputs.forEach(function (input) {
+        var t;
+        input.addEventListener('input', function () { clearTimeout(t); t = setTimeout(function () { update(input); }, 150); });
+        input.addEventListener('focus', function () { cache = null; update(input); });
+        input.addEventListener('blur', function () {
+            setTimeout(function () { if (!dragging && current === input && document.activeElement !== input) hide(); }, 200);
+        });
+    });
+    window.addEventListener('resize', function () { if (!box.classList.contains('ht-hidden')) place(); });
+    window.addEventListener('scroll', function () { if (!box.classList.contains('ht-hidden') && !GM_getValue(HINT_POS_KEY, null)) place(); }, { passive: true });
 }
 
 // ── Menu commands ────────────────────────────────────────────────────────

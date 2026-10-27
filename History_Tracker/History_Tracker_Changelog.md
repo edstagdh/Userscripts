@@ -4,6 +4,12 @@ All notable changes to [HF][EMP][PLAB][SC] History Tracker are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v4.9 - 2026-10-27
+- The "searched before" hint by the site's search box is now a small floating box. It sits just below the search box you're typing in, so it no longer covers it (e.g. in SimpCity's search menu).
+  - Drag it by its ⠿ handle anywhere you like; the spot is remembered for each site. Double-click the handle to put it back under the search box.
+  - ✕ hides it until the next page. Clicking the text still opens your searches.
+  - Using it doesn't close the site's search menu or move the cursor out of the search box.
+
 ## v4.8 - 2026-10-27
 - SimpCity: removed and edited posts are kept. When a saved page is saved again (a visit or "Save all pages") and a post is no longer there, or its text or links changed, the version you had is kept in the thread's new "🗑 Removed & edited posts" section (in its details, under the saved pages). Nothing there is ever trimmed by the limits.
   - Posts are matched by their post number across all saved pages of the thread, so posts that only moved to another page (because an earlier one was deleted) aren't counted as removed.
