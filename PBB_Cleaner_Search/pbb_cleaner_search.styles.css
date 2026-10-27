@@ -1,0 +1,83 @@
+/* [PBB] Cleaner Search — stylesheet
+ * Loaded by pbb_cleaner_search.user.js via @resource PBB_STYLES.
+ * The thumbnail size comes from --pbb-thumb-max, set on :root by the userscript.
+ * Version 1.0
+ */
+
+:root { --pbb-thumb-max: 350px; }
+
+/* ===== thumbnails ===== */
+img.pbb-thumb {
+    max-width: min(var(--pbb-thumb-max), 100%) !important;
+    max-height: var(--pbb-thumb-max) !important;
+    width: auto !important;
+    height: auto !important;
+    display: inline-block !important;
+    vertical-align: top;
+    margin: 3px 4px 3px 0;
+    cursor: zoom-in;
+    border-radius: 3px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.25);
+    transition: box-shadow .12s;
+}
+img.pbb-thumb:hover { box-shadow: 0 0 0 2px #3a8ee6; }
+
+/* hidden image list Viewer.js reads from */
+.pbb-viewer-store { display: none !important; }
+.viewer-title { font-size: 13px; }
+
+/* ===== auto-collapse ===== */
+.pbb-collapsed { display: none !important; }
+.cattitle.pbb-matched > a { opacity: .6; }
+.pbb-match-tag { margin-left: 8px; font-size: 11px; font-style: italic; opacity: .75; }
+.pbb-btn {
+    margin-left: 8px; padding: 0 8px;
+    font-size: 11px; line-height: 18px; font-family: inherit; color: inherit;
+    background: transparent; border: 1px solid rgba(128,128,128,.7); border-radius: 3px;
+    cursor: pointer;
+}
+.pbb-btn:hover { background: rgba(128,128,128,.2); }
+.pbb-summary { margin: 4px 0 6px; font-size: 12px; opacity: .85; }
+
+/* ===== "What's New" popup ===== */
+#pbbcl-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.78); z-index: 999997; backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center;
+}
+#pbbcl-modal {
+    position: relative; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 8px;
+    width: 560px; max-width: 96vw; max-height: 86vh; overflow-y: auto; color: #d0d0d0;
+    font-family: inherit; font-size: 12px; box-shadow: 0 10px 50px rgba(0,0,0,0.8);
+}
+#pbbcl-modal .pbbcl-header {
+    display: flex; flex-direction: column; gap: 2px; padding: 14px 18px 12px;
+    border-bottom: 1px solid #2e2e2e; position: sticky; top: 0; background: #1a1a1a; z-index: 1;
+}
+#pbbcl-modal .pbbcl-header h2 { margin: 0; font-size: 14px; font-weight: 800; color: #f0f0f0; letter-spacing: 0.04em; text-transform: uppercase; }
+#pbbcl-modal .pbbcl-subtitle { font-size: 10px; color: #666; letter-spacing: 0.02em; }
+#pbbcl-modal .pbbcl-body { padding: 14px 18px 6px; }
+#pbbcl-modal .pbbcl-version-block { margin-bottom: 18px; }
+#pbbcl-modal .pbbcl-version-block:last-child { margin-bottom: 0; }
+#pbbcl-modal .pbbcl-version-label {
+    display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+    color: #7ec87e; background: #1a2e1a; border: 1px solid #2e5e2e; padding: 2px 8px; border-radius: 3px; margin-bottom: 8px;
+}
+#pbbcl-modal .pbbcl-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+#pbbcl-modal .pbbcl-changes li { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: #c0c0c0; line-height: 1.5; }
+#pbbcl-modal .pbbcl-changes li::before { content: '→'; color: #5a8a5a; font-weight: 700; flex-shrink: 0; }
+#pbbcl-modal .pbbcl-footer {
+    display: flex; align-items: center; justify-content: space-between; padding: 12px 18px 16px;
+    border-top: 1px solid #2e2e2e; margin-top: 10px; position: sticky; bottom: 0; background: #1a1a1a; gap: 10px; flex-wrap: wrap;
+}
+#pbbcl-modal .pbbcl-github-link { font-size: 11px; color: #5a7a9a; text-decoration: none; font-weight: 600; }
+#pbbcl-modal .pbbcl-github-link:hover { color: #7aa0c8; text-decoration: underline; }
+#pbbcl-modal .pbbcl-ok-btn {
+    padding: 6px 22px; font-size: 12px; font-weight: 700; border-radius: 4px; cursor: pointer;
+    background: #2d4a2d; border: 1px solid #4a7a4a; color: #8fc88f; transition: background 0.15s, color 0.15s; letter-spacing: 0.03em;
+}
+#pbbcl-modal .pbbcl-ok-btn:hover { background: #3a5e3a; color: #aedaae; border-color: #6aaa6a; }
+#pbbcl-modal .pbbcl-error { font-size: 11px; color: #c88; padding: 8px 0; }
+#pbbcl-modal .pbbcl-update-banner {
+    display: flex; align-items: center; gap: 8px; font-size: 11px; color: #f0d080;
+    background: #2e2810; border: 1px solid #6a5a1a; border-radius: 4px; padding: 8px 10px; margin-bottom: 14px;
+}
