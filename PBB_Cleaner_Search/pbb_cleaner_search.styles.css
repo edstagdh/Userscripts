@@ -1,7 +1,7 @@
 /* [PBB] Cleaner Search — stylesheet
  * Loaded by pbb_cleaner_search.user.js via @resource PBB_STYLES.
  * The thumbnail size comes from --pbb-thumb-max, set on :root by the userscript.
- * Version 1.0
+ * Version 1.3
  */
 
 :root { --pbb-thumb-max: 350px; }

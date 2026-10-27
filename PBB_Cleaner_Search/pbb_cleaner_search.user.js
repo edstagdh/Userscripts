@@ -2,7 +2,7 @@
 // @name        [PBB] Cleaner Search
 // @description Shrinks post images on PBB search results to small thumbnails (max 350×350) with a click-to-preview lightbox, and auto-collapses results whose topic name matches your keywords.
 // @namespace   https://github.com/edstagdh/Userscripts
-// @version     1.0
+// @version     1.3
 // @author      edstagdh
 // @match       *://pornbb.org/*
 // @match       *://*.pornbb.org/*
@@ -10,10 +10,10 @@
 // @updateURL   https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PBB_Cleaner_Search/pbb_cleaner_search.user.js
 // @installURL  https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PBB_Cleaner_Search/pbb_cleaner_search.user.js
 // @require     https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.7/viewer.min.js
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.viewer.js?v=1.0
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.changelog.js?v=1.0
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.viewer.js?v=1.3
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.changelog.js?v=1.3
 // @resource    VIEWER_CSS https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.7/viewer.min.css
-// @resource    PBB_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.styles.css?v=1.0
+// @resource    PBB_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.styles.css?v=1.3
 // @grant       GM_addStyle
 // @grant       GM_getResourceText
 // @grant       GM_setValue
@@ -39,7 +39,7 @@ const LOG_PREFIX = '[PBB-CS]';
 // --------------------
 // VERSION
 // --------------------
-const SCRIPT_VERSION = '1.0';
+const SCRIPT_VERSION = '1.3';
 
 // --------------------
 // SETTINGS (changed from the Tampermonkey menu)

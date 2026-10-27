@@ -1,7 +1,7 @@
 // [PBB] Cleaner Search — "What's New" popup (fetches Changelog.md from GitHub)
 // Part of pbb_cleaner_search.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install pbb_cleaner_search.user.js.
-// Version 1.0
+// Version 1.3
 
 // Changelog is not stored inline — it's fetched on demand from Changelog.md in this repo
 // folder, either when the version changes or when requested via the GM menu command.
