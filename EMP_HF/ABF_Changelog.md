@@ -4,6 +4,9 @@ All notable changes to [HF][EMP] Advanced Better filelist are documented here.
 This file is fetched at runtime by the script's "What's New" modal, so keep
 each version as a `## vX.Y` header followed by a bullet list of changes.
 
+## v1.6 - 2026-10-28
+- Fixed "Full-Size Images Instead of Thumbnails" not working for images inside spoilers (and other lazy-loaded images). These are now switched to the full-size image before they load, so opening a spoiler downloads only the full-size version, not the thumbnail too.
+
 ## v1.5 - 2026-10-22
 - Added thumbnail hover preview: hovering a thumbnail from hamsterimg.net, imgbox.com or pixhost (pixhost.to, pixhost.cc and pixho.st) pops up the full-size image next to the cursor, scaled to fit the screen.
 - The preview is off by default and can be toggled via the Tampermonkey menu ("✅ Thumbnail Hover Preview" → click to disable, reloads the page).

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         [HF][EMP] Advanced Better filelist
-// @version      1.5
+// @version      1.6
 // @description  inspired by original script by ephraim
 // @author       edstagdh
 // @namespace    https://github.com/edstagdh/Userscripts
@@ -280,11 +280,19 @@ function markIfScaledDown(img) {
         !!img.naturalWidth && img.clientWidth > 0 && img.clientWidth < img.naturalWidth);
 }
 
+// Lazy-loaded images (e.g. inside a [spoiler]) start without a src: the site keeps
+// the URL in data-src and only copies it into src when the spoiler is opened.
+var LAZY_SRC_ATTR = 'data-src';
+
 function swapThumbToFull(img) {
     if (img.dataset.abfFullSize) return; // already handled
-    var thumbUrl = img.getAttribute('src');
+
+    // Prefer a real src; fall back to the lazy-load URL for images not loaded yet.
+    var srcAttr = img.getAttribute('src') ? 'src' : (img.getAttribute(LAZY_SRC_ATTR) ? LAZY_SRC_ATTR : null);
+    if (!srcAttr) return;
+    var thumbUrl = img.getAttribute(srcAttr);
     var fullUrl = thumbToFullUrl(thumbUrl);
-    if (!fullUrl || fullUrl === img.src) return;
+    if (!fullUrl) return;
 
     img.dataset.abfFullSize = '1';
     img.classList.add('abf-full-size');
@@ -303,12 +311,23 @@ function swapThumbToFull(img) {
             else img.removeAttribute('onclick');
         }
         if (restoreLink) restoreLink();
+        if (img.hasAttribute(LAZY_SRC_ATTR)) img.setAttribute(LAZY_SRC_ATTR, thumbUrl);
         img.src = thumbUrl;
     }
     img.addEventListener('load', onLoad);
     img.addEventListener('error', revert);
-    img.src = fullUrl;
+
+    if (srcAttr === 'src') {
+        if (img.hasAttribute(LAZY_SRC_ATTR)) img.setAttribute(LAZY_SRC_ATTR, fullUrl); // keep the two in sync
+        img.src = fullUrl;
+    } else {
+        // Not loaded yet: point the lazy URL at the full-size image so the site
+        // loads it directly when the spoiler opens (the thumbnail is never downloaded).
+        img.setAttribute(LAZY_SRC_ATTR, fullUrl);
+    }
 }
+
+var FULL_SIZE_CANDIDATES = 'img[src], img[' + LAZY_SRC_ATTR + ']';
 
 function initFullSizeImages() {
     var maxW = parseInt(getSetting('thumbFullSizeMaxWidth'), 10) || DEFAULT_SETTINGS.thumbFullSizeMaxWidth;
@@ -327,18 +346,34 @@ function initFullSizeImages() {
     `;
     document.head.appendChild(style);
 
-    document.querySelectorAll('img[src]').forEach(swapThumbToFull);
+    document.querySelectorAll(FULL_SIZE_CANDIDATES).forEach(swapThumbToFull);
 
-    // Catch images the site (or this script) adds later.
+    // Catch images the site (or this script) adds later, and images whose src /
+    // data-src is filled in later (lazy loading, spoilers).
     new MutationObserver(function (mutations) {
         mutations.forEach(function (m) {
+            if (m.type === 'attributes') {
+                if (m.target.tagName === 'IMG') swapThumbToFull(m.target);
+                return;
+            }
             m.addedNodes.forEach(function (node) {
                 if (node.nodeType !== 1) return;
                 if (node.tagName === 'IMG') swapThumbToFull(node);
-                else if (node.querySelectorAll) node.querySelectorAll('img[src]').forEach(swapThumbToFull);
+                else if (node.querySelectorAll) node.querySelectorAll(FULL_SIZE_CANDIDATES).forEach(swapThumbToFull);
             });
         });
-    }).observe(document.body, { childList: true, subtree: true });
+    }).observe(document.body, {
+        childList: true, subtree: true,
+        attributes: true, attributeFilter: ['src', LAZY_SRC_ATTR],
+    });
+
+    // Images that loaded while hidden (closed spoiler) have no on-screen size yet,
+    // so re-check the zoom cursor when the mouse reaches them.
+    document.addEventListener('mouseover', function (e) {
+        if (e.target instanceof HTMLImageElement && e.target.classList.contains('abf-full-size')) {
+            markIfScaledDown(e.target);
+        }
+    }, true);
 
     // Whether an image counts as "scaled down" depends on the window width.
     var resizeTimer = null;
@@ -376,7 +411,7 @@ if (getSetting('thumbFullSizeEnabled')) {
 
 // ── Changelog / "What's New" ────────────────────────────────────────────────
 
-const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.5';
+const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : '1.6';
 
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/ABF_Changelog.md';
 var changelogCache = null; // parsed [{version, date, changes:[...]}] once fetched this session
