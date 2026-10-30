@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Viewer Settings overlay and the nav-bar buttons (Grid/List, Wall, Viewer)
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.19
+// Version 3.20
 
 // --------------------
 // SETTINGS OVERLAY — BUILD & INJECT
@@ -64,6 +64,9 @@ function buildSettingsOverlay() {
                     ${row('Gallery Mode',
                           'Display results as an image card grid instead of the table. Toggle instantly with the Grid/List button in the nav bar.',
                           toggle('vsm-GALLERY_VIEW_MODE', GALLERY_VIEW_MODE))}
+                    ${row('Button Location',
+                          'Where the Grid/List, Wall and Viewer buttons appear. Site menu: in the main menu row (Forum, Top10, …). Header bar: the classic spot next to your username, which can get crowded when sitewide Freeleech / Doubleseed banners are shown. Applies immediately.',
+                          select('vsm-NAV_LOCATION', [['menu','Site menu'],['header','Header bar (classic)']], NAV_LOCATION))}
                     ${row('Card Dark Mode',
                           'Display Toggle Dark Mode for the cards in grid view.',
                           toggle('vsm-GRID_DARK_MODE', GRID_DARK_MODE))}
@@ -225,6 +228,11 @@ function buildSettingsOverlay() {
     jQuery(document).on('change', '#vsm-WALL_GROUP_DUP_IMAGES', function () {
         WALL_GROUP_DUP_IMAGES = this.checked;
         GM_setValue('WALL_GROUP_DUP_IMAGES', WALL_GROUP_DUP_IMAGES);
+    });
+    jQuery(document).on('change', '#vsm-NAV_LOCATION', function () {
+        NAV_LOCATION = this.value === 'header' ? 'header' : 'menu';
+        GM_setValue('NAV_LOCATION', NAV_LOCATION);
+        injectNavButton();
     });
     jQuery(document).on('change', '#vsm-WALL_ANIMATE', function () {
         WALL_ANIMATE = this.checked;
@@ -422,6 +430,7 @@ function applyDefaultsToForm() {
     jQuery('#vsm-GALLERY_VIEW_MODE').prop('checked', DEFAULTS.GALLERY_VIEW_MODE);
     jQuery('#vsm-GRID_DARK_MODE').prop('checked', DEFAULTS.GRID_DARK_MODE);
     jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(DEFAULTS.GALLERY_CARD_MIN_WIDTH);
+    jQuery('#vsm-NAV_LOCATION').val(DEFAULTS.NAV_LOCATION);
 }
 
 function saveSettings() {
@@ -436,6 +445,9 @@ function saveSettings() {
     GM_setValue('GALLERY_VIEW_MODE',               jQuery('#vsm-GALLERY_VIEW_MODE').is(':checked'));
     GM_setValue('GRID_DARK_MODE',                  jQuery('#vsm-GRID_DARK_MODE').is(':checked'));
     GM_setValue('GALLERY_CARD_MIN_WIDTH',          parseInt(jQuery('#vsm-GALLERY_CARD_MIN_WIDTH').val(), 10) || DEFAULTS.GALLERY_CARD_MIN_WIDTH);
+    const navLoc = jQuery('#vsm-NAV_LOCATION').val() || DEFAULTS.NAV_LOCATION;
+    GM_setValue('NAV_LOCATION', navLoc);
+    if (navLoc !== NAV_LOCATION) { NAV_LOCATION = navLoc; injectNavButton(); }
     // Tag click action — saved immediately on change but also here for consistency
     TAG_CLICK_ACTION = jQuery('#vsm-TAG_CLICK_ACTION').val() || 'blacklist';
     GM_setValue('TAG_CLICK_ACTION', TAG_CLICK_ACTION);
@@ -444,49 +456,64 @@ function saveSettings() {
 // --------------------
 // NAV BUTTON INJECTION
 // --------------------
+// Buttons go into the site's main menu row (next to Forum / Top10 / … and History
+// Tracker's "History"), which looks the same on both sites. The classic spot in the
+// bottom header bar is kept as an option: it shares that line with the sitewide
+// Freeleech / Doubleseed banners, which leave too little room when both are shown.
 function injectNavButton() {
+    // Remove any earlier copy (location changed in settings)
+    jQuery('#viewer_settings_nav_wrap, #nav_gallery_toggle, #nav_poster_wall, #nav_viewer_settings').remove();
+
+    const $menuUl     = jQuery('#menu > ul').last();
     const $majorStats = jQuery('#major_stats');
-    if (!$majorStats.length) return;
+    const useMenu     = NAV_LOCATION !== 'header' && $menuUl.length;
+    if (!useMenu && !$majorStats.length) return;
 
     const isCollagePage = location.pathname.includes('/collage');
-
-    const $settingsLi = jQuery(`
-        <li id="nav_viewer_settings" class="brackets">
-            <a href="javascript:void(0)" id="viewer-settings-open-btn" title="EMP/HF Viewer Settings">
-                <span class="viewer-gear-icon">&#9881;</span>Viewer
-            </a>
-        </li>
-    `);
-
-    const $ul  = jQuery('<ul>').append($settingsLi);
-    const $div = jQuery('<div id="viewer_settings_nav_wrap">').append($ul);
+    const liClass = useMenu ? '' : 'brackets';
+    const items = [];
 
     if (!isCollagePage) {
-        const $galleryLi = jQuery(`
-            <li id="nav_gallery_toggle" class="brackets">
+        items.push(jQuery(`
+            <li id="nav_gallery_toggle" class="${liClass}">
                 <a href="javascript:void(0)" id="gallery-toggle-btn"
                    title="${GALLERY_VIEW_MODE ? 'Switch to table view' : 'Switch to grid view'}">
                     <span class="viewer-gear-icon">${GALLERY_VIEW_MODE ? '&#9776;' : '&#10697;'}</span>${GALLERY_VIEW_MODE ? 'List' : 'Grid'}
                 </a>
             </li>
-        `);
-        $ul.prepend($galleryLi);
-        jQuery(document).on('click', '#gallery-toggle-btn', toggleGalleryMode);
+        `));
     }
-
     // Poster Wall: torrent listings only (not collages / requests)
     if (!isCollagePage && !location.pathname.includes('/requests')) {
-        const $wallLi = jQuery(`
-            <li id="nav_poster_wall" class="brackets">
+        items.push(jQuery(`
+            <li id="nav_poster_wall" class="${liClass}">
                 <a href="javascript:void(0)" id="poster-wall-open-btn" title="Full-screen endless poster wall">
                     <span class="viewer-gear-icon">&#9638;</span>Wall
                 </a>
             </li>
-        `);
-        $settingsLi.before($wallLi);
-        jQuery(document).on('click', '#poster-wall-open-btn', openPosterWall);
+        `));
+    }
+    items.push(jQuery(`
+        <li id="nav_viewer_settings" class="${liClass}">
+            <a href="javascript:void(0)" id="viewer-settings-open-btn" title="EMP/HF Viewer Settings">
+                <span class="viewer-gear-icon">&#9881;</span>Viewer
+            </a>
+        </li>
+    `));
+
+    if (useMenu) {
+        // Before History Tracker's item when it's already there, so the order stays the same
+        const $ht = $menuUl.children('#nav_ht');
+        items.forEach($li => { $li.addClass('ave-menu-item'); if ($ht.length) $ht.before($li); else $menuUl.append($li); });
+    } else {
+        const $ul = jQuery('<ul>');
+        items.forEach($li => $ul.append($li));
+        $majorStats.before(jQuery('<div id="viewer_settings_nav_wrap">').append($ul));
     }
 
-    $majorStats.before($div);
-    jQuery('#viewer-settings-open-btn').on('click', openOverlay);
+    // Delegated, bound once (this function can run again when the location changes)
+    jQuery(document).off('click.avenav')
+        .on('click.avenav', '#gallery-toggle-btn', toggleGalleryMode)
+        .on('click.avenav', '#poster-wall-open-btn', openPosterWall)
+        .on('click.avenav', '#viewer-settings-open-btn', openOverlay);
 }

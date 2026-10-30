@@ -1,7 +1,7 @@
 // [HF][EMP] Advanced Viewer Experience — Poster Wall: full-screen endless poster grid
 // Part of advanced_viewer_experience.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install advanced_viewer_experience.user.js.
-// Version 3.19
+// Version 3.20
 
 // --------------------
 // POSTER WALL — endless 2D grid (Kaleidescape-style)

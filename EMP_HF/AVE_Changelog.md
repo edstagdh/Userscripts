@@ -4,6 +4,10 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry.
 
+## v3.20 - 2026-10-31
+- The Grid/List, Wall and Viewer buttons moved to the site's main menu row (next to Forum, Top10, … and History), which looks the same on both sites. Their old spot in the bottom header bar shares its line with the sitewide Freeleech / Doubleseed banners, and with both banners shown (as on HappyFappy now) there wasn't enough room.
+- The old spot is still available: Viewer Settings → Gallery View → Button Location → "Header bar (classic)". The change applies immediately.
+
 ## v3.19 - 2026-10-24
 - Poster Wall loads light images first: within the same area (on screen, around it, background), still images (JPG / PNG / still WebP) download before animated ones, so more posters appear sooner. Posters on screen still always come before off-screen ones.
 - Animated images are limited to 2 downloads at a time per image host while still images are waiting, so a run of big GIFs can't hold up posters scrolling into view.

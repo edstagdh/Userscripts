@@ -26,16 +26,16 @@
 // @include     /https?://www\.happyfappy\.(net)/requests*/
 // @exclude     /https?://www\.happyfappy\.(net)/requests\.php\?id.*/
 // @include     /https?://www\.happyfappy\.(net)/userhistory\.php.*/
-// @version     3.19
+// @version     3.20
 // @author      edstagdh
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.happyfappy.net
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=www.empornium.sx
 // @icon        https://www.google.com/s2/favicons?sz=64&domain=emparadise.rs
 // @require     https://code.jquery.com/jquery-2.1.1.min.js
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.settings.js?v=3.19
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.gallery.js?v=3.19
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.poster_wall.js?v=3.19
-// @resource    AVE_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.styles.css?v=3.19
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.settings.js?v=3.20
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.gallery.js?v=3.20
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.poster_wall.js?v=3.20
+// @resource    AVE_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.styles.css?v=3.20
 // @updateURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.user.js
 // @installURL  https://raw.githubusercontent.com/edstagdh/Userscripts/master/EMP_HF/advanced_viewer_experience.user.js
 // @grant       GM_addStyle
@@ -68,7 +68,7 @@ let lastUserSearchTimestamp = 0;
 // --------------------
 // VERSION HISTORY
 // --------------------
-const SCRIPT_VERSION = '3.19';
+const SCRIPT_VERSION = '3.20';
 const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/EMP_HF/AVE_Changelog.md';
 let changelogCache = null;
 const CHANGELOG_HISTORY_DEPTH = 3; // how many versions to show in the manual "Show Changelog" view
@@ -88,6 +88,7 @@ const DEFAULTS = {
     IMAGE_LOAD_MODE:                 "near",
     GALLERY_VIEW_MODE:               false,
     GALLERY_CARD_MIN_WIDTH:          220,
+    NAV_LOCATION:                    "menu",   // "menu" = site menu row, "header" = bottom header bar (classic)
 };
 
 // --------------------
@@ -104,6 +105,7 @@ let FIT_VERTICAL_IMAGES_GRID_BETTER = GM_getValue('FIT_VERTICAL_IMAGES_GRID_BETT
 let IMAGE_LOAD_MODE                 = GM_getValue('IMAGE_LOAD_MODE',                 DEFAULTS.IMAGE_LOAD_MODE);
 let GALLERY_VIEW_MODE               = GM_getValue('GALLERY_VIEW_MODE',               DEFAULTS.GALLERY_VIEW_MODE);
 let GALLERY_CARD_MIN_WIDTH          = GM_getValue('GALLERY_CARD_MIN_WIDTH',          DEFAULTS.GALLERY_CARD_MIN_WIDTH);
+let NAV_LOCATION                    = GM_getValue('NAV_LOCATION',                    DEFAULTS.NAV_LOCATION);
 
 // --------------------
 // TAG BLACKLIST — persisted as a JSON array via GM_setValue
