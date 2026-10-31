@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — grid & table views
-// Version       1.6
+// Version       1.7
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -196,9 +196,30 @@ function pvxPreviewBind(root) {
     });
     root.addEventListener('mouseout', e => {
         if (!pvxPrev || !pvxPrev.host.contains(e.target)) return;
-        if (e.relatedTarget && pvxPrev.host.contains(e.relatedTarget)) return;
+        if (e.relatedTarget && (pvxPrev.host.contains(e.relatedTarget) || pvxPrev.pop?.contains(e.relatedTarget))) return;
         pvxPreviewStop();
     });
+    // an enlarged preview floats over the list: it would be left behind when the list scrolls
+    root.addEventListener('scroll', () => { if (pvxPrev && pvxPrev.pop) pvxPreviewStop(); }, { passive: true });
+}
+
+const PVX_PREVIEW_ZOOM = 1.5;   // small thumbnails (table) play their preview in a popup this much bigger
+
+/** For small thumbnails: a floating box, 150% of the thumbnail, centred on it and kept on screen.
+    It's a link to the same video, so clicking it still opens the video. */
+function pvxPreviewPopup(host) {
+    const r = host.getBoundingClientRect();
+    const w = Math.round(r.width * PVX_PREVIEW_ZOOM), hgt = Math.round(r.height * PVX_PREVIEW_ZOOM);
+    const left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+    const top = Math.max(8, Math.min(innerHeight - hgt - 8, r.top + r.height / 2 - hgt / 2));
+    const pop = h(host.href ? 'a' : 'div', { class: 'pvx-prevpop', style: `left:${left}px;top:${top}px;width:${w}px;height:${hgt}px` });
+    if (host.href) { pop.href = host.href; if (host.target) { pop.target = host.target; pop.rel = 'noopener'; } }
+    pop.addEventListener('mouseleave', e => {
+        if (pvxPrev && pvxPrev.pop === pop && !(e.relatedTarget && pvxPrev.host.contains(e.relatedTarget))) pvxPreviewStop();
+    });
+    pop.addEventListener('wheel', () => pvxPreviewStop(), { passive: true });   // let the list scroll again
+    (host.closest('#pvx-root') || document.body).append(pop);
+    return pop;
 }
 
 function pvxPreviewVolume() {
@@ -238,7 +259,7 @@ function pvxPreviewStart(host) {
 
     // Controls: speaker (mute toggle) + volume slider, both saved to Settings.
     const snd = h('button', { type: 'button', class: 'pvx-prevsnd', title: 'Preview sound on / off' });
-    const vol = h('input', { type: 'range', class: 'pvx-prevvol', min: 0, max: 100, step: 5, value: +S.previewVolume || 0, title: 'Preview volume' });
+    const vol = h('input', { type: 'range', class: 'pvx-prevvol', min: 0, max: 100, step: 1, value: +S.previewVolume || 0, title: 'Preview volume' });
     const pct = h('span', { class: 'pvx-prevpct' });
     const ctl = h('div', { class: 'pvx-prevctl' }, snd, vol, pct);
     const paint = () => {
@@ -262,9 +283,17 @@ function pvxPreviewStart(host) {
     ctl.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
     for (const t of ['mousedown', 'pointerdown', 'dblclick']) ctl.addEventListener(t, e => e.stopPropagation());
     paint();
-    host.append(video, ctl);
+    const pop = host.matches('.pvx-tthumb') ? pvxPreviewPopup(host) : null;
+    if (pop) {
+        const img = host.querySelector('img');
+        if (img) pop.style.backgroundImage = `url("${img.currentSrc || img.src}")`;   // thumbnail until the clip plays
+        pop.append(video, ctl);
+    } else {
+        host.append(video, ctl);
+    }
     pvxPrev.video = video;
     pvxPrev.snd = ctl;
+    pvxPrev.pop = pop;
     video.play().catch(err => {
         // Sound may be blocked until the page has had a click; fall back to muted (setting unchanged).
         if (err && err.name === 'NotAllowedError' && !want.muted) {
@@ -275,7 +304,7 @@ function pvxPreviewStart(host) {
 
 function pvxPreviewStop() {
     if (!pvxPrev) return;
-    const { timer, video, snd, host } = pvxPrev;
+    const { timer, video, snd, host, pop } = pvxPrev;
     pvxPrev = null;
     clearTimeout(timer);
     host.classList.remove('pvx-prev-loading');
@@ -286,4 +315,5 @@ function pvxPreviewStop() {
         video.remove();
     }
     snd?.remove();
+    pop?.remove();
 }

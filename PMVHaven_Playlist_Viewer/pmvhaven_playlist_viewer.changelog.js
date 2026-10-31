@@ -1,7 +1,7 @@
 // [PMVHaven] Playlist Viewer — "What's New" popup (fetches Changelog.md from GitHub)
 // Part of pmvhaven_playlist_viewer.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install pmvhaven_playlist_viewer.user.js.
-// Version 1.6
+// Version 1.7
 
 // Changelog is not stored inline — it's fetched on demand from Changelog.md in this repo
 // folder, either when the version changes or when requested via the GM menu command.

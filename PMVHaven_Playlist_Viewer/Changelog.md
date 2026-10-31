@@ -1,3 +1,9 @@
+## v1.7
+- Like / dislike / follow moved next to the playlist's title (left side) and now look like the Details / Tags / Stars buttons, so nothing overlaps at higher browser zoom (e.g. 120%).
+- The header adapts to narrow windows and browser zoom: the filter buttons wrap onto the next line instead of being cut off, and "Open playlist" becomes an icon button.
+- Table view: hovering a thumbnail plays the preview in a popup 150% the size of the thumbnail, with the sound / volume controls. Clicking it opens the video; moving away or scrolling closes it.
+- Preview volume now changes in 1% steps (on the preview and in Settings); the slider on the preview is a bit wider.
+
 ## v1.6
 - Like, dislike and follow playlists right from the popup header, with live counts. Click again to remove your like / dislike or to unfollow. Uses the same requests as the site's own playlist page.
 - Your current vote and follow state are shown when the popup opens (when you're signed in).

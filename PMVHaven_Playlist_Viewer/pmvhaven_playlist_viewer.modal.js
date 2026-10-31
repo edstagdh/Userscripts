@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — popup
-// Version       1.6
+// Version       1.7
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -35,18 +35,18 @@ function pvxOpen(pid, hint, opts = {}) {
     els.meta = h('div', { class: 'pvx-hmeta' });     // compact inline stats
     els.drops = h('div', { class: 'pvx-hdrops' });   // Details / Tags / Stars / … dropdowns
     // Like / dislike / follow (same calls as the site's playlist page)
-    els.like = h('button', { type: 'button', class: 'pvx-btn pvx-rate pvx-like', title: 'Like this playlist', onclick: () => pvxRate('like') });
-    els.dislike = h('button', { type: 'button', class: 'pvx-btn pvx-rate pvx-dislike', title: 'Dislike this playlist', onclick: () => pvxRate('dislike') });
-    els.follow = h('button', { type: 'button', class: 'pvx-btn pvx-follow', onclick: () => pvxToggleFollow() });
-    els.social = h('div', { class: 'pvx-social' }, h('div', { class: 'pvx-rategroup' }, els.like, els.dislike), els.follow);
+    // Same pill style as the Details / Tags / … dropdowns, on the title line (left side)
+    els.like = h('button', { type: 'button', class: 'pvx-drop pvx-rate pvx-like', title: 'Like this playlist', onclick: () => pvxRate('like') });
+    els.dislike = h('button', { type: 'button', class: 'pvx-drop pvx-rate pvx-dislike', title: 'Dislike this playlist', onclick: () => pvxRate('dislike') });
+    els.follow = h('button', { type: 'button', class: 'pvx-drop pvx-follow', onclick: () => pvxToggleFollow() });
+    els.social = h('div', { class: 'pvx-social' }, els.like, els.dislike, els.follow);
     els.openPl = h('a', { class: 'pvx-btn pvx-openpl', href: pvxPlaylistPageUrl(pid), title: 'Open the playlist on the site', html: PVX_SVG.list + '<span>Open playlist</span>' });
     const head = h('div', { class: 'pvx-head' },
         els.thumb,
         h('div', { class: 'pvx-hinfo' },
-            h('div', { class: 'pvx-hline' }, els.title, els.owner),
+            h('div', { class: 'pvx-hline' }, els.title, els.owner, els.social),
             h('div', { class: 'pvx-hline' }, els.meta, els.drops)),
         h('div', { class: 'pvx-hbtns' },
-            els.social,
             els.openPl,
             els.reload = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Reload from the server', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16m0 5v-5h5"/></svg>', onclick: () => pvxStartLoad(true) }),
             els.gear = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Settings', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>', onclick: () => pvxToggleSettings() }),
@@ -764,7 +764,7 @@ function pvxBuildSettings() {
         check('newTab', 'Open videos and the playlist page in a new tab'),
         h('div', { class: 'pvx-ssec' }, 'Hover preview'),
         check('previewOnHover', "Play the video's preview while hovering its thumbnail"),
-        pvxSettingRange('previewVolume', 'Preview volume (also adjustable on the playing preview)', 0, 100, 5, '%'),
+        pvxSettingRange('previewVolume', 'Preview volume (also adjustable on the playing preview)', 0, 100, 1, '%'),
         check('previewMuted', 'Start previews muted (the speaker button on a playing preview toggles this too)'),
         pvxSettingRange('previewDelay', 'Hover delay before the preview starts', 0, 1500, 50, ' ms'),
         h('div', { class: 'pvx-ssec' }, 'Playlist player'),

@@ -1,5 +1,5 @@
 /* [PMVHaven] Playlist Viewer — styles
-   Version 1.6
+   Version 1.7
    The popup frame (header, toolbar, pager, panels) has a fixed 13px base; the videos area (.pvx-body)
    is sized from --pvx-scale (text size setting), and everything in it uses em so it all scales together.
 
@@ -101,7 +101,9 @@ html.pvx-lock, html.pvx-lock body { overflow: hidden !important; }
 .pvx-stat.pvx-r-hi .pvx-stat-i, .pvx-stat.pvx-r-mid .pvx-stat-i, .pvx-stat.pvx-r-lo .pvx-stat-i { color: inherit; }
 .pvx-stat-warn { color: #fbbf24; }
 .pvx-stat-warn .pvx-stat-i { color: #fbbf24; }
-.pvx-hdrops { display: flex; align-items: center; gap: .35em; min-width: 0; overflow: hidden; padding-left: .85em; border-left: 1px solid var(--pvx-line); }
+.pvx-hdrops { display: flex; flex-wrap: wrap; align-items: center; gap: .35em; min-width: 0; padding-left: .85em; border-left: 1px solid var(--pvx-line); }
+/* stats + dropdowns: when there isn't room (narrow window / browser zoom) they wrap instead of being cut off */
+.pvx-hinfo > .pvx-hline:last-child { flex-wrap: wrap; row-gap: .35em; }
 .pvx-drop {
     display: inline-flex; align-items: center; gap: .35em; flex: 0 0 auto;
     height: 2em; padding: 0 .55em 0 .7em; border-radius: 999px; cursor: pointer;
@@ -117,19 +119,13 @@ html.pvx-lock, html.pvx-lock body { overflow: hidden !important; }
 }
 .pvx-mlabel { color: var(--pvx-faint); font-size: .85em; text-transform: uppercase; letter-spacing: .04em; }
 .pvx-hbtns { display: flex; align-items: center; gap: .35em; flex: 0 0 auto; }
-/* like / dislike / follow */
-.pvx-social { display: flex; align-items: center; gap: .35em; margin-right: .3em; }
-.pvx-rategroup { display: flex; align-items: center; border: 1px solid var(--pvx-line2); border-radius: .6em; overflow: hidden; }
-.pvx-rategroup .pvx-btn { border: 0; border-radius: 0; height: 2.3em; }
-.pvx-rategroup .pvx-btn + .pvx-btn { border-left: 1px solid var(--pvx-line2); }
-.pvx-rate, .pvx-follow {
-    display: inline-flex; align-items: center; gap: .4em; height: 2.3em; padding: 0 .75em;
-    color: #d1d5db; font-weight: 600; font-variant-numeric: tabular-nums;
-}
+/* like / dislike / follow — same pills as the dropdowns (.pvx-drop), next to the title */
+.pvx-social { display: flex; align-items: center; gap: .35em; flex: 0 0 auto; padding-left: .85em; border-left: 1px solid var(--pvx-line); }
+.pvx-rate, .pvx-follow { padding: 0 .7em; font-weight: 600; font-variant-numeric: tabular-nums; }
 .pvx-rate span:empty { display: none; }
-.pvx-like.is-on { background: rgba(34, 197, 94, .18); color: #4ade80; }
-.pvx-dislike.is-on { background: rgba(239, 68, 68, .18); color: #f87171; }
-.pvx-follow.is-on { background: rgba(249, 115, 22, .18); border-color: rgba(249, 115, 22, .6); color: #fb923c; }
+.pvx-like.is-on { background: rgba(34, 197, 94, .16); border-color: rgba(74, 222, 128, .55); color: #4ade80; }
+.pvx-dislike.is-on { background: rgba(239, 68, 68, .16); border-color: rgba(248, 113, 113, .55); color: #f87171; }
+.pvx-follow.is-on { background: rgba(249, 115, 22, .16); border-color: rgba(249, 115, 22, .6); color: #fb923c; }
 .pvx-rate:disabled, .pvx-follow:disabled { opacity: .55; cursor: default; }
 .pvx-follow[hidden] { display: none; }
 .pvx-toast {
@@ -359,12 +355,19 @@ a.pvx-title:hover { color: var(--pvx-blue) !important; }
 /* the slider opens when the controls are hovered */
 .pvx-prevvol { width: 0; min-width: 0; margin: 0; opacity: 0; accent-color: #f97316; cursor: pointer; transition: width .15s, opacity .15s; }
 .pvx-prevpct { display: none; padding-right: 4px; font: 600 10px/1 system-ui, sans-serif; color: #e5e7eb; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.pvx-prevctl:hover .pvx-prevvol { width: 70px; opacity: 1; }
+.pvx-prevctl:hover .pvx-prevvol { width: 90px; opacity: 1; }
 .pvx-prevctl:hover .pvx-prevpct { display: inline; }
-.pvx-tthumb .pvx-prevctl, .pvx-wthumb .pvx-prevctl { left: 3px; bottom: 3px; height: 22px; gap: 4px; }
-.pvx-tthumb .pvx-prevsnd, .pvx-wthumb .pvx-prevsnd { width: 16px; height: 16px; font-size: 11px; }
-.pvx-tthumb .pvx-prevctl:hover .pvx-prevvol, .pvx-wthumb .pvx-prevctl:hover .pvx-prevvol { width: 48px; }
-.pvx-tthumb .pvx-prevpct, .pvx-wthumb .pvx-prevpct { display: none !important; }
+/* table: preview plays in a popup 150% the size of the thumbnail, over it */
+.pvx-prevpop {
+    position: fixed; z-index: 6; display: block; overflow: hidden; border-radius: .5em;
+    background: #000 center / contain no-repeat; border: 1px solid rgba(249, 115, 22, .6);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .6);
+}
+.pvx-prevpop .pvx-prevctl { left: 5px; bottom: 5px; }
+.pvx-wthumb .pvx-prevctl { left: 3px; bottom: 3px; height: 22px; gap: 4px; }
+.pvx-wthumb .pvx-prevsnd { width: 16px; height: 16px; font-size: 11px; }
+.pvx-wthumb .pvx-prevctl:hover .pvx-prevvol { width: 48px; }
+.pvx-wthumb .pvx-prevpct { display: none !important; }
 .pvx-prev-loading::after {
     content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; z-index: 3;
     background: linear-gradient(90deg, transparent, #f97316, transparent);
@@ -517,6 +520,11 @@ a.pvx-title:hover { color: var(--pvx-blue) !important; }
 }
 
 /* ───────── Narrow screens ───────── */
+/* narrower windows (or browser zoom): "Open playlist" becomes an icon button (tooltip stays) */
+@media (max-width: 1450px) {
+    .pvx-openpl span { display: none; }
+    .pvx-openpl { padding: 0 .65em; }
+}
 @media (max-width: 760px) {
     .pvx-modal { width: 96vw; height: 94vh; }
     .pvx-hthumb, .pvx-howner { display: none; }
