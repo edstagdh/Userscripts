@@ -1,3 +1,11 @@
+## v1.6
+- Like, dislike and follow playlists right from the popup header, with live counts. Click again to remove your like / dislike or to unfollow. Uses the same requests as the site's own playlist page.
+- Your current vote and follow state are shown when the popup opens (when you're signed in).
+- If you're signed out, the buttons tell you to sign in instead of failing silently.
+- Requests now go out like the site's own (with your login), so your vote / follow state is known.
+- Playlists are always loaded in full: the site's playlist data can arrive in pages of 50, and the script now asks for the full list when that happens.
+- Slightly faster loading: the details of the first videos that come with the playlist are used directly instead of being looked up again.
+
 ## v1.5
 - Much lighter on the GPU / CPU while the popup is open; nothing removed.
 - The site behind the popup is no longer drawn while the popup is open (its animations, ads and videos kept the GPU busy underneath); it comes back exactly as it was when you close the popup.

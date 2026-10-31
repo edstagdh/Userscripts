@@ -1,36 +1,41 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — API & playlist loader
-// Version       1.5
+// Version       1.6
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
-/* ───────────────────────── API ───────────────────────── */
+/* ───────────────────────── API ─────────────────────────
+   The API is on the same site, so requests go out through the page's own fetch: they carry
+   your login session exactly like the site's own requests (needed for your vote / follow state
+   and for liking / following). GM_xmlhttpRequest is only a fallback if that fails. */
 
-function pvxHttpGet(url) {
-    return new Promise((resolve, reject) => {
-        if (typeof GM_xmlhttpRequest === 'function') {
-            GM_xmlhttpRequest({
-                method: 'GET', url, timeout: 30000,
-                headers: { Accept: 'application/json' },
-                onload: r => resolve({ status: r.status, headers: r.responseHeaders || '', text: r.responseText }),
-                onerror: () => reject(new Error('Network error')),
-                ontimeout: () => reject(new Error('Request timed out')),
-            });
-        } else {
-            fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } })
-                .then(async r => resolve({ status: r.status, headers: 'retry-after: ' + (r.headers.get('retry-after') || ''), text: await r.text() }))
-                .catch(reject);
-        }
-    });
+async function pvxRequest(method, url, body) {
+    const init = { method, credentials: 'include', headers: { Accept: 'application/json' } };
+    if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+    try {
+        const w = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        // Firefox: objects passed to page functions must be cloned into the page first.
+        const opts = typeof cloneInto === 'function' ? cloneInto(init, w) : init;
+        const r = await w.fetch(url, opts);
+        return { status: r.status, headers: 'retry-after: ' + (r.headers.get('retry-after') || ''), text: await r.text() };
+    } catch (err) {
+        if (typeof GM_xmlhttpRequest !== 'function') throw err;
+        return new Promise((resolve, reject) => GM_xmlhttpRequest({
+            method, url, timeout: 30000, headers: init.headers, data: init.body,
+            onload: r => resolve({ status: r.status, headers: r.responseHeaders || '', text: r.responseText }),
+            onerror: () => reject(new Error('Network error')),
+            ontimeout: () => reject(new Error('Request timed out')),
+        }));
+    }
 }
 
-/** GET /api<path> → parsed JSON. Retries 429 / 502 / 503 with back-off. */
-async function pvxApi(path) {
+/** <method> /api<path> → parsed JSON. Retries 429 / 502 / 503 with back-off (GET only). Errors carry .status. */
+async function pvxApi(path, { method = 'GET', body } = {}) {
     const url = location.origin + '/api' + path;
     let wait = 1500;
     for (let attempt = 0; ; attempt++) {
-        const r = await pvxHttpGet(url);
-        if ((r.status === 429 || r.status === 502 || r.status === 503) && attempt < 4) {
+        const r = await pvxRequest(method, url, body);
+        if (method === 'GET' && (r.status === 429 || r.status === 502 || r.status === 503) && attempt < 4) {
             const ra = /retry-after:\s*(\d+)/i.exec(r.headers);
             await sleep(ra ? Math.min(+ra[1], 30) * 1000 : wait);
             wait *= 2;
@@ -38,11 +43,40 @@ async function pvxApi(path) {
         }
         if (r.status < 200 || r.status >= 300) {
             let msg = '';
-            try { const j = JSON.parse(r.text); msg = j.statusMessage || j.message || ''; } catch (e) { /* not JSON */ }
-            throw new Error(`HTTP ${r.status}${msg ? ' – ' + msg : ''}`);
+            try { const j = JSON.parse(r.text); msg = j.statusMessage || j.message || j.error || ''; } catch (e) { /* not JSON */ }
+            const err = new Error(`HTTP ${r.status}${msg ? ' – ' + msg : ''}`);
+            err.status = r.status;
+            err.apiMessage = msg;
+            throw err;
         }
         try { return JSON.parse(r.text); } catch (e) { throw new Error('The API returned invalid JSON'); }
     }
+}
+
+/* ───────────────────────── Rating & following (same calls as the site's playlist page) ───────────────────────── */
+
+/** action: 'like' | 'dislike' | 'remove' → { likes, dislikes, liked, disliked, rating? } */
+async function pvxRatePlaylist(pid, action) {
+    const r = await pvxApi(`/playlists/${encodeURIComponent(pid)}/rate`, { method: 'PUT', body: { action } });
+    if (r && r.success === false) throw new Error(r.message || 'The site refused the vote');
+    const d = (r && r.data) || {};
+    return {
+        likes: d.likes, dislikes: d.dislikes, rating: d.bayesianRating,
+        liked: d.userLiked ?? d.userHasLiked ?? (action === 'like'),
+        disliked: d.userDisliked ?? d.userHasDisliked ?? (action === 'dislike'),
+    };
+}
+
+async function pvxGetFollow(pid) {
+    const r = await pvxApi(`/playlists/${encodeURIComponent(pid)}/follow`);
+    return !!(r && r.isFollowing);
+}
+
+/** follow: true = follow, false = unfollow → the new state */
+async function pvxSetFollow(pid, follow) {
+    const r = await pvxApi(`/playlists/${encodeURIComponent(pid)}/follow`, { method: follow ? 'POST' : 'DELETE' });
+    if (r && r.success === false) throw new Error(r.message || 'The site refused');
+    return r && typeof r.isFollowing === 'boolean' ? r.isFollowing : follow;
 }
 
 /* ───────────────────────── Playlist loading ───────────────────────── */
@@ -65,6 +99,7 @@ function pvxNormalizePlaylist(p, pid) {
         ownerId: (owner ? owner._id : p.ownerId) || '',
         ownerAvatar: (owner ? owner.avatarUrl : p.ownerAvatarUrl) || '',
         views: p.views, likes: p.likes, dislikes: p.dislikes,
+        liked: !!p.userLiked, disliked: !!p.userDisliked,   // only when logged in
         rating: p.bayesianRating,
         createdAt: p.createdAt, updatedAt: p.updatedAt,
         thumb: p.thumbnailUrl || p.thumbnail || '',
@@ -109,7 +144,7 @@ function pvxNormalizeVideo(v, id, idx) {
 
 /** Turns the playlist's `videos` field (ids or objects, any shape) into ordered entries. */
 function pvxPlaylistEntries(pl) {
-    const raw = pl.videos || pl.items || pl.videoIds || [];
+    const raw = pl.videos || pl.items || pl.videoIds || pl.videoDetails || [];
     if (!Array.isArray(raw)) return [];
     return raw.map(e => {
         if (typeof e === 'string') return { id: e, obj: null };
@@ -154,9 +189,23 @@ async function pvxCreateJob(pid) {
     const raw = res?.data || res?.playlist || res;
     if (!raw || typeof raw !== 'object') throw new Error('Unexpected playlist response');
 
-    const entries = pvxPlaylistEntries(raw);
-    if (!entries.length && (raw.videoCount || raw.validVideoCount)) {
+    let entries = pvxPlaylistEntries(raw);
+    const expected = Math.max(+raw.videoCount || 0, +raw.validVideoCount || 0);
+    if (expected && entries.length < Math.min(expected, 50) || entries.length < expected - 5) {
+        // The endpoint can page its results (the site asks for page / limit); ask for everything.
+        const all = await pvxApi('/playlists/' + encodeURIComponent(pid) + '?fetchAll=true');
+        const rawAll = all?.data || all?.playlist || all;
+        const more = rawAll ? pvxPlaylistEntries(rawAll) : [];
+        if (more.length > entries.length) { entries = more; Object.assign(raw, { videoDetails: rawAll.videoDetails || raw.videoDetails }); }
+    }
+    if (!entries.length && expected) {
         throw new Error('The API did not return the list of videos for this playlist');
+    }
+    // The response already carries full details for the first videos (the site shows 50):
+    // use them instead of looking those up again.
+    if (Array.isArray(raw.videoDetails)) {
+        const det = new Map(raw.videoDetails.filter(v => v && v._id).map(v => [String(v._id), v]));
+        for (const e of entries) if (!e.obj && det.has(e.id)) e.obj = det.get(e.id);
     }
     const pl = pvxNormalizePlaylist(raw, pid);
     pvxSessionSave(pid, pl, entries);

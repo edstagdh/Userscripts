@@ -1,5 +1,5 @@
 /* [PMVHaven] Playlist Viewer — styles
-   Version 1.5
+   Version 1.6
    The popup frame (header, toolbar, pager, panels) has a fixed 13px base; the videos area (.pvx-body)
    is sized from --pvx-scale (text size setting), and everything in it uses em so it all scales together.
 
@@ -14,6 +14,9 @@
 }
 .pvx-i-eye { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/%3E%3Ccircle cx="12" cy="12" r="3"/%3E%3C/svg%3E'); }
 .pvx-i-like { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M7 10v12M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/%3E%3C/svg%3E'); }
+.pvx-i-dislike { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M17 14V2M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/%3E%3C/svg%3E'); }
+.pvx-i-follow { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/%3E%3Cpath d="M12 7v6M9 10h6"/%3E%3C/svg%3E'); }
+.pvx-i-following { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/%3E%3Cpath d="m9 10 2 2 4-4"/%3E%3C/svg%3E'); }
 .pvx-i-cal { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M8 2v3m8-3v3"/%3E%3Crect width="18" height="18" x="3" y="3" rx="2"/%3E%3Cpath d="M3 9h18"/%3E%3C/svg%3E'); }
 .pvx-i-play { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23000"%3E%3Cpath d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/%3E%3C/svg%3E'); }
 .pvx-i-list { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M3 6h13M3 12h13M3 18h9"/%3E%3Cpath d="m17 15 4 3-4 3z" fill="%23000"/%3E%3C/svg%3E'); }
@@ -114,6 +117,29 @@ html.pvx-lock, html.pvx-lock body { overflow: hidden !important; }
 }
 .pvx-mlabel { color: var(--pvx-faint); font-size: .85em; text-transform: uppercase; letter-spacing: .04em; }
 .pvx-hbtns { display: flex; align-items: center; gap: .35em; flex: 0 0 auto; }
+/* like / dislike / follow */
+.pvx-social { display: flex; align-items: center; gap: .35em; margin-right: .3em; }
+.pvx-rategroup { display: flex; align-items: center; border: 1px solid var(--pvx-line2); border-radius: .6em; overflow: hidden; }
+.pvx-rategroup .pvx-btn { border: 0; border-radius: 0; height: 2.3em; }
+.pvx-rategroup .pvx-btn + .pvx-btn { border-left: 1px solid var(--pvx-line2); }
+.pvx-rate, .pvx-follow {
+    display: inline-flex; align-items: center; gap: .4em; height: 2.3em; padding: 0 .75em;
+    color: #d1d5db; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.pvx-rate span:empty { display: none; }
+.pvx-like.is-on { background: rgba(34, 197, 94, .18); color: #4ade80; }
+.pvx-dislike.is-on { background: rgba(239, 68, 68, .18); color: #f87171; }
+.pvx-follow.is-on { background: rgba(249, 115, 22, .18); border-color: rgba(249, 115, 22, .6); color: #fb923c; }
+.pvx-rate:disabled, .pvx-follow:disabled { opacity: .55; cursor: default; }
+.pvx-follow[hidden] { display: none; }
+.pvx-toast {
+    position: fixed; left: 50%; bottom: 4vh; transform: translateX(-50%); z-index: 20; max-width: min(40em, 90vw);
+    padding: .65em 1.1em; border-radius: .7em; font: 600 13px/1.4 system-ui, sans-serif;
+    background: #1f1f1f; border: 1px solid var(--pvx-line2); color: #e5e7eb; box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+.pvx-toast[hidden] { display: none; }
+.pvx-toast.is-warn { border-color: #a16207; color: #fde68a; }
+.pvx-toast.is-error { border-color: #b91c1c; color: #fecaca; }
 .pvx-openpl {
     display: inline-flex; align-items: center; gap: .45em; height: 2.3em; padding: 0 .85em;
     text-decoration: none; color: #e5e7eb !important; font-weight: 600;
@@ -496,5 +522,5 @@ a.pvx-title:hover { color: var(--pvx-blue) !important; }
     .pvx-hthumb, .pvx-howner { display: none; }
     .pvx-hline { flex-wrap: wrap; }
     .pvx-hdrops { border-left: 0; padding-left: 0; }
-    .pvx-openpl span { display: none; }
+    .pvx-openpl span, .pvx-follow span { display: none; }
 }

@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — grid & table views
-// Version       1.5
+// Version       1.6
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -12,7 +12,7 @@
 
 /* Icons are single <i> elements drawn with a CSS mask (see .pvx-i in the stylesheet) instead of
    inline SVG: a card used to carry ~7 SVGs (5–8 DOM nodes each); 500 cards = thousands of nodes. */
-const PVX_SVG = Object.fromEntries(['eye', 'like', 'cal', 'play', 'list', 'star', 'music', 'warn', 'film']
+const PVX_SVG = Object.fromEntries(['eye', 'like', 'dislike', 'follow', 'following', 'cal', 'play', 'list', 'star', 'music', 'warn', 'film']
     .map(n => [n, `<i class="pvx-i pvx-i-${n}" aria-hidden="true"></i>`]));
 
 /** Escapes text and wraps every occurrence of the given (lowercase) strings in <mark>. */

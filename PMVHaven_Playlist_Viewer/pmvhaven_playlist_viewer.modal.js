@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — popup
-// Version       1.5
+// Version       1.6
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -34,6 +34,11 @@ function pvxOpen(pid, hint, opts = {}) {
     els.owner = h('span', { class: 'pvx-howner' });
     els.meta = h('div', { class: 'pvx-hmeta' });     // compact inline stats
     els.drops = h('div', { class: 'pvx-hdrops' });   // Details / Tags / Stars / … dropdowns
+    // Like / dislike / follow (same calls as the site's playlist page)
+    els.like = h('button', { type: 'button', class: 'pvx-btn pvx-rate pvx-like', title: 'Like this playlist', onclick: () => pvxRate('like') });
+    els.dislike = h('button', { type: 'button', class: 'pvx-btn pvx-rate pvx-dislike', title: 'Dislike this playlist', onclick: () => pvxRate('dislike') });
+    els.follow = h('button', { type: 'button', class: 'pvx-btn pvx-follow', onclick: () => pvxToggleFollow() });
+    els.social = h('div', { class: 'pvx-social' }, h('div', { class: 'pvx-rategroup' }, els.like, els.dislike), els.follow);
     els.openPl = h('a', { class: 'pvx-btn pvx-openpl', href: pvxPlaylistPageUrl(pid), title: 'Open the playlist on the site', html: PVX_SVG.list + '<span>Open playlist</span>' });
     const head = h('div', { class: 'pvx-head' },
         els.thumb,
@@ -41,6 +46,7 @@ function pvxOpen(pid, hint, opts = {}) {
             h('div', { class: 'pvx-hline' }, els.title, els.owner),
             h('div', { class: 'pvx-hline' }, els.meta, els.drops)),
         h('div', { class: 'pvx-hbtns' },
+            els.social,
             els.openPl,
             els.reload = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Reload from the server', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16m0 5v-5h5"/></svg>', onclick: () => pvxStartLoad(true) }),
             els.gear = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Settings', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>', onclick: () => pvxToggleSettings() }),
@@ -97,7 +103,10 @@ function pvxOpen(pid, hint, opts = {}) {
     els.root = root;
     els.modal = modal;
 
-    PV = { pid, hint: hint || {}, els, job: null, page: 1, qText: '', query: { terms: [], marks: [] },
+    els.toast = h('div', { class: 'pvx-toast', hidden: true });
+    root.append(els.toast);
+
+    PV = { pid, hint: hint || {}, els, follow: null, busy: {}, job: null, page: 1, qText: '', query: { terms: [], marks: [] },
         list: [], listVersion: -1, renderSig: '', loading: false, error: null, _rt: 0, _st: 0,
         focusIdx: opts.focusIdx ?? null, currentIdx: opts.focusIdx ?? null };
 
@@ -115,6 +124,7 @@ function pvxOpen(pid, hint, opts = {}) {
     setTimeout(() => els.search.focus(), 30);
 
     pvxStartLoad(false);
+    pvxLoadFollow();
 }
 
 function pvxClose() {
@@ -237,6 +247,7 @@ function pvxRenderHeader() {
     els.title.textContent = name;
     els.title.title = name;
     Object.assign(els.openPl, S.newTab ? { target: '_blank', rel: 'noopener' } : { target: '' });
+    pvxRenderSocial();
 
     const owner = pl ? pl.owner : hint.owner;
     els.owner.replaceChildren(...(owner ? [
@@ -776,4 +787,108 @@ function pvxBuildSettings() {
             } }, 'Reset to defaults')),
         h('div', { class: 'pvx-sver' }, 'Playlist Viewer v' + SCRIPT_VERSION),
     );
+}
+
+/* ───────────────────────── Like / dislike / follow ─────────────────────────
+   Same requests as the site's own playlist page (PUT /playlists/<id>/rate, GET/POST/DELETE
+   /playlists/<id>/follow). Buttons update right away and roll back if the site refuses. */
+
+function pvxRenderSocial() {
+    if (!PV) return;
+    const { els, job } = PV;
+    const pl = job ? job.pl : null;
+    const n = v => (v == null ? '' : fmtNum(v));
+    els.like.innerHTML = PVX_SVG.like + `<span>${n(pl?.likes)}</span>`;
+    els.dislike.innerHTML = PVX_SVG.dislike + `<span>${n(pl?.dislikes)}</span>`;
+    els.like.classList.toggle('is-on', !!pl?.liked);
+    els.dislike.classList.toggle('is-on', !!pl?.disliked);
+    els.like.title = pl?.liked ? 'You like this playlist — click to remove your like' : 'Like this playlist';
+    els.dislike.title = pl?.disliked ? 'You dislike this playlist — click to remove your dislike' : 'Dislike this playlist';
+    els.like.disabled = els.dislike.disabled = !pl || !!PV.busy.rate;
+
+    const f = PV.follow;   // null = unknown, true / false, 'own' = your playlist, 'login' = signed out
+    els.follow.hidden = f === 'own';
+    els.follow.classList.toggle('is-on', f === true);
+    els.follow.disabled = !!PV.busy.follow || f === null;
+    els.follow.innerHTML = (f === true ? PVX_SVG.following : PVX_SVG.follow) + `<span>${f === true ? 'Following' : 'Follow'}</span>`;
+    els.follow.title = f === true ? 'You follow this playlist — click to unfollow' : f === 'login' ? 'Sign in on PMVHaven to follow playlists' : 'Follow this playlist';
+}
+
+async function pvxLoadFollow() {
+    const pid = PV.pid;
+    try {
+        const following = await pvxGetFollow(pid);
+        if (PV && PV.pid === pid) PV.follow = following;
+    } catch (err) {
+        if (!PV || PV.pid !== pid) return;
+        PV.follow = err.status === 401 ? 'login' : /own/i.test(err.apiMessage || '') ? 'own' : false;
+    }
+    if (PV && PV.pid === pid) pvxRenderSocial();
+}
+
+function pvxSocialError(err, what) {
+    if (err.status === 401) return pvxToast(`Sign in on PMVHaven to ${what} playlists.`, 'warn');
+    pvxToast(`Couldn't ${what} this playlist: ${err.apiMessage || err.message}`, 'error');
+}
+
+async function pvxRate(kind) {
+    if (!PV || !PV.job || PV.busy.rate) return;
+    const pid = PV.pid, pl = PV.job.pl;
+    const was = { likes: pl.likes, dislikes: pl.dislikes, liked: pl.liked, disliked: pl.disliked };
+    const removing = kind === 'like' ? pl.liked : pl.disliked;
+    // update right away (like the site does)
+    if (kind === 'like') {
+        pl.liked = !removing;
+        pl.likes = Math.max(0, (pl.likes || 0) + (removing ? -1 : 1));
+        if (!removing && pl.disliked) { pl.disliked = false; pl.dislikes = Math.max(0, (pl.dislikes || 0) - 1); }
+    } else {
+        pl.disliked = !removing;
+        pl.dislikes = Math.max(0, (pl.dislikes || 0) + (removing ? -1 : 1));
+        if (!removing && pl.liked) { pl.liked = false; pl.likes = Math.max(0, (pl.likes || 0) - 1); }
+    }
+    PV.busy.rate = true;
+    pvxRenderSocial();
+    try {
+        const r = await pvxRatePlaylist(pid, removing ? 'remove' : kind);
+        if (r.likes != null) pl.likes = r.likes;
+        if (r.dislikes != null) pl.dislikes = r.dislikes;
+        if (isFinite(r.rating)) pl.rating = r.rating;
+        pl.liked = !removing && kind === 'like';
+        pl.disliked = !removing && kind === 'dislike';
+    } catch (err) {
+        Object.assign(pl, was);
+        pvxSocialError(err, kind === 'like' ? 'like' : 'dislike');
+    }
+    if (!PV || PV.pid !== pid) return;
+    PV.busy.rate = false;
+    pvxRenderHeader();
+}
+
+async function pvxToggleFollow() {
+    if (!PV || PV.busy.follow) return;
+    if (PV.follow === 'login') return pvxToast('Sign in on PMVHaven to follow playlists.', 'warn');
+    const pid = PV.pid, was = PV.follow === true;
+    PV.follow = !was;
+    PV.busy.follow = true;
+    pvxRenderSocial();
+    try {
+        const now = await pvxSetFollow(pid, !was);
+        if (PV && PV.pid === pid) PV.follow = now;
+    } catch (err) {
+        if (PV && PV.pid === pid) PV.follow = err.status === 401 ? 'login' : was;
+        pvxSocialError(err, was ? 'unfollow' : 'follow');
+    }
+    if (!PV || PV.pid !== pid) return;
+    PV.busy.follow = false;
+    pvxRenderSocial();
+}
+
+function pvxToast(msg, kind) {
+    if (!PV) return;
+    const t = PV.els.toast;
+    t.textContent = msg;
+    t.className = 'pvx-toast is-' + (kind || 'info');
+    t.hidden = false;
+    clearTimeout(PV._toastT);
+    PV._toastT = setTimeout(() => { if (PV) t.hidden = true; }, 4000);
 }
