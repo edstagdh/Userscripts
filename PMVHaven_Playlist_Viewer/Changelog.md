@@ -1,3 +1,10 @@
+## v1.4
+- Preview volume now defaults to 20% (was 50%; if you never changed it, it moves to the new default).
+- The preview keeps your volume even if the site tries to change it (previews could start at 100%).
+- Volume slider on the playing preview: hover the speaker button to open it. Changes are saved and used for every preview.
+- Settings → Hover preview: the volume slider comes first; "Start previews muted" stays available.
+- Filter lists (Tags, Stars, Uploaders, Music, Creators): entries no longer squeeze together or overlap in long lists; more spacing and the counts sit in their own badge.
+
 ## v1.3
 - Hovering a video's thumbnail plays its preview clip (in the grid, the table and the playlist player's side list).
 - Settings → Hover preview: turn it on / off, play muted or with sound, preview volume, and how long to hover before it starts.

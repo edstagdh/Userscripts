@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — grid & table views
-// Version       1.3
+// Version       1.4
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -178,7 +178,8 @@ function pvxTableRow(v, ctx) {
 /* ───────────────────────── Hover preview ─────────────────────────
    Any element with data-pvx-preview="<clip url>" inside a container passed to pvxPreviewBind()
    plays that clip over itself while hovered (settings previewOnHover / previewMuted /
-   previewVolume / previewDelay). Only one preview plays at a time; it is fully unloaded
+   previewVolume / previewDelay). The speaker button and volume slider on the playing preview
+   change previewMuted / previewVolume directly. Only one preview plays at a time; it is fully unloaded
    when the pointer leaves, so hovering through a grid doesn't keep downloads running. */
 
 let pvxPrev = null;   // { host, timer, video, snd }
@@ -207,40 +208,75 @@ function pvxPreviewBind(root) {
     });
 }
 
+function pvxPreviewVolume() {
+    return Math.max(0, Math.min(1, (+S.previewVolume || 0) / 100));
+}
+
 function pvxPreviewStart(host) {
     if (!pvxPrev || pvxPrev.host !== host || !host.isConnected) return;
     const video = document.createElement('video');
     video.className = 'pvx-prev';
-    video.muted = !!S.previewMuted;
-    video.volume = Math.max(0, Math.min(1, (+S.previewVolume || 0) / 100));
     video.loop = true;
     video.playsInline = true;
     video.preload = 'auto';
     video.disablePictureInPicture = true;
+
+    // Our volume / mute always win: re-applied whenever anything else (e.g. the site's own
+    // player preferences) changes them on this element.
+    const want = { muted: !!S.previewMuted };
+    let applying = false;
+    const apply = () => {
+        applying = true;
+        if (Math.abs(video.volume - pvxPreviewVolume()) > 0.005) video.volume = pvxPreviewVolume();
+        if (video.muted !== want.muted) video.muted = want.muted;
+        applying = false;
+    };
+    apply();
+    video.addEventListener('volumechange', () => { if (!applying) apply(); });
+    video.addEventListener('loadedmetadata', apply);
+
     video.src = host.dataset.pvxPreview;
     host.classList.add('pvx-prev-loading');
-    video.addEventListener('playing', () => { video.classList.add('is-on'); host.classList.remove('pvx-prev-loading'); }, { once: true });
+    video.addEventListener('playing', () => { apply(); video.classList.add('is-on'); host.classList.remove('pvx-prev-loading'); }, { once: true });
     video.addEventListener('error', () => {
         host.dataset.pvxPreviewBad = '1';   // no clip for this video — don't try again
         if (pvxPrev && pvxPrev.video === video) pvxPreviewStop();
     }, { once: true });
-    const snd = h('button', { type: 'button', class: 'pvx-prevsnd', title: 'Preview sound on / off (saved in Settings)' });
-    const paint = () => { snd.innerHTML = video.muted ? PVX_SVG_SOUND_OFF : PVX_SVG_SOUND_ON; snd.classList.toggle('is-on', !video.muted); };
-    snd.addEventListener('click', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        pvxSet('previewMuted', !S.previewMuted);
-        video.muted = S.previewMuted;
+
+    // Controls: speaker (mute toggle) + volume slider, both saved to Settings.
+    const snd = h('button', { type: 'button', class: 'pvx-prevsnd', title: 'Preview sound on / off' });
+    const vol = h('input', { type: 'range', class: 'pvx-prevvol', min: 0, max: 100, step: 5, value: +S.previewVolume || 0, title: 'Preview volume' });
+    const pct = h('span', { class: 'pvx-prevpct' });
+    const ctl = h('div', { class: 'pvx-prevctl' }, snd, vol, pct);
+    const paint = () => {
+        snd.innerHTML = want.muted ? PVX_SVG_SOUND_OFF : PVX_SVG_SOUND_ON;
+        ctl.classList.toggle('is-on', !want.muted);
+        pct.textContent = want.muted ? 'muted' : (+S.previewVolume || 0) + '%';
+    };
+    const setMuted = m => {
+        want.muted = m;
+        pvxSet('previewMuted', m);
+        apply();
         paint();
-        if (!video.muted) video.play().catch(() => {});
+        if (!m) video.play().catch(() => {});
+    };
+    snd.addEventListener('click', () => setMuted(!want.muted));
+    vol.addEventListener('input', () => {
+        pvxSet('previewVolume', +vol.value);
+        if (want.muted && +vol.value > 0) setMuted(false); else { apply(); paint(); }
     });
+    // Keep clicks / drags on the controls from opening the video (the thumbnail is a link).
+    ctl.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
+    for (const t of ['mousedown', 'pointerdown', 'dblclick']) ctl.addEventListener(t, e => e.stopPropagation());
     paint();
-    host.append(video, snd);
+    host.append(video, ctl);
     pvxPrev.video = video;
-    pvxPrev.snd = snd;
+    pvxPrev.snd = ctl;
     video.play().catch(err => {
-        // Sound may be blocked until the page has had a click; fall back to muted.
-        if (err && err.name === 'NotAllowedError' && !video.muted) { video.muted = true; paint(); video.play().catch(() => {}); }
+        // Sound may be blocked until the page has had a click; fall back to muted (setting unchanged).
+        if (err && err.name === 'NotAllowedError' && !want.muted) {
+            want.muted = true; apply(); paint(); video.play().catch(() => {});
+        }
     });
 }
 

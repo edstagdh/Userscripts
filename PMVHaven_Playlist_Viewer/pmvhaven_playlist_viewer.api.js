@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — API & playlist loader
-// Version       1.3
+// Version       1.4
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 

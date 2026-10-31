@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — popup
-// Version       1.3
+// Version       1.4
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -749,8 +749,8 @@ function pvxBuildSettings() {
         check('newTab', 'Open videos and the playlist page in a new tab'),
         h('div', { class: 'pvx-ssec' }, 'Hover preview'),
         check('previewOnHover', "Play the video's preview while hovering its thumbnail"),
-        check('previewMuted', 'Play previews muted (the speaker button on a playing preview toggles this too)'),
-        pvxSettingRange('previewVolume', 'Preview volume (when not muted)', 0, 100, 5, '%'),
+        pvxSettingRange('previewVolume', 'Preview volume (also adjustable on the playing preview)', 0, 100, 5, '%'),
+        check('previewMuted', 'Start previews muted (the speaker button on a playing preview toggles this too)'),
         pvxSettingRange('previewDelay', 'Hover delay before the preview starts', 0, 1500, 50, ' ms'),
         h('div', { class: 'pvx-ssec' }, 'Playlist player'),
         check('fixWatch', "Repair the site's playlist player: real position (\"Video 722 of 1,234\"), working Previous / Next / Theater, side list around the current video"),

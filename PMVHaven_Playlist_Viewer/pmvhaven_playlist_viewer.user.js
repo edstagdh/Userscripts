@@ -1,18 +1,18 @@
 // ==UserScript==
 // @name         [PMVHaven] Playlist Viewer
 // @namespace    edstagdh.pmvhaven.playlist.viewer
-// @version      1.3
+// @version      1.4
 // @description  Adds a "Videos" button to every playlist card: browse, search and sort all videos of a playlist in a popup (grid / table view).
 // @author       edstagdh
 // @match        https://pmvhaven.com/*
 // @match        https://www.pmvhaven.com/*
 // @icon         https://pmvhaven.com/favicon.ico
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.3
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.3
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.3
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.watch.js?v=1.3
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.3
-// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.watch.js?v=1.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.4
+// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.4
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
@@ -35,7 +35,7 @@
      .changelog.js  "What's New" popup (Changelog.md on GitHub)
      .styles.css    all CSS (@resource PVX_STYLES) */
 
-const SCRIPT_VERSION = '1.3';
+const SCRIPT_VERSION = '1.4';
 
 /* ───────────────────────── Settings ───────────────────────── */
 
@@ -56,11 +56,11 @@ const PVX_DEFAULTS = {
     autoNext: true,          // playlist player: go to the next video when one ends (the site stops after its first 50)
     previewOnHover: true,    // play the video's preview clip while hovering its thumbnail
     previewMuted: true,      // … muted (toggle with the speaker button on the preview)
-    previewVolume: 50,       // … volume in % when not muted
+    previewVolume: 20,       // … volume in % when not muted (slider on the preview and in Settings)
     previewDelay: 250,       // ms of hovering before the preview starts
 };
 // Earlier defaults, replaced by the new ones when they were never customized.
-const PVX_OLD_DEFAULTS = { videoUrl: ['/video/{id}'], playlistVideoUrl: ['/video/{id}?playlist={pid}&index={index}'] };
+const PVX_OLD_DEFAULTS = { videoUrl: ['/video/{id}'], playlistVideoUrl: ['/video/{id}?playlist={pid}&index={index}'], previewVolume: [50] };
 
 const S = {};
 
