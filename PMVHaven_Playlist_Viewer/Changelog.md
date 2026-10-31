@@ -1,3 +1,21 @@
+## v1.3
+- Hovering a video's thumbnail plays its preview clip (in the grid, the table and the playlist player's side list).
+- Settings → Hover preview: turn it on / off, play muted or with sound, preview volume, and how long to hover before it starts.
+- A speaker button on the playing preview toggles the sound (and remembers it).
+- Videos without a preview clip simply keep their thumbnail.
+
+## v1.2
+- "What's New" now works like the other scripts: same design, shows on first install and after every update, and "📋 Show Changelog" in the Tampermonkey menu.
+- Video links now use the site's own format (/video/title-slug_id); the slug matches the site's exactly.
+- Repairs the site's playlist player (/video/…?playlist=…&index=…), which only knows the first 50 videos of a playlist:
+- Counter shows the real position ("Video 722 of 1,234" instead of "Video 722 of 50").
+- Previous / Next work across the whole playlist (the site disabled Next past video 50).
+- Theater button toggles the site's theater mode (the site's link led to a "page not found").
+- The side list shows the videos around the current one (current video highlighted) with "Show earlier" / "Show more", instead of always videos 1–50.
+- Goes to the next playlist video when one ends.
+- "All videos" button on the player opens the viewer on the page of the current video, highlighted.
+- New settings to turn the player repair and the auto-advance off.
+
 ## v1.1
 - Clicking a playlist card now opens the viewer. A small "Playlist" button on the card opens the playlist itself (Ctrl / middle click on the card also still open it in a new tab). Can be switched back in Settings.
 - "Open playlist" button in the popup header.

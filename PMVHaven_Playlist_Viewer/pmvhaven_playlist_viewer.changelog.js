@@ -1,88 +1,147 @@
-// ==UserScript Module==
-// @name         [PMVHaven] Playlist Viewer — What's New
-// Version       1.1
-// Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
-// Top-level code only declares things; main-script helpers are used inside functions only.
+// [PMVHaven] Playlist Viewer — "What's New" popup (fetches Changelog.md from GitHub)
+// Part of pmvhaven_playlist_viewer.user.js, loaded via @require (runs before the main script,
+// in the same scope). Not a standalone userscript — install pmvhaven_playlist_viewer.user.js.
+// Version 1.3
 
-/* Changelog.md format (newest first):
-     ## v1.1
-     - change
-     - change
-   The popup opens once after an update (versions newer than the last one seen);
-   "What's New" in the Tampermonkey menu / settings opens it any time. */
+// Changelog is not stored inline — it's fetched on demand from Changelog.md in this repo
+// folder, either when the version changes or when requested via the GM menu command.
+const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/PMVHaven_Playlist_Viewer/Changelog.md';
+let changelogCache = null; // parsed [{version, changes:[...]}] once fetched this session
 
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/Changelog.md';
-const LAST_SEEN_VERSION = 'pvx_last_version';
-let pvxChangelogCache = null;
-
-function pvxCmpVersion(a, b) {
-    const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
-    for (let i = 0; i < Math.max(x.length, y.length); i++) {
-        const d = (x[i] || 0) - (y[i] || 0);
-        if (d) return d > 0 ? 1 : -1;
-    }
-    return 0;
+// --------------------
+// Expected file format (newest version FIRST — the "newer version available" check relies on it):
+//
+//   ## v1.1
+//   - Change one
+//   - Change two
+//
+//   ## v1.0
+//   - Change one
+// --------------------
+function parseChangelogMarkdown(md) {
+    const entries = [];
+    let current = null;
+    md.split(/\r?\n/).forEach(function (line) {
+        const headerMatch = line.match(/^##\s*v?([0-9][0-9.]*)\s*$/i);
+        if (headerMatch) {
+            current = { version: headerMatch[1], changes: [] };
+            entries.push(current);
+            return;
+        }
+        const itemMatch = line.match(/^\s*[-*]\s+(.*\S)\s*$/);
+        if (itemMatch && current) current.changes.push(itemMatch[1]);
+    });
+    return entries.filter(e => e.changes.length);
 }
 
-function pvxFetchChangelog() {
-    if (pvxChangelogCache) return Promise.resolve(pvxChangelogCache);
-    return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-            method: 'GET', url: CHANGELOG_URL + '?t=' + Date.now(), timeout: 15000,
-            onload: r => {
-                if (r.status !== 200) return reject(new Error('HTTP ' + r.status));
-                pvxChangelogCache = pvxParseChangelog(r.responseText);
-                resolve(pvxChangelogCache);
-            },
-            onerror: () => reject(new Error('Network error')),
-            ontimeout: () => reject(new Error('Timed out')),
-        });
+function findChangelogIndexForVersion(entries, version) {
+    for (let i = 0; i < entries.length; i++) {
+        if (entries[i].version === version) return i;
+    }
+    return -1;
+}
+
+function fetchChangelog(callback) {
+    if (changelogCache) { callback(changelogCache, null); return; }
+    if (typeof GM_xmlhttpRequest !== 'function') { callback(null, 'GM_xmlhttpRequest not available'); return; }
+    GM_xmlhttpRequest({
+        method: 'GET',
+        url: CHANGELOG_URL,
+        timeout: 10000,
+        onload: function (res) {
+            if (res.status < 200 || res.status >= 300) { callback(null, 'HTTP ' + res.status); return; }
+            try {
+                changelogCache = parseChangelogMarkdown(res.responseText);
+                callback(changelogCache, null);
+            } catch (e) {
+                callback(null, 'Parse error: ' + e.message);
+            }
+        },
+        onerror: function () { callback(null, 'Network error fetching changelog'); },
+        ontimeout: function () { callback(null, 'Timed out fetching changelog'); },
     });
 }
 
-/** → [{version, items:[…]}] newest first */
-function pvxParseChangelog(md) {
-    const out = [];
-    let cur = null;
-    for (const line of String(md).split(/\r?\n/)) {
-        const head = /^##\s+v?(\d+(?:\.\d+)*)\s*$/.exec(line.trim());
-        if (head) { cur = { version: head[1], items: [] }; out.push(cur); continue; }
-        const item = /^\s*[-*]\s+(.*)$/.exec(line);
-        if (item && cur) cur.items.push(item[1]);
+function clEscape(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function buildChangelogPopup(versionsToShow, errorMsg, updateAvailableVersion) {
+    const old = document.getElementById('pvxcl-backdrop');
+    if (old) old.remove();
+
+    let bodyHtml = '';
+    if (updateAvailableVersion) {
+        bodyHtml += `<div class="pvxcl-update-banner">&#128276; A newer version (v${clEscape(updateAvailableVersion)}) is available on GitHub — you're currently on v${SCRIPT_VERSION}.</div>`;
     }
-    return out;
-}
+    if (errorMsg) {
+        bodyHtml += `<div class="pvxcl-error">Couldn't load the changelog (${clEscape(errorMsg)}). You can view it directly on GitHub using the link below.</div>`;
+    } else if (!versionsToShow || !versionsToShow.length) {
+        bodyHtml += `<div class="pvxcl-error">No changelog entries found.</div>`;
+    } else {
+        bodyHtml += versionsToShow.map(function (entry) {
+            const items = entry.changes.map(c => `<li>${clEscape(c)}</li>`).join('');
+            return `<div class="pvxcl-version-block"><span class="pvxcl-version-label">v${clEscape(entry.version)}</span><ul class="pvxcl-changes">${items}</ul></div>`;
+        }).join('');
+    }
 
-/** Runs at start: shows the popup once when the installed version is newer than the last one seen. */
-function pvxMaybeShowChangelog() {
-    const seen = GM_getValue(LAST_SEEN_VERSION, '');
-    if (!seen) { GM_setValue(LAST_SEEN_VERSION, SCRIPT_VERSION); return; }   // fresh install: nothing to announce
-    if (pvxCmpVersion(SCRIPT_VERSION, seen) > 0) pvxShowChangelog(false, seen);
-}
+    const wrap = document.createElement('div');
+    wrap.id = 'pvxcl-backdrop';
+    wrap.innerHTML = `
+        <div id="pvxcl-modal">
+            <div class="pvxcl-header">
+                <h2>&#127381; What's New</h2>
+                <span class="pvxcl-subtitle">[PMVHaven] Playlist Viewer &mdash; currently v${SCRIPT_VERSION}</span>
+            </div>
+            <div class="pvxcl-body">${bodyHtml}</div>
+            <div class="pvxcl-footer">
+                <a class="pvxcl-github-link" href="https://github.com/edstagdh/Userscripts/tree/master/PMVHaven_Playlist_Viewer" target="_blank" rel="noopener">&#128279; View on GitHub</a>
+                <button type="button" class="pvxcl-ok-btn">OK, got it</button>
+            </div>
+        </div>`;
+    document.body.appendChild(wrap);
 
-/** all=true → every version; otherwise only versions newer than `since`. */
-async function pvxShowChangelog(all, since) {
-    document.getElementById('pvx-cl')?.remove();
-    const body = h('div', { class: 'pvx-cl-body' }, h('div', { class: 'pvx-spinner' }));
-    const close = () => { root.remove(); GM_setValue(LAST_SEEN_VERSION, SCRIPT_VERSION); document.removeEventListener('keydown', onKey, true); };
-    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    const root = h('div', { id: 'pvx-cl', class: 'pvx-overlay pvx-cl-overlay' },
-        h('div', { class: 'pvx-cl' },
-            h('div', { class: 'pvx-cl-head' }, h('b', null, "What's New — Playlist Viewer"),
-                h('button', { type: 'button', class: 'pvx-ibtn', title: 'Close', onclick: close,
-                    html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' })),
-            body));
-    root.addEventListener('mousedown', e => { if (e.target === root) close(); });
+    const onKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); dismissChangelog(); } };
+    function dismissChangelog() {
+        wrap.remove();
+        GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION);
+        document.removeEventListener('keydown', onKey, true);
+    }
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) dismissChangelog(); });
+    wrap.querySelector('.pvxcl-ok-btn').addEventListener('click', dismissChangelog);
+    // capture: runs before the viewer's own Esc handling when opened from its settings
     document.addEventListener('keydown', onKey, true);
-    document.body.append(root);
-    try {
-        let list = await pvxFetchChangelog();
-        if (!all && since) list = list.filter(e => pvxCmpVersion(e.version, since) > 0);
-        if (!list.length) list = (await pvxFetchChangelog()).slice(0, 1);
-        body.replaceChildren(...list.map(e => h('div', { class: 'pvx-cl-ver' },
-            h('div', { class: 'pvx-cl-vname' }, 'v' + e.version, pvxCmpVersion(e.version, SCRIPT_VERSION) === 0 ? h('span', { class: 'pvx-cl-cur' }, 'installed') : null),
-            h('ul', null, e.items.map(i => h('li', null, i))))));
-    } catch (err) {
-        body.replaceChildren(h('div', { class: 'pvx-empty' }, 'Could not load the changelog (' + err.message + ').'));
-    }
+}
+
+// On page load: show what changed since the last version the user saw
+function checkVersionAndShowChangelog() {
+    const lastSeen = GM_getValue('LAST_SEEN_VERSION', '');
+    if (lastSeen === SCRIPT_VERSION) return;
+    fetchChangelog(function (entries, err) {
+        if (err) { buildChangelogPopup(null, err); return; }
+        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        // Only show changes up through the version actually running
+        const available = currentIdx === -1 ? entries : entries.slice(currentIdx);
+        let toShow = [];
+        if (!lastSeen) {
+            toShow = available.length ? [available[0]] : [];
+        } else {
+            for (let i = 0; i < available.length; i++) {
+                if (available[i].version === lastSeen) break;
+                toShow.push(available[i]);
+            }
+        }
+        if (!toShow.length) { GM_setValue('LAST_SEEN_VERSION', SCRIPT_VERSION); return; }
+        buildChangelogPopup(toShow, null, currentIdx > 0 ? entries[0].version : null);
+    });
+}
+
+// Menu command: show the running version's entry
+function showFullChangelog() {
+    fetchChangelog(function (entries, err) {
+        if (err) { buildChangelogPopup(null, err); return; }
+        const currentIdx = findChangelogIndexForVersion(entries, SCRIPT_VERSION);
+        if (currentIdx === -1) { buildChangelogPopup(entries.length ? [entries[0]] : [], null, null); return; }
+        buildChangelogPopup([entries[currentIdx]], null, currentIdx > 0 ? entries[0].version : null);
+    });
 }

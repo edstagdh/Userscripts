@@ -1,17 +1,18 @@
 // ==UserScript==
 // @name         [PMVHaven] Playlist Viewer
 // @namespace    edstagdh.pmvhaven.playlist.viewer
-// @version      1.1
+// @version      1.3
 // @description  Adds a "Videos" button to every playlist card: browse, search and sort all videos of a playlist in a popup (grid / table view).
 // @author       edstagdh
 // @match        https://pmvhaven.com/*
 // @match        https://www.pmvhaven.com/*
 // @icon         https://pmvhaven.com/favicon.ico
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.1
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.1
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.1
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.1
-// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.watch.js?v=1.3
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.3
+// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.3
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
@@ -30,10 +31,11 @@
      .api.js        API calls, resumable playlist loader, URL templates
      .views.js      grid cards + table
      .modal.js      popup: header, toolbar, search/sort, pagination, settings
+     .watch.js      repairs the site's playlist player page (/video/…?playlist=…&index=…)
      .changelog.js  "What's New" popup (Changelog.md on GitHub)
      .styles.css    all CSS (@resource PVX_STYLES) */
 
-const SCRIPT_VERSION = '1.1';
+const SCRIPT_VERSION = '1.3';
 
 /* ───────────────────────── Settings ───────────────────────── */
 
@@ -48,14 +50,23 @@ const PVX_DEFAULTS = {
     showTags: true,          // tag chips on grid cards
     cacheMinutes: 15,        // how long a loaded playlist is kept in memory
     // URL templates — placeholders: {id} {key} {oldId} {slug} {pid} {index} (0-based) {index1} (1-based)
-    videoUrl: '/video/{id}',
-    playlistVideoUrl: '/video/{id}?playlist={pid}&index={index}',
+    videoUrl: '/video/{slug}_{id}',
+    playlistVideoUrl: '/video/{slug}_{id}?playlist={pid}&index={index}',
+    fixWatch: true,          // repair the site's playlist player (counter, previous / next, theater, side list)
+    autoNext: true,          // playlist player: go to the next video when one ends (the site stops after its first 50)
+    previewOnHover: true,    // play the video's preview clip while hovering its thumbnail
+    previewMuted: true,      // … muted (toggle with the speaker button on the preview)
+    previewVolume: 50,       // … volume in % when not muted
+    previewDelay: 250,       // ms of hovering before the preview starts
 };
+// Earlier defaults, replaced by the new ones when they were never customized.
+const PVX_OLD_DEFAULTS = { videoUrl: ['/video/{id}'], playlistVideoUrl: ['/video/{id}?playlist={pid}&index={index}'] };
 
 const S = {};
 
 function pvxLoadSettings() {
     for (const k of Object.keys(PVX_DEFAULTS)) S[k] = GM_getValue('pvx_' + k, PVX_DEFAULTS[k]);
+    for (const [k, olds] of Object.entries(PVX_OLD_DEFAULTS)) if (olds.includes(S[k])) pvxSet(k, PVX_DEFAULTS[k]);
 }
 
 function pvxSet(k, v) {
@@ -145,8 +156,10 @@ function relTime(iso) {
 }
 
 function slugify(s) {
-    return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+    // Same as the site's slugs: other characters are dropped, spaces become hyphens
+    // ("Make You Mine [Deepthroat+Asians]" → "make-you-mine-deepthroatasians")
+    return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '').trim().replace(/[\s-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 /* ───────────────────────── Playlist cards ─────────────────────────
@@ -253,19 +266,20 @@ function pvxStart() {
     const queue = () => {
         if (queued) return;
         queued = true;
-        requestAnimationFrame(() => { queued = false; pvxScanCards(); pvxRouteCheck(); });
+        requestAnimationFrame(() => { queued = false; pvxScanCards(); pvxRouteCheck(); pvwCheck(); });
     };
     new MutationObserver(queue).observe(document.body, { childList: true, subtree: true });
     window.addEventListener('popstate', queue);
-    setInterval(pvxRouteCheck, 800);   // client-side navigation doesn't always mutate the DOM
+    setInterval(() => { pvxRouteCheck(); pvwCheck(); }, 800);   // client-side navigation doesn't always mutate the DOM
+    document.addEventListener('ended', pvwOnEnded, true);       // 'ended' doesn't bubble — capture sees it
     queue();
 
     if (typeof GM_registerMenuCommand === 'function') {
         GM_registerMenuCommand('Reset Playlist Viewer settings', () => { pvxResetSettings(); alert('Playlist Viewer settings reset.'); });
         GM_registerMenuCommand('Clear loaded playlists (memory)', () => PVX_CACHE.clear());
-        GM_registerMenuCommand("What's New", () => pvxShowChangelog(true));
+        GM_registerMenuCommand('📋 Show Changelog', showFullChangelog);
     }
-    pvxMaybeShowChangelog();
+    checkVersionAndShowChangelog();
 }
 
 pvxStart();

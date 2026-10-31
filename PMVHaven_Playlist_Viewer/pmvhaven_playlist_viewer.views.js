@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — grid & table views
-// Version       1.1
+// Version       1.3
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -82,14 +82,14 @@ function pvxRenderGrid(items, ctx) {
 }
 
 function pvxGridCard(v, ctx) {
-    const cls = 'pvx-card' + (v.missing ? ' is-missing' : '') + (v.pending ? ' is-pending' : '');
+    const cls = 'pvx-card' + (v.missing ? ' is-missing' : '') + (v.pending ? ' is-pending' : '') + (v.idx === ctx.currentIdx ? ' is-current' : '');
     if (v.pending) {
         return h('div', { class: cls },
             h('div', { class: 'pvx-thumb' }, h('span', { class: 'pvx-badge pvx-idx' }, '#' + (v.idx + 1))),
             h('div', { class: 'pvx-cbody' }, h('div', { class: 'pvx-skel' }), h('div', { class: 'pvx-skel pvx-skel-s' })));
     }
     const href = v.missing ? null : pvxVideoUrl(v, ctx.pid);
-    const thumb = h(href ? 'a' : 'div', { class: 'pvx-thumb', ...(href ? pvxLinkAttrs(href) : {}) },
+    const thumb = h(href ? 'a' : 'div', { class: 'pvx-thumb', ...(href ? pvxLinkAttrs(href) : {}), dataset: pvxPreviewData(v) },
         pvxThumbImg(v, 'pvx-thumb-img'),
         h('span', { class: 'pvx-badge pvx-idx', title: 'Position in playlist' }, '#' + (v.idx + 1)),
         v.durSec ? h('span', { class: 'pvx-badge pvx-dur' }, fmtDur(v.durSec)) : null,
@@ -145,7 +145,7 @@ function pvxRenderTable(items, ctx) {
 }
 
 function pvxTableRow(v, ctx) {
-    const cls = (v.missing ? 'is-missing' : '') + (v.pending ? ' is-pending' : '');
+    const cls = (v.missing ? 'is-missing' : '') + (v.pending ? ' is-pending' : '') + (v.idx === ctx.currentIdx ? ' is-current' : '');
     if (v.pending) {
         return h('tr', { class: cls }, h('td', { class: 'pvx-c-idx' }, v.idx + 1), h('td', { class: 'pvx-c-thumb' }, h('div', { class: 'pvx-tthumb' })),
             h('td', { colSpan: PVX_COLUMNS.length - 2 }, h('div', { class: 'pvx-skel' })));
@@ -156,7 +156,7 @@ function pvxTableRow(v, ctx) {
     if (v.music.length) sub.push(h('span', { class: 'pvx-music', html: PVX_SVG.music + pvxMarkHtml(v.music.map(m => [m.artist, m.song].filter(Boolean).join(' - ')).join(' · '), ctx.marks) }));
     return h('tr', { class: cls },
         h('td', { class: 'pvx-c-idx' }, v.idx + 1),
-        h('td', { class: 'pvx-c-thumb' }, h(href ? 'a' : 'div', { class: 'pvx-tthumb', ...(href ? pvxLinkAttrs(href) : {}) },
+        h('td', { class: 'pvx-c-thumb' }, h(href ? 'a' : 'div', { class: 'pvx-tthumb', ...(href ? pvxLinkAttrs(href) : {}), dataset: pvxPreviewData(v) },
             pvxThumbImg(v, 'pvx-thumb-img'),
             v.seizure ? h('span', { class: 'pvx-badge pvx-warn', title: 'Seizure warning', html: PVX_SVG.warn }) : null)),
         h('td', { class: 'pvx-c-title' },
@@ -173,4 +173,88 @@ function pvxTableRow(v, ctx) {
         h('td', { class: 'pvx-c-tags' }, h('div', { class: 'pvx-chips' }, v.tags.map(t => h('button', { type: 'button', class: 'pvx-chip', dataset: { pvxQ: pvxToken('tag', t) } }, t)))),
         h('td', { class: 'pvx-c-open' }, h('div', { class: 'pvx-actions' }, pvxActionLinks(v, ctx.pid, true))),
     );
+}
+
+/* ───────────────────────── Hover preview ─────────────────────────
+   Any element with data-pvx-preview="<clip url>" inside a container passed to pvxPreviewBind()
+   plays that clip over itself while hovered (settings previewOnHover / previewMuted /
+   previewVolume / previewDelay). Only one preview plays at a time; it is fully unloaded
+   when the pointer leaves, so hovering through a grid doesn't keep downloads running. */
+
+let pvxPrev = null;   // { host, timer, video, snd }
+
+const PVX_SVG_SOUND_ON = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/><path d="M16 9a5 5 0 0 1 0 6M19.4 18.4a9 9 0 0 0 0-12.8"/></svg>';
+const PVX_SVG_SOUND_OFF = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/><path d="m22 9-6 6M16 9l6 6"/></svg>';
+
+function pvxPreviewData(v) {
+    return v.preview && !v.missing && !v.pending ? { pvxPreview: v.preview } : null;
+}
+
+function pvxPreviewBind(root) {
+    if (root.dataset.pvxPrevBound) return;
+    root.dataset.pvxPrevBound = '1';
+    root.addEventListener('mouseover', e => {
+        const host = e.target.closest && e.target.closest('[data-pvx-preview]');
+        if (!host || !root.contains(host) || (pvxPrev && pvxPrev.host === host)) return;
+        pvxPreviewStop();
+        if (!S.previewOnHover || host.dataset.pvxPreviewBad) return;
+        pvxPrev = { host, timer: setTimeout(() => pvxPreviewStart(host), Math.max(0, +S.previewDelay || 0)) };
+    });
+    root.addEventListener('mouseout', e => {
+        if (!pvxPrev || !pvxPrev.host.contains(e.target)) return;
+        if (e.relatedTarget && pvxPrev.host.contains(e.relatedTarget)) return;
+        pvxPreviewStop();
+    });
+}
+
+function pvxPreviewStart(host) {
+    if (!pvxPrev || pvxPrev.host !== host || !host.isConnected) return;
+    const video = document.createElement('video');
+    video.className = 'pvx-prev';
+    video.muted = !!S.previewMuted;
+    video.volume = Math.max(0, Math.min(1, (+S.previewVolume || 0) / 100));
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.disablePictureInPicture = true;
+    video.src = host.dataset.pvxPreview;
+    host.classList.add('pvx-prev-loading');
+    video.addEventListener('playing', () => { video.classList.add('is-on'); host.classList.remove('pvx-prev-loading'); }, { once: true });
+    video.addEventListener('error', () => {
+        host.dataset.pvxPreviewBad = '1';   // no clip for this video — don't try again
+        if (pvxPrev && pvxPrev.video === video) pvxPreviewStop();
+    }, { once: true });
+    const snd = h('button', { type: 'button', class: 'pvx-prevsnd', title: 'Preview sound on / off (saved in Settings)' });
+    const paint = () => { snd.innerHTML = video.muted ? PVX_SVG_SOUND_OFF : PVX_SVG_SOUND_ON; snd.classList.toggle('is-on', !video.muted); };
+    snd.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        pvxSet('previewMuted', !S.previewMuted);
+        video.muted = S.previewMuted;
+        paint();
+        if (!video.muted) video.play().catch(() => {});
+    });
+    paint();
+    host.append(video, snd);
+    pvxPrev.video = video;
+    pvxPrev.snd = snd;
+    video.play().catch(err => {
+        // Sound may be blocked until the page has had a click; fall back to muted.
+        if (err && err.name === 'NotAllowedError' && !video.muted) { video.muted = true; paint(); video.play().catch(() => {}); }
+    });
+}
+
+function pvxPreviewStop() {
+    if (!pvxPrev) return;
+    const { timer, video, snd, host } = pvxPrev;
+    pvxPrev = null;
+    clearTimeout(timer);
+    host.classList.remove('pvx-prev-loading');
+    if (video) {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();   // releases the download
+        video.remove();
+    }
+    snd?.remove();
 }

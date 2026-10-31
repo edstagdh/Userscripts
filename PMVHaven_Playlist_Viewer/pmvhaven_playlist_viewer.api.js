@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — API & playlist loader
-// Version       1.1
+// Version       1.3
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -47,6 +47,7 @@ async function pvxApi(path) {
 
 /* ───────────────────────── Playlist loading ───────────────────────── */
 
+const PVX_PREVIEW_BASE = 'https://pmvhavencloud.s3.eu-west-par.io.cloud.ovh.net/previews/';
 const PVX_CACHE = new Map();   // pid → { pl, videos, ts }
 const PVX_BULK_MAX = 100;      // /videos/bulk limit
 
@@ -80,6 +81,9 @@ function pvxNormalizeVideo(v, id, idx) {
         idx, id: v?._id || id, missing: !v,
         title: v?.title || '(unavailable video)',
         thumb: v?.thumbnailUrl || v?.thumbnail || '',
+        // Preview clip (field not in the OpenAPI spec, but the site's own video objects carry it).
+        // Fallback: the path the site uses for newer videos; a 404 just means no preview.
+        preview: v ? (v.previewUrl || PVX_PREVIEW_BASE + encodeURIComponent(v._id || id) + '_preview.mp4') : '',
         durSec: v ? (v.durationSeconds || parseDur(v.duration)) : 0,
         views: v?.views, likes: v?.likes, dislikes: v?.dislikes, favorites: v?.favorites,
         rating: v?.bayesianRating,
@@ -154,14 +158,66 @@ async function pvxCreateJob(pid) {
     if (!entries.length && (raw.videoCount || raw.validVideoCount)) {
         throw new Error('The API did not return the list of videos for this playlist');
     }
+    const pl = pvxNormalizePlaylist(raw, pid);
+    pvxSessionSave(pid, pl, entries);
+    return pvxBuildJob(pid, pl, entries);
+}
+
+function pvxBuildJob(pid, pl, entries) {
     const found = new Map();
     for (const e of entries) if (pvxIsFullVideo(e.obj)) found.set(e.id, e.obj);
     const queue = [...new Set(entries.filter(e => !found.has(e.id)).map(e => e.id))];
-    const job = {
-        pid, pl: pvxNormalizePlaylist(raw, pid), entries, found, queue,
+    return {
+        pid, pl, entries, found, queue,
         videos: entries.map((e, i) => found.has(e.id) ? pvxNormalizeVideo(found.get(e.id), e.id, i) : pvxPendingVideo(e.id, i)),
         total: queue.length, oldIdsTried: false, done: !queue.length, ts: Date.now(), version: 0,
+        signal: { stopped: false },
     };
+}
+
+/* The playlist's id list is also kept in this tab's sessionStorage for a while, so moving
+   from video to video in playlist mode (full page loads) doesn't download it every time. */
+const PVX_SESSION_TTL = 30 * 60000;
+
+function pvxSessionSave(pid, pl, entries) {
+    try {
+        sessionStorage.setItem('pvx_pl_' + pid, JSON.stringify({ ts: Date.now(), pl, ids: entries.map(e => e.id) }));
+    } catch (e) { /* storage full / blocked — not important */ }
+}
+
+function pvxSessionLoad(pid) {
+    try {
+        const o = JSON.parse(sessionStorage.getItem('pvx_pl_' + pid) || 'null');
+        if (!o || Date.now() - o.ts > PVX_SESSION_TTL || !Array.isArray(o.ids)) return null;
+        return pvxBuildJob(pid, o.pl, o.ids.map(id => ({ id, obj: null })));
+    } catch (e) { return null; }
+}
+
+/** The playlist job (ids + info), from memory, this tab's session copy or the API — no video details yet. */
+async function pvxGetJob(pid, force) {
+    let job = PVX_CACHE.get(pid);
+    const stale = job && job.done && Date.now() - job.ts > S.cacheMinutes * 60000;
+    if (job && !force && !stale) return job;
+    if (job && job.running) { job.signal.stopped = true; job.onUpdate = null; }
+    job = (!force && !job && pvxSessionLoad(pid)) || await pvxCreateJob(pid);
+    pvxCachePut(pid, job);
+    return job;
+}
+
+/** Loads the details of the videos at positions [from, to) only (used by the playlist player page). */
+async function pvxLoadRange(job, from, to) {
+    const ids = [...new Set(job.entries.slice(Math.max(0, from), to).map(e => e.id).filter(id => !job.found.has(id)))];
+    for (let i = 0; i < ids.length; i += PVX_BULK_MAX) {
+        const chunk = ids.slice(i, i + PVX_BULK_MAX);
+        const r = await pvxApi('/videos/bulk?ids=' + chunk.map(encodeURIComponent).join(','));
+        for (const v of (r?.data || r?.videos || [])) {
+            if (!v) continue;
+            for (const k of [v._id, v.oldId, v.key]) if (k) job.found.set(String(k), v);
+        }
+        pvxRefreshVideos(job, chunk, true);   // not found → shown as unavailable
+        if (i + PVX_BULK_MAX < ids.length) await sleep(PVX_BULK_GAP);
+    }
+    if (ids.length) job.queue = job.queue.filter(id => !job.found.has(id));
     return job;
 }
 
@@ -179,7 +235,7 @@ function pvxRefreshVideos(job, ids, finalize) {
 /** Pauses a running load (the job stays in the cache and resumes on the next open). */
 function pvxStopLoad(pid) {
     const job = PVX_CACHE.get(pid);
-    if (!job) return;
+    if (!job || !job.signal) return;
     job.signal.stopped = true;
     job.onUpdate = null;
 }
@@ -190,13 +246,7 @@ function pvxStopLoad(pid) {
  * (finished or stopped — check job.done).
  */
 async function pvxLoadPlaylist(pid, { force = false, onUpdate } = {}) {
-    let job = PVX_CACHE.get(pid);
-    const stale = job && job.done && Date.now() - job.ts > S.cacheMinutes * 60000;
-    if (job && (force || stale) && job.running) { job.signal.stopped = true; job.onUpdate = null; }
-    if (!job || force || stale) {
-        job = await pvxCreateJob(pid);
-    }
-    pvxCachePut(pid, job);   // (re)insert = mark as recently used
+    const job = await pvxGetJob(pid, force);   // also marks it as recently used
     job.onUpdate = onUpdate || null;
     job.signal = job.signal || { stopped: false };
     job.signal.stopped = false;
@@ -251,9 +301,13 @@ async function pvxRunJob(job) {
 
 /* ───────────────────────── URLs ───────────────────────── */
 
+/* The site's links are /video/<title-slug>_<id>; the id alone (/video/<id>) works too, so when
+   the title isn't known (yet) or has no letters, "{slug}_" is simply left out. */
 function pvxFillUrl(tpl, v, pid) {
+    const slug = v.pending || v.missing ? '' : slugify(v.title);
+    if (!slug) tpl = String(tpl || '').replace(/\{slug\}[_-]?/g, '');
     const map = {
-        id: v.id, key: v.key || v.id, oldId: v.oldId || v.id, slug: slugify(v.title) || v.id,
+        id: v.id, key: v.key || v.id, oldId: v.oldId || v.id, slug,
         pid, index: v.idx, index1: v.idx + 1,
     };
     const out = String(tpl || '').replace(/\{(\w+)\}/g, (m, k) => (k in map ? encodeURIComponent(map[k] ?? '') : m));

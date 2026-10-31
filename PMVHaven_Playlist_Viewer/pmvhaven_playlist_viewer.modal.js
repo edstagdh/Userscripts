@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — popup
-// Version       1.1
+// Version       1.3
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -22,7 +22,8 @@ const PVX_FIELDS = { tag: 'tag', tags: 'tag', star: 'star', stars: 'star', by: '
 
 /* ───────────────────────── Open / close ───────────────────────── */
 
-function pvxOpen(pid, hint) {
+/** opts.focusIdx: open on the page of that playlist position and highlight it (from the playlist player). */
+function pvxOpen(pid, hint, opts = {}) {
     pvxClose();
     const els = {};
     const root = h('div', { id: 'pvx-root', class: 'pvx-overlay', role: 'dialog', 'aria-modal': 'true' });
@@ -78,6 +79,7 @@ function pvxOpen(pid, hint) {
     els.loadbar = h('div', { class: 'pvx-loadbar' }, h('div', { class: 'pvx-bar' }, els.barFill), els.barText, els.barBtn);
 
     els.body = h('div', { class: 'pvx-body', tabIndex: -1 });
+    pvxPreviewBind(els.body);
     els.pager = h('div', { class: 'pvx-pager' });
     els.pager.addEventListener('click', pvxOnPagerClick);
     els.settings = h('div', { class: 'pvx-settings pvx-panel', hidden: true });
@@ -96,7 +98,8 @@ function pvxOpen(pid, hint) {
     els.modal = modal;
 
     PV = { pid, hint: hint || {}, els, job: null, page: 1, qText: '', query: { terms: [], marks: [] },
-        list: [], listVersion: -1, renderSig: '', loading: false, error: null, _rt: 0, _st: 0 };
+        list: [], listVersion: -1, renderSig: '', loading: false, error: null, _rt: 0, _st: 0,
+        focusIdx: opts.focusIdx ?? null, currentIdx: opts.focusIdx ?? null };
 
     els.sort.value = S.sort;
     els.size.value = PVX_PAGE_SIZES.includes(+S.pageSize) ? S.pageSize : 48;
@@ -115,6 +118,7 @@ function pvxOpen(pid, hint) {
 
 function pvxClose() {
     if (!PV) return;
+    pvxPreviewStop();
     pvxStopLoad(PV.pid);
     clearTimeout(PV._rt);
     clearTimeout(PV._st);
@@ -569,6 +573,11 @@ function pvxRenderBody(force) {
     pvxRefreshList();
     const { els, list, job } = PV;
     const size = pvxPageSize();
+    if (PV.focusIdx != null && job) {   // jump to the page holding the current video (once)
+        const at = list.findIndex(v => v.idx === PV.focusIdx);
+        if (at >= 0) { PV.page = Math.floor(at / size) + 1; PV._scrollToCur = true; force = true; }
+        PV.focusIdx = null;
+    }
     const pages = Math.max(1, Math.ceil(list.length / size));
     if (PV.page > pages) PV.page = pages;
     const start = (PV.page - 1) * size;
@@ -588,7 +597,7 @@ function pvxRenderBody(force) {
     if (!force && sig === PV.renderSig) { pvxRenderPager(pages, list.length, start, items.length); return; }
     PV.renderSig = sig;
 
-    const ctx = { pid: PV.pid, marks: PV.query.marks, sort: S.sort, sortDir: S.sortDir };
+    const ctx = { pid: PV.pid, marks: PV.query.marks, sort: S.sort, sortDir: S.sortDir, currentIdx: PV.currentIdx };
     let content;
     if (!job) content = h('div', { class: 'pvx-empty' }, PV.error ? 'Could not load this playlist.' : h('div', { class: 'pvx-spinner' }));
     else if (!total) content = h('div', { class: 'pvx-empty' }, 'This playlist has no videos.');
@@ -597,9 +606,14 @@ function pvxRenderBody(force) {
 
     const keepScroll = !force;
     const top = els.body.scrollTop;
+    if (pvxPrev && els.body.contains(pvxPrev.host)) pvxPreviewStop();
     els.body.replaceChildren(content);
     els.body.classList.toggle('is-table', S.view === 'table');
     els.body.scrollTop = keepScroll ? top : 0;
+    if (PV._scrollToCur) {
+        PV._scrollToCur = false;
+        els.body.querySelector('.is-current')?.scrollIntoView({ block: 'center' });
+    }
     pvxRenderPager(pages, list.length, start, items.length);
 }
 
@@ -663,6 +677,7 @@ function pvxOnBodyClick(e) {
 
 function pvxOnKey(e) {
     if (!PV) return;
+    if (document.getElementById('pvxcl-backdrop')) return;   // the changelog popup handles its own keys
     const inside = PV.els.root.contains(e.target);
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
     if (e.key === 'Escape') {
@@ -696,6 +711,13 @@ function pvxToggleSettings(show) {
     if (show) pvxBuildSettings();
 }
 
+function pvxSettingRange(key, label, min, max, step, unit) {
+    const val = h('span', { class: 'pvx-scaleval' }, S[key] + unit);
+    const inp = h('input', { type: 'range', class: 'pvx-range', min, max, step, value: S[key] });
+    inp.addEventListener('input', () => { pvxSet(key, +inp.value); val.textContent = inp.value + unit; });
+    return h('div', { class: 'pvx-srow' }, h('span', { class: 'pvx-slabel' }, label), h('div', { class: 'pvx-scalerow' }, inp, val));
+}
+
 function pvxBuildSettings() {
     const panel = PV.els.settings;
     PV.els.scale = h('input', { type: 'range', class: 'pvx-range', min: 70, max: 200, step: 5, value: S.scale, title: 'Text size' });
@@ -725,6 +747,14 @@ function pvxBuildSettings() {
                 h('button', { type: 'button', class: 'pvx-btn', title: 'Back to 100%', onclick: () => pvxSetScale(100) }, 'Reset'))),
         check('cardClick', 'Clicking a playlist card opens this viewer (the small "Playlist" button on the card opens the playlist itself)'),
         check('newTab', 'Open videos and the playlist page in a new tab'),
+        h('div', { class: 'pvx-ssec' }, 'Hover preview'),
+        check('previewOnHover', "Play the video's preview while hovering its thumbnail"),
+        check('previewMuted', 'Play previews muted (the speaker button on a playing preview toggles this too)'),
+        pvxSettingRange('previewVolume', 'Preview volume (when not muted)', 0, 100, 5, '%'),
+        pvxSettingRange('previewDelay', 'Hover delay before the preview starts', 0, 1500, 50, ' ms'),
+        h('div', { class: 'pvx-ssec' }, 'Playlist player'),
+        check('fixWatch', "Repair the site's playlist player: real position (\"Video 722 of 1,234\"), working Previous / Next / Theater, side list around the current video"),
+        check('autoNext', 'Playlist player: go to the next video when one ends'),
         check('showTags', 'Show tags on grid cards'),
         h('label', { class: 'pvx-srow' }, h('span', { class: 'pvx-slabel' }, 'Keep finished playlists in memory for (minutes)'), cache),
         h('div', { class: 'pvx-ssec' }, 'Video links'),
@@ -735,7 +765,7 @@ function pvxBuildSettings() {
             h('code', null, '{pid}'), ' (playlist id) ', h('code', null, '{index}'), ' (0-based) ', h('code', null, '{index1}'), ' (1-based). ',
             'Relative links start at https://pmvhaven.com.'),
         h('div', { class: 'pvx-sbtns' },
-            h('button', { type: 'button', class: 'pvx-btn', onclick: () => pvxShowChangelog(true) }, "What's New"),
+            h('button', { type: 'button', class: 'pvx-btn', onclick: () => showFullChangelog() }, "📋 Show Changelog"),
             h('button', { type: 'button', class: 'pvx-btn', onclick: () => {
                 if (!confirm('Reset all Playlist Viewer settings?')) return;
                 pvxResetSettings(); pvxApplyScale(); pvxSyncControls(); PV.els.size.value = S.pageSize; pvxBuildSettings(); pvxRenderBody(true);
