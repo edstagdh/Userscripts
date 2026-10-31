@@ -1,3 +1,14 @@
+## v1.5
+- Much lighter on the GPU / CPU while the popup is open; nothing removed.
+- The site behind the popup is no longer drawn while the popup is open (its animations, ads and videos kept the GPU busy underneath); it comes back exactly as it was when you close the popup.
+- No more blur effects: the popup backdrop and the buttons on the site's playlist cards used a live blur, which the GPU recalculates on every frame.
+- No more endless shimmer animations on loading placeholders and the loading bar (up to 100+ animations running at once on a page of placeholders).
+- The loading bar no longer forces the page to be re-laid-out ~60 times a second while a playlist loads.
+- Cards that are scrolled out of view aren't drawn (big pages such as 500 per page stay smooth).
+- Icons are much simpler (about 25% fewer page elements per card).
+- No zoom / lift animation on card hover (it rescaled full-size thumbnails); the border highlight stays.
+- Less background work: the script no longer re-scans the page because of its own changes, and the header's tag / star / uploader counts refresh at most every 1.5 s while a playlist is loading.
+
 ## v1.4
 - Preview volume now defaults to 20% (was 50%; if you never changed it, it moves to the new default).
 - The preview keeps your volume even if the site tries to change it (previews could start at 100%).

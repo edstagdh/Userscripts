@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — popup
-// Version       1.4
+// Version       1.5
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -110,6 +110,7 @@ function pvxOpen(pid, hint, opts = {}) {
 
     document.body.append(root);
     document.documentElement.classList.add('pvx-lock');
+    pvxPausePage(true);
     document.addEventListener('keydown', pvxOnKey, true);
     setTimeout(() => els.search.focus(), 30);
 
@@ -125,6 +126,7 @@ function pvxClose() {
     PV.els.root.remove();
     PV = null;
     document.documentElement.classList.remove('pvx-lock');
+    pvxPausePage(false);
     document.removeEventListener('keydown', pvxOnKey, true);
 }
 
@@ -177,7 +179,7 @@ function pvxRenderLoadbar() {
     els.barBtn.disabled = false;
     if (PV.error) {
         els.loadbar.className = 'pvx-loadbar is-error';
-        els.barFill.style.width = '100%';
+        els.barFill.style.transform = 'scaleX(1)';
         els.barText.textContent = 'Could not load: ' + PV.error;
         els.barBtn.textContent = 'Retry';
         els.barBtn.onclick = () => pvxStartLoad(!PV.job);
@@ -185,7 +187,7 @@ function pvxRenderLoadbar() {
     }
     if (!job) {
         els.loadbar.className = 'pvx-loadbar is-busy';
-        els.barFill.style.width = '0%';
+        els.barFill.style.transform = 'scaleX(0)';
         els.barText.textContent = 'Loading playlist…';
         els.barBtn.textContent = '';
         els.barBtn.hidden = true;
@@ -197,7 +199,7 @@ function pvxRenderLoadbar() {
         return;
     }
     const pct = total ? Math.round(done / total * 100) : 0;
-    els.barFill.style.width = pct + '%';
+    els.barFill.style.transform = 'scaleX(' + pct / 100 + ')';   // transform, not width: no layout / repaint
     if (PV.loading) {
         els.loadbar.className = 'pvx-loadbar is-busy';
         els.barText.textContent = `Loading video details… ${done.toLocaleString()} / ${total.toLocaleString()} (${pct}%) — search and sort already work on what's loaded`;
@@ -262,8 +264,10 @@ function pvxRenderHeader() {
     ].filter(Boolean));
 
     // Counted lists (recomputed only when the data changed)
-    if (PV._topVersion !== job.version || !PV._top) {
+    const due = job.done || !PV._topAt || Date.now() - PV._topAt > 1500;
+    if ((PV._topVersion !== job.version && due) || !PV._top) {
         PV._topVersion = job.version;
+        PV._topAt = Date.now();
         const count = get => {
             const m = new Map();
             for (const v of vids) if (!v.pending) for (const x of get(v)) if (x) m.set(x, (m.get(x) || 0) + 1);

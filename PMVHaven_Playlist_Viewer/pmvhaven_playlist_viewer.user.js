@@ -1,18 +1,18 @@
 // ==UserScript==
 // @name         [PMVHaven] Playlist Viewer
 // @namespace    edstagdh.pmvhaven.playlist.viewer
-// @version      1.4
+// @version      1.5
 // @description  Adds a "Videos" button to every playlist card: browse, search and sort all videos of a playlist in a popup (grid / table view).
 // @author       edstagdh
 // @match        https://pmvhaven.com/*
 // @match        https://www.pmvhaven.com/*
 // @icon         https://pmvhaven.com/favicon.ico
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.watch.js?v=1.4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.4
-// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.4
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.watch.js?v=1.5
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.5
+// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.5
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
@@ -35,7 +35,7 @@
      .changelog.js  "What's New" popup (Changelog.md on GitHub)
      .styles.css    all CSS (@resource PVX_STYLES) */
 
-const SCRIPT_VERSION = '1.4';
+const SCRIPT_VERSION = '1.5';
 
 /* ───────────────────────── Settings ───────────────────────── */
 
@@ -162,6 +162,29 @@ function slugify(s) {
         .replace(/[^a-z0-9\s-]/g, '').trim().replace(/[\s-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+/* ───────────────────────── Page behind the popup ─────────────────────────
+   While the popup covers the page, the site's own content is still rendered every frame
+   (its animations, ads, playing videos…). content-visibility: hidden makes the browser skip
+   rendering it entirely; the element keeps its size so the scroll position doesn't move.
+   Nothing on the site is changed otherwise, and it's restored on close. */
+
+function pvxPausePage(pause) {
+    for (const el of document.body.children) {
+        if (/^(SCRIPT|STYLE|LINK)$/.test(el.tagName) || /^pvx/.test(el.id)) continue;
+        if (pause) {
+            if (el.dataset.pvxPaused) continue;
+            const r = el.getBoundingClientRect();
+            el.dataset.pvxPaused = '1';
+            el.style.setProperty('contain-intrinsic-size', `${Math.round(r.width)}px ${Math.round(r.height)}px`);
+            el.style.setProperty('content-visibility', 'hidden');
+        } else if (el.dataset.pvxPaused) {
+            delete el.dataset.pvxPaused;
+            el.style.removeProperty('content-visibility');
+            el.style.removeProperty('contain-intrinsic-size');
+        }
+    }
+}
+
 /* ───────────────────────── Playlist cards ─────────────────────────
    cardClick on  (default): a plain left click anywhere on a card opens the viewer; a small
                  "Playlist" button on the thumbnail keeps the site's own behaviour (opens the playlist).
@@ -268,7 +291,11 @@ function pvxStart() {
         queued = true;
         requestAnimationFrame(() => { queued = false; pvxScanCards(); pvxRouteCheck(); pvwCheck(); });
     };
-    new MutationObserver(queue).observe(document.body, { childList: true, subtree: true });
+    // Our own DOM changes (popup, player side list / controls) don't need a re-scan.
+    const OWN = '#pvx-root, #pvxcl-backdrop, .pvx-wpanel, .pvx-wctl';
+    new MutationObserver(recs => {
+        for (const r of recs) if (!(r.target.closest && r.target.closest(OWN))) { queue(); return; }
+    }).observe(document.body, { childList: true, subtree: true });
     window.addEventListener('popstate', queue);
     setInterval(() => { pvxRouteCheck(); pvwCheck(); }, 800);   // client-side navigation doesn't always mutate the DOM
     document.addEventListener('ended', pvwOnEnded, true);       // 'ended' doesn't bubble — capture sees it
