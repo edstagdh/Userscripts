@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — popup
-// Version       1.0
+// Version       1.1
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -30,15 +30,17 @@ function pvxOpen(pid, hint) {
 
     els.thumb = h('div', { class: 'pvx-hthumb' });
     els.title = h('h2', { class: 'pvx-htitle' });
-    els.owner = h('div', { class: 'pvx-howner' });
-    els.meta = h('div', { class: 'pvx-hmeta' });
-    els.desc = h('div', { class: 'pvx-hdesc' });
-    els.top = h('div', { class: 'pvx-htop' });
+    els.owner = h('span', { class: 'pvx-howner' });
+    els.meta = h('div', { class: 'pvx-hmeta' });     // compact inline stats
+    els.drops = h('div', { class: 'pvx-hdrops' });   // Details / Tags / Stars / … dropdowns
+    els.openPl = h('a', { class: 'pvx-btn pvx-openpl', href: pvxPlaylistPageUrl(pid), title: 'Open the playlist on the site', html: PVX_SVG.list + '<span>Open playlist</span>' });
     const head = h('div', { class: 'pvx-head' },
         els.thumb,
-        h('div', { class: 'pvx-hinfo' }, els.title, els.owner, els.meta, els.desc, els.top),
+        h('div', { class: 'pvx-hinfo' },
+            h('div', { class: 'pvx-hline' }, els.title, els.owner),
+            h('div', { class: 'pvx-hline' }, els.meta, els.drops)),
         h('div', { class: 'pvx-hbtns' },
-            h('a', { class: 'pvx-ibtn', href: pvxPlaylistPageUrl(pid), target: '_blank', rel: 'noopener', title: 'Open the playlist page', html: PVX_SVG.list }),
+            els.openPl,
             els.reload = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Reload from the server', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16m0 5v-5h5"/></svg>', onclick: () => pvxStartLoad(true) }),
             els.gear = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Settings', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>', onclick: () => pvxToggleSettings() }),
             h('button', { type: 'button', class: 'pvx-ibtn pvx-close', title: 'Close (Esc)', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>', onclick: () => pvxClose() }),
@@ -55,9 +57,6 @@ function pvxOpen(pid, hint) {
     els.viewTable = h('button', { type: 'button', class: 'pvx-seg', title: 'Table view', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 5h18M3 10h18M3 15h18M3 20h18"/></svg>', onclick: () => pvxSetView('table') });
     els.size = h('select', { class: 'pvx-select', title: 'Videos per page' }, PVX_PAGE_SIZES.map(n => h('option', { value: n }, n + ' / page')));
     els.size.addEventListener('change', () => { pvxSet('pageSize', +els.size.value); PV.page = 1; pvxRenderBody(true); });
-    els.scale = h('input', { type: 'range', class: 'pvx-range', min: 70, max: 200, step: 5, title: 'Text size' });
-    els.scaleVal = h('span', { class: 'pvx-scaleval' });
-    els.scale.addEventListener('input', () => pvxSetScale(+els.scale.value));
     const toolbar = h('div', { class: 'pvx-toolbar' },
         h('div', { class: 'pvx-searchwrap' },
             h('span', { class: 'pvx-searchicon', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>' }),
@@ -70,12 +69,7 @@ function pvxOpen(pid, hint) {
         els.count,
         h('div', { class: 'pvx-tgroup' }, els.sort, els.dir),
         h('div', { class: 'pvx-tgroup pvx-segs' }, els.viewGrid, els.viewTable),
-        els.size,
-        h('div', { class: 'pvx-tgroup pvx-scale' },
-            h('button', { type: 'button', class: 'pvx-btn pvx-a', title: 'Smaller text', onclick: () => pvxSetScale(S.scale - 10) }, 'A−'),
-            els.scale,
-            h('button', { type: 'button', class: 'pvx-btn pvx-a', title: 'Larger text', onclick: () => pvxSetScale(S.scale + 10) }, 'A+'),
-            els.scaleVal));
+        els.size);
 
     // Loading bar
     els.barFill = h('div', { class: 'pvx-barfill' });
@@ -86,10 +80,15 @@ function pvxOpen(pid, hint) {
     els.body = h('div', { class: 'pvx-body', tabIndex: -1 });
     els.pager = h('div', { class: 'pvx-pager' });
     els.pager.addEventListener('click', pvxOnPagerClick);
-    els.settings = h('div', { class: 'pvx-settings', hidden: true });
+    els.settings = h('div', { class: 'pvx-settings pvx-panel', hidden: true });
+    els.list = h('div', { class: 'pvx-listpanel pvx-panel', hidden: true });   // full Tags / Stars / … list
+    els.pop = h('div', { class: 'pvx-pop', hidden: true });                    // hover preview of a dropdown
+    els.pop.addEventListener('mouseenter', () => clearTimeout(PV._popHide));
+    els.pop.addEventListener('mouseleave', () => pvxHidePopSoon());
+    els.pop.addEventListener('click', pvxOnBodyClick);
 
-    const modal = h('div', { class: 'pvx-modal' }, head, toolbar, els.loadbar, els.body, els.pager, els.settings);
-    root.append(modal);
+    const modal = h('div', { class: 'pvx-modal' }, head, toolbar, els.loadbar, els.body, els.pager, els.settings, els.list);
+    root.append(modal, els.pop);
     modal.addEventListener('click', pvxOnBodyClick);   // tag / star / uploader filters + table sort, anywhere in the popup
     // Keys typed inside the popup run their own handlers first, then stop here so the site's shortcuts don't fire.
     root.addEventListener('keydown', e => e.stopPropagation());
@@ -210,6 +209,16 @@ function pvxRenderLoadbar() {
 
 /* ───────────────────────── Header ───────────────────────── */
 
+const PVX_DROPS = [
+    // key, label, field (query token prefix), chip class
+    ['tag', 'Tags', 'tag', ''],
+    ['star', 'Stars', 'star', 'pvx-chip-star'],
+    ['by', 'Uploaders', 'by', 'pvx-chip-by'],
+    ['music', 'Music', 'music', 'pvx-chip-music'],
+    ['creator', 'Creators', 'creator', 'pvx-chip-by'],
+];
+const PVX_POP_TOP = 15;
+
 function pvxRenderHeader() {
     const { els, job, hint } = PV;
     const pl = job ? job.pl : null;
@@ -221,55 +230,203 @@ function pvxRenderHeader() {
     }
     els.title.textContent = name;
     els.title.title = name;
+    Object.assign(els.openPl, S.newTab ? { target: '_blank', rel: 'noopener' } : { target: '' });
 
     const owner = pl ? pl.owner : hint.owner;
-    els.owner.replaceChildren(owner ? h('span', null,
+    els.owner.replaceChildren(...(owner ? [
         pl && pl.ownerAvatar ? h('img', { class: 'pvx-ava', src: pl.ownerAvatar, alt: '' }) : h('span', { class: 'pvx-ava pvx-ava-txt' }, owner[0].toUpperCase()),
-        h('span', null, 'by '), h('b', null, owner)) : '');
+        h('span', null, 'by '), h('b', null, owner)] : []));
 
-    els.meta.replaceChildren();
-    els.desc.textContent = pl ? pl.description : '';
-    els.desc.hidden = !(pl && pl.description);
-    els.top.replaceChildren();
-    if (!pl) return;
+    if (!pl) { els.meta.replaceChildren(); els.drops.replaceChildren(); return; }
 
     const vids = job.videos;
-    let totalSec = 0, loaded = 0, missing = 0;
+    let totalSec = 0, missing = 0;
     for (const v of vids) {
         if (v.pending) continue;
-        loaded++;
         if (v.missing) missing++;
         totalSec += v.durSec || 0;
     }
-    const chip = (label, value, title) => h('span', { class: 'pvx-mchip', title: title || '' }, h('span', { class: 'pvx-mlabel' }, label), h('b', null, value));
-    els.meta.append(...[
-        chip('Videos', vids.length.toLocaleString()),
-        chip('Length', (job.done ? '' : '≥ ') + fmtTotal(totalSec), job.done ? 'Total length' : 'Total length of the videos loaded so far'),
-        chip('Views', fmtNum(pl.views)),
-        isFinite(pl.rating) ? chip('Score', Math.round(pl.rating) + '%', 'Quality score (Bayesian rating)') : null,
-        pl.createdAt ? chip('Created', fmtDate(pl.createdAt), new Date(pl.createdAt).toLocaleString()) : null,
-        pl.isPublic === false ? chip('Visibility', 'Private') : null,
-        missing ? chip('Unavailable', missing.toLocaleString(), 'Videos that no longer exist or could not be found') : null,
+    PV._stats = { totalSec, missing };
+    const stat = (icon, value, title, cls) => h('span', { class: 'pvx-stat ' + (cls || ''), title }, h('span', { class: 'pvx-stat-i', html: icon }), value);
+    els.meta.replaceChildren(...[
+        stat(PVX_SVG.film, vids.length.toLocaleString(), 'Videos in the playlist'),
+        stat('<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+            (job.done ? '' : '≥ ') + fmtTotal(totalSec), job.done ? 'Total length' : 'Total length of the videos loaded so far'),
+        stat(PVX_SVG.eye, fmtNum(pl.views), (pl.views ?? '–') + ' playlist views'),
+        isFinite(pl.rating) ? stat(PVX_SVG.star, Math.round(pl.rating) + '%', 'Quality score (Bayesian rating)', pvxRatingClass(pl.rating)) : null,
+        missing ? stat(PVX_SVG.warn, missing.toLocaleString(), 'Videos that no longer exist or could not be found', 'pvx-stat-warn') : null,
     ].filter(Boolean));
 
-    // Most common tags / uploaders among loaded videos (recomputed only when the data changed)
+    // Counted lists (recomputed only when the data changed)
     if (PV._topVersion !== job.version || !PV._top) {
         PV._topVersion = job.version;
-        const count = (get) => {
+        const count = get => {
             const m = new Map();
-            for (const v of vids) if (!v.pending) for (const x of get(v)) m.set(x, (m.get(x) || 0) + 1);
-            return [...m].sort((a, b) => b[1] - a[1]);
+            for (const v of vids) if (!v.pending) for (const x of get(v)) if (x) m.set(x, (m.get(x) || 0) + 1);
+            return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
         };
         PV._top = {
-            tags: count(v => v.tags).slice(0, 12),
-            stars: count(v => v.stars).slice(0, 6),
-            by: count(v => v.uploader ? [v.uploader] : []).slice(0, 6),
+            tag: count(v => v.tags), star: count(v => v.stars), creator: count(v => v.creators),
+            by: count(v => (v.uploader ? [v.uploader] : [])),
+            music: count(v => v.music.map(m => [m.artist, m.song].filter(Boolean).join(' - '))),
         };
+        if (!els.list.hidden && PV._listKind !== 'details') pvxRenderList();
     }
-    const t = PV._top;
-    const row = (label, list, field, cls) => list.length ? h('div', { class: 'pvx-toprow' }, h('span', { class: 'pvx-mlabel' }, label),
-        list.map(([name, n]) => h('button', { type: 'button', class: 'pvx-chip ' + (cls || ''), dataset: { pvxQ: pvxToken(field, name) }, title: `${n} video(s) — click to filter` }, name, h('small', null, ' ' + n.toLocaleString())))) : null;
-    els.top.append(...[row('Top tags', t.tags, 'tag'), row('Stars', t.stars, 'star', 'pvx-chip-star'), row('Uploaders', t.by, 'by', 'pvx-chip-by')].filter(Boolean));
+    const caret = '<svg class="pvx-caret" viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+    const drop = (kind, label, n) => {
+        const b = h('button', { type: 'button', class: 'pvx-drop', dataset: { pvxDrop: kind }, html: `<span>${escHtml(label)}</span>` + (n != null ? `<span class="pvx-cnt">${n.toLocaleString()}</span>` : '') + caret });
+        b.addEventListener('mouseenter', () => pvxShowPopSoon(b, kind));
+        b.addEventListener('mouseleave', () => pvxHidePopSoon());
+        b.addEventListener('click', () => pvxOpenList(kind));
+        return b;
+    };
+    els.drops.replaceChildren(drop('details', 'Details'),
+        ...PVX_DROPS.filter(([k]) => PV._top[k].length).map(([k, label]) => drop(k, label, PV._top[k].length)));
+}
+
+/* ───────────────────────── Dropdowns: hover preview + full list ───────────────────────── */
+
+function pvxDetailsContent(full) {
+    const { job } = PV;
+    const pl = job.pl;
+    const loaded = job.videos.filter(v => !v.pending).length;
+    const row = (k, v) => (v == null || v === '' ? null : h('div', { class: 'pvx-drow' }, h('span', { class: 'pvx-dkey' }, k), h('span', { class: 'pvx-dval' }, v)));
+    return [
+        pl.description ? h('div', { class: 'pvx-ddesc' + (full ? ' is-full' : '') }, pl.description) : null,
+        h('div', { class: 'pvx-dgrid' }, [
+            row('Owner', pl.owner),
+            row('Videos', job.videos.length.toLocaleString() + (job.done ? '' : ` (${loaded.toLocaleString()} loaded)`)),
+            row('Total length', (job.done ? '' : '≥ ') + fmtTotal(PV._stats.totalSec)),
+            row('Unavailable', PV._stats.missing ? PV._stats.missing.toLocaleString() : null),
+            row('Views', pl.views != null ? pl.views.toLocaleString() : null),
+            row('Likes', pl.likes != null ? pl.likes.toLocaleString() + (pl.dislikes != null ? ` / ${pl.dislikes.toLocaleString()} dislikes` : '') : null),
+            row('Score', isFinite(pl.rating) ? Math.round(pl.rating) + '%' : null),
+            row('Created', pl.createdAt ? new Date(pl.createdAt).toLocaleString() : null),
+            row('Updated', pl.updatedAt ? new Date(pl.updatedAt).toLocaleString() : null),
+            row('Visibility', pl.isPublic === false ? 'Private' : pl.isPublic ? 'Public' : null),
+            row('Playlist ID', pl.id),
+        ].filter(Boolean)),
+    ].filter(Boolean);
+}
+
+function pvxShowPopSoon(trigger, kind) {
+    clearTimeout(PV._popHide);
+    clearTimeout(PV._popShow);
+    PV._popShow = setTimeout(() => pvxShowPop(trigger, kind), PV.els.pop.hidden ? 140 : 0);
+}
+
+function pvxHidePopSoon() {
+    clearTimeout(PV._popShow);
+    clearTimeout(PV._popHide);
+    PV._popHide = setTimeout(pvxHidePop, 220);
+}
+
+function pvxHidePop() {
+    if (!PV) return;
+    clearTimeout(PV._popShow);
+    PV.els.pop.hidden = true;
+    PV._popKind = null;
+}
+
+function pvxShowPop(trigger, kind) {
+    if (!PV || !PV.job || !PV.els.list.hidden) return;   // no preview while the full list is open
+    const pop = PV.els.pop;
+    PV._popKind = kind;
+    const foot = txt => h('div', { class: 'pvx-pfoot' }, txt);
+    if (kind === 'details') {
+        pop.replaceChildren(h('div', { class: 'pvx-phead' }, 'Playlist details'), ...pvxDetailsContent(false), foot('Click for the full details'));
+    } else {
+        const def = PVX_DROPS.find(d => d[0] === kind);
+        const all = PV._top[kind] || [];
+        const max = all[0] ? all[0][1] : 1;
+        pop.replaceChildren(
+            h('div', { class: 'pvx-phead' }, `Top ${def[1].toLowerCase()}`, h('span', { class: 'pvx-cnt' }, all.length.toLocaleString())),
+            h('div', { class: 'pvx-plist' }, all.slice(0, PVX_POP_TOP).map(([name, n]) => pvxListRow(def, name, n, max))),
+            foot(all.length > PVX_POP_TOP ? `Click for all ${all.length.toLocaleString()}` : 'Click to open the list'));
+    }
+    pop.hidden = false;
+    const r = trigger.getBoundingClientRect();
+    const w = pop.offsetWidth;
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+    pop.style.top = (r.bottom + 6) + 'px';
+    pop.style.maxHeight = Math.max(160, innerHeight - r.bottom - 24) + 'px';
+}
+
+/** One clickable "name … count" row; marked active when its token is in the search. */
+function pvxListRow(def, name, n, max) {
+    const token = pvxToken(def[2], name);
+    const active = pvxHasToken(token);
+    return h('button', { type: 'button', class: 'pvx-lrow' + (active ? ' is-active' : ''), dataset: { pvxQ: token }, title: (active ? 'Remove filter: ' : 'Filter: ') + name },
+        h('span', { class: 'pvx-lbar', style: `width:${Math.max(2, n / max * 100)}%` }),
+        h('span', { class: 'pvx-lname' }, name),
+        h('span', { class: 'pvx-lcnt' }, n.toLocaleString()));
+}
+
+function pvxHasToken(token) {
+    const esc = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|\\s)' + esc + '(?=\\s|$)', 'i').test(PV.els.search.value);
+}
+
+function pvxOpenList(kind) {
+    pvxHidePop();
+    if (!PV.job) return;
+    if (!PV.els.list.hidden && PV._listKind === kind) { pvxCloseList(); return; }
+    pvxToggleSettings(false);
+    PV._listKind = kind;
+    PV._listFilter = '';
+    PV._listSort = 'count';
+    PV.els.list.hidden = false;
+    pvxRenderList(true);
+    PV.els.drops.querySelectorAll('.pvx-drop').forEach(b => b.classList.toggle('is-on', b.dataset.pvxDrop === kind));
+}
+
+function pvxCloseList() {
+    if (!PV) return;
+    PV.els.list.hidden = true;
+    PV._listKind = null;
+    PV.els.drops.querySelectorAll('.pvx-drop.is-on').forEach(b => b.classList.remove('is-on'));
+}
+
+const PVX_LIST_MAX = 2000;   // rows rendered at once in the full list
+
+function pvxRenderList(rebuild) {
+    const panel = PV.els.list;
+    const kind = PV._listKind;
+    if (!kind) return;
+    const closeBtn = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Close', onclick: pvxCloseList,
+        html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' });
+    if (kind === 'details') {
+        panel.replaceChildren(h('div', { class: 'pvx-shead' }, h('b', null, 'Playlist details'), closeBtn), ...pvxDetailsContent(true));
+        return;
+    }
+    const def = PVX_DROPS.find(d => d[0] === kind);
+    const all = PV._top[kind] || [];
+    if (rebuild || !PV.els.listBody) {
+        const filter = h('input', { type: 'search', class: 'pvx-input pvx-lfilter', placeholder: `Filter ${def[1].toLowerCase()}…`, value: PV._listFilter || '', spellcheck: false });
+        filter.addEventListener('input', () => { PV._listFilter = filter.value; pvxRenderList(false); });
+        const sortBtn = h('button', { type: 'button', class: 'pvx-btn pvx-lsort' });
+        sortBtn.addEventListener('click', () => { PV._listSort = PV._listSort === 'count' ? 'name' : 'count'; pvxRenderList(false); });
+        PV.els.listTitle = h('b');
+        PV.els.listSortBtn = sortBtn;
+        PV.els.listBody = h('div', { class: 'pvx-llist' });
+        PV.els.listNote = h('div', { class: 'pvx-lnote' });
+        panel.replaceChildren(
+            h('div', { class: 'pvx-shead' }, PV.els.listTitle, closeBtn),
+            h('div', { class: 'pvx-ltools' }, filter, sortBtn),
+            h('div', { class: 'pvx-lhint' }, 'Click to add / remove a filter. Several filters must all match.'),
+            PV.els.listBody, PV.els.listNote);
+        setTimeout(() => filter.focus(), 0);
+    }
+    const f = (PV._listFilter || '').trim().toLowerCase();
+    let rows = f ? all.filter(([n]) => n.toLowerCase().includes(f)) : all.slice();
+    if (PV._listSort === 'name') rows.sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base', numeric: true }));
+    const max = all[0] ? all[0][1] : 1;
+    PV.els.listTitle.textContent = `${def[1]} — ${all.length.toLocaleString()}` + (PV.job.done ? '' : ' (so far)');
+    PV.els.listSortBtn.textContent = PV._listSort === 'count' ? 'Sort: most videos' : 'Sort: A → Z';
+    const top = PV.els.listBody.scrollTop;
+    PV.els.listBody.replaceChildren(...rows.slice(0, PVX_LIST_MAX).map(([name, n]) => pvxListRow(def, name, n, max)));
+    PV.els.listBody.scrollTop = rebuild ? 0 : top;
+    PV.els.listNote.textContent = !rows.length ? 'Nothing matches.' : rows.length > PVX_LIST_MAX ? `Showing ${PVX_LIST_MAX.toLocaleString()} of ${rows.length.toLocaleString()} — type to narrow down.` : '';
 }
 
 /* ───────────────────────── Search & sort ───────────────────────── */
@@ -356,6 +513,8 @@ function pvxToggleToken(token) {
     const re = new RegExp('(^|\\s)' + esc + '(?=\\s|$)', 'i');
     const next = re.test(cur) ? cur.replace(re, ' ').replace(/\s+/g, ' ').trim() : (cur.trim() + ' ' + token).trim();
     pvxSetQuery(next);
+    if (!PV.els.list.hidden && PV._listKind !== 'details') pvxRenderList(false);
+    if (!PV.els.pop.hidden) PV.els.pop.querySelectorAll('.pvx-lrow').forEach(r => r.classList.toggle('is-active', pvxHasToken(r.dataset.pvxQ)));
 }
 
 function pvxSetSort(key, dir) {
@@ -379,10 +538,11 @@ function pvxSetScale(n) {
     pvxApplyScale();
 }
 
+/** Text size applies to the videos area only (grid / table), so the controls never move while you drag. */
 function pvxApplyScale() {
     PV.els.modal.style.setProperty('--pvx-scale', S.scale / 100);
-    PV.els.scale.value = S.scale;
-    PV.els.scaleVal.textContent = S.scale + '%';
+    if (PV.els.scale) PV.els.scale.value = S.scale;
+    if (PV.els.scaleVal) PV.els.scaleVal.textContent = S.scale + '%';
 }
 
 function pvxSyncControls() {
@@ -508,7 +668,9 @@ function pvxOnKey(e) {
     if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        if (!PV.els.settings.hidden) pvxToggleSettings(false);
+        if (!PV.els.pop.hidden) pvxHidePop();
+        else if (!PV.els.list.hidden) pvxCloseList();
+        else if (!PV.els.settings.hidden) pvxToggleSettings(false);
         else if (typing && e.target === PV.els.search && PV.els.search.value) pvxSetQuery('');
         else pvxClose();
         return;
@@ -528,6 +690,7 @@ function pvxOnKey(e) {
 function pvxToggleSettings(show) {
     const panel = PV.els.settings;
     show = show ?? panel.hidden;
+    if (show) { pvxCloseList(); pvxHidePop(); }
     panel.hidden = !show;
     PV.els.gear.classList.toggle('is-on', show);
     if (show) pvxBuildSettings();
@@ -535,9 +698,12 @@ function pvxToggleSettings(show) {
 
 function pvxBuildSettings() {
     const panel = PV.els.settings;
+    PV.els.scale = h('input', { type: 'range', class: 'pvx-range', min: 70, max: 200, step: 5, value: S.scale, title: 'Text size' });
+    PV.els.scale.addEventListener('input', () => pvxSetScale(+PV.els.scale.value));
+    PV.els.scaleVal = h('span', { class: 'pvx-scaleval' }, S.scale + '%');
     const check = (key, label) => {
         const box = h('input', { type: 'checkbox', checked: !!S[key] });
-        box.addEventListener('change', () => { pvxSet(key, box.checked); pvxRenderBody(false); });
+        box.addEventListener('change', () => { pvxSet(key, box.checked); if (key === 'cardClick') pvxRefreshCards(); pvxRenderHeader(); pvxRenderBody(false); });
         return h('label', { class: 'pvx-srow pvx-scheck' }, box, h('span', null, label));
     };
     const tpl = (key, label) => {
@@ -550,7 +716,15 @@ function pvxBuildSettings() {
     panel.replaceChildren(
         h('div', { class: 'pvx-shead' }, h('b', null, 'Settings'),
             h('button', { type: 'button', class: 'pvx-ibtn', title: 'Close', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>', onclick: () => pvxToggleSettings(false) })),
-        check('newTab', 'Open videos in a new tab'),
+        h('div', { class: 'pvx-srow' }, h('span', { class: 'pvx-slabel' }, 'Text size of the videos (grid / table)'),
+            h('div', { class: 'pvx-scalerow' },
+                h('button', { type: 'button', class: 'pvx-btn pvx-a', title: 'Smaller', onclick: () => pvxSetScale(S.scale - 10) }, 'A−'),
+                PV.els.scale,
+                h('button', { type: 'button', class: 'pvx-btn pvx-a', title: 'Larger', onclick: () => pvxSetScale(S.scale + 10) }, 'A+'),
+                PV.els.scaleVal,
+                h('button', { type: 'button', class: 'pvx-btn', title: 'Back to 100%', onclick: () => pvxSetScale(100) }, 'Reset'))),
+        check('cardClick', 'Clicking a playlist card opens this viewer (the small "Playlist" button on the card opens the playlist itself)'),
+        check('newTab', 'Open videos and the playlist page in a new tab'),
         check('showTags', 'Show tags on grid cards'),
         h('label', { class: 'pvx-srow' }, h('span', { class: 'pvx-slabel' }, 'Keep finished playlists in memory for (minutes)'), cache),
         h('div', { class: 'pvx-ssec' }, 'Video links'),

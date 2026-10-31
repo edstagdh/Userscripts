@@ -1,6 +1,7 @@
 /* [PMVHaven] Playlist Viewer — styles
-   Version 1.0
-   Everything inside the popup is sized in em, so --pvx-scale (text size slider) scales the whole UI. */
+   Version 1.1
+   The popup frame (header, toolbar, pager, panels) has a fixed 13px base; the videos area (.pvx-body)
+   is sized from --pvx-scale (text size setting), and everything in it uses em so it all scales together. */
 
 /* ───────── Card button (on the site's playlist cards) ───────── */
 .pvx-cardbtn {
@@ -16,6 +17,10 @@
 .pvx-cardbtn svg { color: #fb923c; font-size: 14px; }
 .pvx-cardbtn:hover { background: #f97316; border-color: #f97316; transform: translateY(-1px); }
 .pvx-cardbtn:hover svg { color: #fff; }
+/* "Playlist" button when a card click opens the viewer: quieter, appears fully on hover */
+.pvx-cardopen { padding: 4px 9px 4px 7px; font-size: 11px; border-color: rgba(255, 255, 255, .18); opacity: .8; }
+.pvx-cardopen svg { color: #e5e7eb; font-size: 12px; }
+a:hover > * > .pvx-cardopen, .pvx-cardopen:hover { opacity: 1; }
 .pvx-fab { position: fixed; top: auto; left: auto; right: 20px; bottom: 20px; z-index: 9990; padding: 10px 16px 10px 12px; font-size: 14px; }
 
 html.pvx-lock, html.pvx-lock body { overflow: hidden !important; }
@@ -43,41 +48,103 @@ html.pvx-lock, html.pvx-lock body { overflow: hidden !important; }
 .pvx-modal {
     --pvx-scale: 1;
     position: relative;
-    width: 90vw; height: 90vh;
+    width: 95vw; height: 95vh;
     display: flex; flex-direction: column;
-    font-size: calc(14px * var(--pvx-scale)); line-height: 1.4;
+    font-size: 13px; line-height: 1.4;
     background: var(--pvx-bg); border: 1px solid var(--pvx-line); border-radius: 16px;
     box-shadow: 0 30px 80px rgba(0, 0, 0, .7), 0 0 0 1px rgba(249, 115, 22, .08);
     overflow: hidden; animation: pvx-pop .18s ease-out;
 }
 
-/* ───────── Header ───────── */
+/* ───────── Header (compact: two lines) ───────── */
 .pvx-head {
-    display: flex; gap: 1.1em; padding: 1.1em 1.2em .9em;
+    display: flex; align-items: center; gap: .9em; padding: .6em 1em;
     background: linear-gradient(180deg, #181818, var(--pvx-bg));
     border-bottom: 1px solid var(--pvx-line);
 }
 .pvx-hthumb {
-    flex: 0 0 auto; align-self: flex-start; width: 13em; aspect-ratio: 16 / 9; border-radius: .7em; overflow: hidden;
+    flex: 0 0 auto; width: 7.2em; aspect-ratio: 16 / 9; border-radius: .5em; overflow: hidden;
     background: #0f0f0f; border: 1px solid var(--pvx-line); display: flex; align-items: center; justify-content: center;
 }
 .pvx-hthumb img { width: 100%; height: 100%; object-fit: cover; }
-.pvx-hinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .45em; }
-.pvx-htitle { margin: 0; font-size: 1.45em; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pvx-howner span { display: inline-flex; align-items: center; gap: .4em; color: var(--pvx-dim); }
+.pvx-hthumb .pvx-noimg { font-size: 1.6em; }
+.pvx-hinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .35em; }
+.pvx-hline { display: flex; align-items: center; gap: .9em; min-width: 0; }
+.pvx-htitle { margin: 0; min-width: 0; font-size: 1.3em; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pvx-howner { display: inline-flex; align-items: center; gap: .35em; flex: 0 0 auto; color: var(--pvx-dim); white-space: nowrap; }
 .pvx-howner b { color: var(--pvx-text); font-weight: 600; }
-.pvx-hmeta { display: flex; flex-wrap: wrap; gap: .4em; }
-.pvx-mchip {
-    display: inline-flex; align-items: baseline; gap: .4em; padding: .25em .65em;
-    background: var(--pvx-card); border: 1px solid var(--pvx-line); border-radius: 999px; font-size: .9em;
+.pvx-hmeta { display: flex; align-items: center; gap: .85em; flex: 0 0 auto; white-space: nowrap; }
+.pvx-stat { display: inline-flex; align-items: center; gap: .3em; color: #d1d5db; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pvx-stat-i { display: inline-flex; color: var(--pvx-faint); }
+.pvx-stat.pvx-r-hi .pvx-stat-i, .pvx-stat.pvx-r-mid .pvx-stat-i, .pvx-stat.pvx-r-lo .pvx-stat-i { color: inherit; }
+.pvx-stat-warn { color: #fbbf24; }
+.pvx-stat-warn .pvx-stat-i { color: #fbbf24; }
+.pvx-hdrops { display: flex; align-items: center; gap: .35em; min-width: 0; overflow: hidden; padding-left: .85em; border-left: 1px solid var(--pvx-line); }
+.pvx-drop {
+    display: inline-flex; align-items: center; gap: .35em; flex: 0 0 auto;
+    height: 2em; padding: 0 .55em 0 .7em; border-radius: 999px; cursor: pointer;
+    background: var(--pvx-card); border: 1px solid var(--pvx-line2); color: #d1d5db; font-size: .92em; transition: .15s;
+}
+.pvx-drop:hover, .pvx-drop.is-on { border-color: var(--pvx-acc); color: #fff; background: #222; }
+.pvx-caret { color: var(--pvx-faint); transition: transform .15s; }
+.pvx-drop.is-on .pvx-caret { transform: rotate(180deg); color: var(--pvx-acc2); }
+.pvx-cnt {
+    display: inline-block; margin-left: .15em; padding: .05em .45em; border-radius: 999px;
+    background: rgba(255, 255, 255, .08); color: var(--pvx-dim); font-size: .82em; font-weight: 600; line-height: 1.5;
+    font-variant-numeric: tabular-nums;
 }
 .pvx-mlabel { color: var(--pvx-faint); font-size: .85em; text-transform: uppercase; letter-spacing: .04em; }
-.pvx-hdesc { color: var(--pvx-dim); font-size: .92em; max-height: 3.2em; overflow: auto; white-space: pre-wrap; }
-.pvx-htop { display: flex; flex-direction: column; gap: .3em; }
-.pvx-toprow { display: flex; flex-wrap: wrap; align-items: center; gap: .3em; max-height: 2em; overflow: hidden; }
-.pvx-toprow .pvx-mlabel { margin-right: .3em; min-width: 6.5em; }
-.pvx-toprow small { color: var(--pvx-faint); font-size: .85em; }
-.pvx-hbtns { display: flex; align-items: flex-start; gap: .35em; }
+.pvx-hbtns { display: flex; align-items: center; gap: .35em; flex: 0 0 auto; }
+.pvx-openpl {
+    display: inline-flex; align-items: center; gap: .45em; height: 2.3em; padding: 0 .85em;
+    text-decoration: none; color: #e5e7eb !important; font-weight: 600;
+}
+.pvx-openpl:hover { background: var(--pvx-acc) !important; border-color: var(--pvx-acc) !important; color: #fff !important; }
+
+/* ───────── Hover preview (top 15) ───────── */
+.pvx-pop {
+    position: fixed; z-index: 5; width: 23em; overflow: auto;
+    font-size: 13px; padding: .5em; border-radius: .8em;
+    background: #171717; border: 1px solid var(--pvx-line2); box-shadow: 0 18px 40px rgba(0, 0, 0, .6);
+    animation: pvx-fade .12s ease-out;
+}
+.pvx-pop[hidden] { display: none; }
+.pvx-phead { display: flex; align-items: center; justify-content: space-between; gap: .5em; padding: .2em .4em .45em; font-weight: 700; }
+.pvx-plist { display: flex; flex-direction: column; gap: 2px; }
+.pvx-pfoot { margin-top: .45em; padding: .45em .4em .1em; border-top: 1px solid var(--pvx-line); color: var(--pvx-faint); font-size: .88em; }
+.pvx-lrow {
+    position: relative; display: flex; align-items: center; gap: .6em; width: 100%;
+    padding: .38em .55em; border: 0; border-radius: .45em; background: transparent; cursor: pointer; text-align: left; overflow: hidden;
+}
+.pvx-lrow:hover { background: #222; }
+.pvx-lrow.is-active { background: rgba(249, 115, 22, .16); box-shadow: inset 0 0 0 1px rgba(249, 115, 22, .5); }
+.pvx-lbar { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255, 255, 255, .045); pointer-events: none; }
+.pvx-lname { position: relative; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e5e7eb; }
+.pvx-lcnt { position: relative; flex: 0 0 auto; color: var(--pvx-dim); font-size: .9em; font-variant-numeric: tabular-nums; }
+/* details */
+.pvx-ddesc { padding: .2em .4em .6em; color: #d1d5db; white-space: pre-wrap; max-height: 8em; overflow: auto; }
+.pvx-ddesc.is-full { max-height: none; }
+.pvx-dgrid { display: grid; grid-template-columns: auto 1fr; gap: .3em 1em; padding: .2em .4em; }
+.pvx-drow { display: contents; }
+.pvx-dkey { color: var(--pvx-faint); white-space: nowrap; }
+.pvx-dval { color: #e5e7eb; word-break: break-word; }
+
+/* ───────── Side panels (settings, full lists) ───────── */
+.pvx-panel {
+    position: absolute; top: .6em; right: .6em; z-index: 10; font-size: 13px;
+    display: flex; flex-direction: column; gap: .7em; padding: 1em 1.1em;
+    background: #161616; border: 1px solid var(--pvx-line2); border-radius: .9em; box-shadow: 0 20px 50px rgba(0, 0, 0, .65);
+    animation: pvx-fade .12s ease-out;
+}
+.pvx-panel[hidden] { display: none; }
+.pvx-listpanel { bottom: .6em; width: min(30em, calc(100% - 1.2em)); }
+.pvx-ltools { display: flex; gap: .5em; }
+.pvx-lfilter { flex: 1; min-width: 0; font-family: inherit !important; }
+.pvx-lsort { flex: 0 0 auto; }
+.pvx-lhint { color: var(--pvx-faint); font-size: .88em; }
+.pvx-llist { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; margin: 0 -.4em; padding: 0 .4em; }
+.pvx-lnote { color: var(--pvx-faint); font-size: .88em; }
+.pvx-lnote:empty { display: none; }
 
 .pvx-ibtn {
     display: inline-flex; align-items: center; justify-content: center;
@@ -122,9 +189,10 @@ html.pvx-lock, html.pvx-lock body { overflow: hidden !important; }
     border: 0; border-radius: .45em; background: transparent; color: var(--pvx-dim) !important; cursor: pointer;
 }
 .pvx-seg.is-on { background: var(--pvx-acc); color: #fff !important; }
-.pvx-scale .pvx-a { padding: 0 .55em; font-weight: 700; }
-.pvx-range { width: 6.5em; accent-color: var(--pvx-acc); }
-.pvx-scaleval { color: var(--pvx-faint); font-size: .85em; min-width: 3em; }
+.pvx-scalerow { display: flex; align-items: center; gap: .5em; }
+.pvx-scalerow .pvx-a { padding: 0 .6em; font-weight: 700; }
+.pvx-range { flex: 1; min-width: 8em; accent-color: var(--pvx-acc); }
+.pvx-scaleval { color: var(--pvx-dim); min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ───────── Loading bar ───────── */
 .pvx-loadbar {
@@ -143,7 +211,10 @@ html.pvx-lock, html.pvx-lock body { overflow: hidden !important; }
 .pvx-barbtn { height: 2em; }
 
 /* ───────── Body ───────── */
-.pvx-body { flex: 1; min-height: 0; overflow: auto; padding: 1.1em 1.2em; outline: none; scrollbar-color: #3a3a3a transparent; }
+.pvx-body {
+    flex: 1; min-height: 0; overflow: auto; padding: 1.1em 1.2em; outline: none; scrollbar-color: #3a3a3a transparent;
+    font-size: calc(14px * var(--pvx-scale, 1));   /* text size setting */
+}
 .pvx-empty { display: flex; align-items: center; justify-content: center; min-height: 12em; color: var(--pvx-dim); font-size: 1.05em; text-align: center; }
 .pvx-spinner { width: 2.4em; height: 2.4em; border-radius: 50%; border: .25em solid #333; border-top-color: var(--pvx-acc); animation: pvx-spin .8s linear infinite; }
 @keyframes pvx-spin { to { transform: rotate(360deg); } }
@@ -203,6 +274,7 @@ a.pvx-title:hover { color: var(--pvx-blue) !important; }
 .pvx-chip:hover { border-color: var(--pvx-acc); color: #fff !important; }
 .pvx-chip-star { background: rgba(244, 114, 182, .12); border-color: rgba(244, 114, 182, .35); color: #f9a8d4 !important; }
 .pvx-chip-by { background: rgba(96, 165, 250, .1); border-color: rgba(96, 165, 250, .3); color: #93c5fd !important; }
+.pvx-chip-music { background: rgba(167, 139, 250, .1); border-color: rgba(167, 139, 250, .3); color: #c4b5fd !important; }
 .pvx-chip-more { cursor: default; color: var(--pvx-faint) !important; }
 .pvx-actions { display: flex; gap: .4em; margin-top: auto; padding-top: .2em; }
 .pvx-act {
@@ -272,12 +344,7 @@ a.pvx-title:hover { color: var(--pvx-blue) !important; }
 .pvx-jump:focus { border-color: var(--pvx-acc); }
 
 /* ───────── Settings panel ───────── */
-.pvx-settings {
-    position: absolute; top: 4.2em; right: 1.2em; z-index: 10; width: min(34em, calc(100% - 2.4em));
-    max-height: calc(100% - 6em); overflow: auto;
-    display: flex; flex-direction: column; gap: .7em; padding: 1em 1.1em;
-    background: #161616; border: 1px solid var(--pvx-line2); border-radius: .9em; box-shadow: 0 20px 50px rgba(0, 0, 0, .6);
-}
+.pvx-settings { width: min(36em, calc(100% - 1.2em)); max-height: calc(100% - 1.2em); overflow: auto; }
 .pvx-settings[hidden] { display: none; }
 .pvx-shead { display: flex; align-items: center; justify-content: space-between; font-size: 1.1em; }
 .pvx-srow { display: flex; flex-direction: column; gap: .3em; }
@@ -310,7 +377,8 @@ a.pvx-title:hover { color: var(--pvx-blue) !important; }
 /* ───────── Narrow screens ───────── */
 @media (max-width: 760px) {
     .pvx-modal { width: 96vw; height: 94vh; }
-    .pvx-hthumb { display: none; }
-    .pvx-scale { display: none; }
-    .pvx-toprow { display: none; }
+    .pvx-hthumb, .pvx-howner { display: none; }
+    .pvx-hline { flex-wrap: wrap; }
+    .pvx-hdrops { border-left: 0; padding-left: 0; }
+    .pvx-openpl span { display: none; }
 }

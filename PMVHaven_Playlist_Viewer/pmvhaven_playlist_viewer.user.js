@@ -1,17 +1,17 @@
 // ==UserScript==
 // @name         [PMVHaven] Playlist Viewer
 // @namespace    edstagdh.pmvhaven.playlist.viewer
-// @version      1.0
+// @version      1.1
 // @description  Adds a "Videos" button to every playlist card: browse, search and sort all videos of a playlist in a popup (grid / table view).
 // @author       edstagdh
 // @match        https://pmvhaven.com/*
 // @match        https://www.pmvhaven.com/*
 // @icon         https://pmvhaven.com/favicon.ico
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.0
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.0
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.0
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.0
-// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.0
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.1
+// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
@@ -33,7 +33,7 @@
      .changelog.js  "What's New" popup (Changelog.md on GitHub)
      .styles.css    all CSS (@resource PVX_STYLES) */
 
-const SCRIPT_VERSION = '1.0';
+const SCRIPT_VERSION = '1.1';
 
 /* ───────────────────────── Settings ───────────────────────── */
 
@@ -43,7 +43,8 @@ const PVX_DEFAULTS = {
     scale: 100,              // text / UI scale in %
     sort: 'index',           // index | title | uploader | duration | views | likes | rating | date
     sortDir: 1,              // 1 asc, -1 desc
-    newTab: true,            // open videos in a new tab
+    cardClick: true,         // clicking a playlist card opens the viewer (small "Playlist" button opens the playlist)
+    newTab: true,            // open videos / the playlist page in a new tab
     showTags: true,          // tag chips on grid cards
     cacheMinutes: 15,        // how long a loaded playlist is kept in memory
     // URL templates — placeholders: {id} {key} {oldId} {slug} {pid} {index} (0-based) {index1} (1-based)
@@ -144,32 +145,47 @@ function relTime(iso) {
 }
 
 function slugify(s) {
-    return String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
 }
 
-/* ───────────────────────── Card buttons ───────────────────────── */
+/* ───────────────────────── Playlist cards ─────────────────────────
+   cardClick on  (default): a plain left click anywhere on a card opens the viewer; a small
+                 "Playlist" button on the thumbnail keeps the site's own behaviour (opens the playlist).
+                 Ctrl / Shift / middle click and the owner link are left alone.
+   cardClick off: the card works as before and gets a small "Videos" button that opens the viewer. */
 
 const PVX_PL_HREF = /^\/playlists\/([0-9a-f]{24})\/?(?:[?#].*)?$/i;
 const PVX_ICON_LIST = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h13M3 18h9"/><path d="m17 15 4 3-4 3z" fill="currentColor"/></svg>';
+const PVX_ICON_EXT = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
 
 function pvxPidFromAnchor(a) {
     const m = a && PVX_PL_HREF.exec(a.getAttribute('href') || '');
     return m ? m[1].toLowerCase() : null;
 }
 
+function pvxCardButton() {
+    return S.cardClick
+        // <span>, not <button>/<a>: a click on it still reaches the card's link, so the site navigates as usual.
+        ? h('span', { class: 'pvx-cardbtn pvx-cardopen', role: 'button', title: 'Open the playlist', dataset: { pvxMode: 'open' }, html: PVX_ICON_EXT + '<span>Playlist</span>' })
+        : h('button', { type: 'button', class: 'pvx-cardbtn pvx-cardvideos', title: 'Browse the videos in this playlist', dataset: { pvxMode: 'videos' }, html: PVX_ICON_LIST + '<span>Videos</span>' });
+}
+
 function pvxScanCards() {
+    const mode = S.cardClick ? 'open' : 'videos';
     for (const a of document.querySelectorAll('a[href^="/playlists/"]')) {
         if (a.closest('#pvx-root')) continue;
         if (!pvxPidFromAnchor(a)) continue;
         // Only real cards (with a thumbnail area), not text links.
         const host = a.querySelector('.aspect-video') || a.querySelector('img')?.parentElement;
-        if (!host || host.querySelector(':scope > .pvx-cardbtn')) continue;
+        if (!host) continue;
+        const old = host.querySelector(':scope > .pvx-cardbtn');
+        if (old && old.dataset.pvxMode === mode) continue;
+        old?.remove();
         if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
-        host.append(h('button', {
-            type: 'button', class: 'pvx-cardbtn', title: 'Browse the videos in this playlist',
-            html: PVX_ICON_LIST + '<span>Videos</span>',
-        }));
+        a.dataset.pvxCard = '1';
+        a.classList.toggle('pvx-card-viewer', S.cardClick);
+        host.append(pvxCardButton());
     }
 }
 
@@ -185,16 +201,24 @@ function pvxCardHint(a) {
 }
 
 function pvxOnCardClick(e) {
-    const btn = e.target.closest && e.target.closest('.pvx-cardbtn');
-    if (!btn) return;
-    // The button sits inside the card's <a>: keep the site from navigating.
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;   // new-tab clicks stay native
+    const t = e.target;
+    if (!t || !t.closest || t.closest('.pvx-cardopen')) return;                        // "Playlist" button → site's own navigation
+    const a = t.closest('a[href^="/playlists/"]');
+    if (!a || !a.dataset.pvxCard || a.closest('#pvx-root')) return;
+    const viaButton = !!t.closest('.pvx-cardvideos');
+    if (!viaButton && (!S.cardClick || t.closest('[role="link"]'))) return;            // owner link etc.
+    const pid = pvxPidFromAnchor(a);
+    if (!pid) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    if (e.type !== 'click') return;
-    const a = btn.closest('a');
-    const pid = pvxPidFromAnchor(a);
-    if (pid) pvxOpen(pid, pvxCardHint(a));
+    pvxOpen(pid, pvxCardHint(a));
+}
+
+/** Re-applies card buttons after the cardClick setting changed. */
+function pvxRefreshCards() {
+    pvxScanCards();
 }
 
 /* ───────────────────────── Playlist page button ───────────────────────── */
@@ -223,9 +247,7 @@ function pvxStart() {
     pvxLoadSettings();
     try { GM_addStyle(GM_getResourceText('PVX_STYLES')); } catch (e) { console.error('[PVX] CSS not loaded', e); }
 
-    for (const type of ['click', 'auxclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup']) {
-        document.addEventListener(type, pvxOnCardClick, true);
-    }
+    document.addEventListener('click', pvxOnCardClick, true);   // capture: runs before the site's router link
 
     let queued = false;
     const queue = () => {

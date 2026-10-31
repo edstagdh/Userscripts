@@ -1,3 +1,11 @@
+## v1.1
+- Clicking a playlist card now opens the viewer. A small "Playlist" button on the card opens the playlist itself (Ctrl / middle click on the card also still open it in a new tab). Can be switched back in Settings.
+- "Open playlist" button in the popup header.
+- Popup is now 95% of the page.
+- Much thinner header: title, owner and key stats on two lines. Details, Tags, Stars, Uploaders, Music and Creators are dropdowns — hover for the top 15, click for the full list (filter, sort by count or A–Z, click to add / remove a filter).
+- Counts in the tag / star lists no longer touch the names.
+- Text size moved to Settings and now only scales the videos (grid / table), so the slider stays in place while you drag it.
+
 ## v1.0
 - First release.
 - "Videos" button on every playlist card (Playlists page, profiles and anywhere else cards appear), plus an "All videos" button on a playlist's own page. Works with the site's in-page navigation.
