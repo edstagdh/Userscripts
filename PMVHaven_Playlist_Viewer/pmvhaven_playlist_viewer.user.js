@@ -1,26 +1,31 @@
 // ==UserScript==
 // @name         [PMVHaven] Playlist Viewer
 // @namespace    edstagdh.pmvhaven.playlist.viewer
-// @version      1.7
+// @version      1.9
 // @description  Adds a "Videos" button to every playlist card: browse, search and sort all videos of a playlist in a popup (grid / table view).
 // @author       edstagdh
 // @match        https://pmvhaven.com/*
 // @match        https://www.pmvhaven.com/*
 // @icon         https://pmvhaven.com/favicon.ico
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.watch.js?v=1.7
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.7
-// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.7
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.api.js?v=1.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.views.js?v=1.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.modal.js?v=1.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.watch.js?v=1.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.download.js?v=1.9
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.changelog.js?v=1.9
+// @resource     PVX_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.styles.css?v=1.9
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
 // @grant        GM_getResourceText
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        GM_download
+// @grant        GM_notification
+// @grant        GM_addValueChangeListener
 // @connect      pmvhaven.com
 // @connect      raw.githubusercontent.com
+// @connect      pmvhavencloud.s3.eu-west-par.io.cloud.ovh.net
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/PMVHaven_Playlist_Viewer/pmvhaven_playlist_viewer.user.js
@@ -32,10 +37,11 @@
      .views.js      grid cards + table
      .modal.js      popup: header, toolbar, search/sort, pagination, settings
      .watch.js      repairs the site's playlist player page (/video/…?playlist=…&index=…)
+     .download.js   playlist download queue (one file at a time) + Downloads panel
      .changelog.js  "What's New" popup (Changelog.md on GitHub)
      .styles.css    all CSS (@resource PVX_STYLES) */
 
-const SCRIPT_VERSION = '1.7';
+const SCRIPT_VERSION = '1.9';
 
 /* ───────────────────────── Settings ───────────────────────── */
 
@@ -58,6 +64,9 @@ const PVX_DEFAULTS = {
     previewMuted: true,      // … muted (toggle with the speaker button on the preview)
     previewVolume: 20,       // … volume in % when not muted (slider on the preview and in Settings)
     previewDelay: 250,       // ms of hovering before the preview starts
+    dlFolder: true,          // downloads: save into a folder named after the playlist
+    dlNumber: true,          // downloads: prefix files with their playlist position (001 - …)
+    dlSkipDone: true,        // downloads: skip videos already downloaded from that playlist
 };
 // Earlier defaults, replaced by the new ones when they were never customized.
 const PVX_OLD_DEFAULTS = { videoUrl: ['/video/{id}'], playlistVideoUrl: ['/video/{id}?playlist={pid}&index={index}'], previewVolume: [50] };
@@ -305,7 +314,9 @@ function pvxStart() {
         GM_registerMenuCommand('Reset Playlist Viewer settings', () => { pvxResetSettings(); alert('Playlist Viewer settings reset.'); });
         GM_registerMenuCommand('Clear loaded playlists (memory)', () => PVX_CACHE.clear());
         GM_registerMenuCommand('📋 Show Changelog', showFullChangelog);
+        GM_registerMenuCommand('⬇ Show downloads', () => { PVD.s = pvdRead(); PVD.minimized = false; pvdRender(); });
     }
+    pvdInit();
     checkVersionAndShowChangelog();
 }
 

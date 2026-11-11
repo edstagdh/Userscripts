@@ -1,5 +1,5 @@
 /* [PMVHaven] Playlist Viewer — styles
-   Version 1.7
+   Version 1.9
    The popup frame (header, toolbar, pager, panels) has a fixed 13px base; the videos area (.pvx-body)
    is sized from --pvx-scale (text size setting), and everything in it uses em so it all scales together.
 
@@ -14,6 +14,7 @@
 }
 .pvx-i-eye { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/%3E%3Ccircle cx="12" cy="12" r="3"/%3E%3C/svg%3E'); }
 .pvx-i-like { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M7 10v12M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/%3E%3C/svg%3E'); }
+.pvx-i-download { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M12 15V3M7 10l5 5 5-5M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/%3E%3C/svg%3E'); }
 .pvx-i-dislike { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M17 14V2M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/%3E%3C/svg%3E'); }
 .pvx-i-follow { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/%3E%3Cpath d="M12 7v6M9 10h6"/%3E%3C/svg%3E'); }
 .pvx-i-following { --pvx-i: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/%3E%3Cpath d="m9 10 2 2 4-4"/%3E%3C/svg%3E'); }
@@ -475,6 +476,82 @@ a.pvx-title:hover { color: var(--pvx-blue) !important; }
 .pvx-wmore:hover:not(:disabled) { border-color: #f97316; color: #fff; }
 .pvx-wmore:disabled { opacity: .6; cursor: default; }
 .pvx-wpanel .pvx-skel { height: .9em; border-radius: .3em; margin: .2em 0 .5em; background: #222; }
+
+/* ───────── Downloads (panel bottom-right on every page; above the viewer, below What's New) ───────── */
+#pvx-dl {
+    --pvd-line: #2e2e2e; position: fixed; right: 14px; bottom: 14px; z-index: 2147483500;
+    font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #e5e7eb;
+}
+#pvx-dl * { box-sizing: border-box; }
+#pvx-dl button { font: inherit; color: inherit; }
+.pvd-pill {
+    display: none; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+    background: #161616; border: 1px solid #3a3a3a; box-shadow: 0 6px 18px rgba(0, 0, 0, .55); font-weight: 600;
+}
+.pvd-pill .pvx-i { color: #fb923c; font-size: 14px; }
+.pvd-pfail { color: #f87171; }
+.pvd-ppause { color: #fbbf24; }
+.pvd-pdead { color: #9ca3af; }
+#pvx-dl.is-min .pvd-pill { display: inline-flex; }
+#pvx-dl.is-min .pvd-panel { display: none; }
+#pvx-dl.is-busy .pvd-pill { border-color: rgba(249, 115, 22, .7); }
+.pvd-panel {
+    width: 400px; max-width: calc(100vw - 28px); max-height: min(560px, calc(100vh - 28px)); display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 12px 12px; border-radius: 12px; background: #141414; border: 1px solid #333; box-shadow: 0 10px 30px rgba(0, 0, 0, .6);
+}
+.pvd-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.pvd-sum { flex: 1; color: #9ca3af; font-variant-numeric: tabular-nums; }
+.pvd-ibtn { width: 24px; height: 24px; border-radius: 6px; border: 1px solid #333; background: #1d1d1d; cursor: pointer; line-height: 1; }
+.pvd-ibtn:hover { border-color: #f97316; }
+.pvd-ibtn[hidden] { display: none; }
+.pvd-note { padding: 6px 8px; border-radius: 6px; background: #2e2810; border: 1px solid #6a5a1a; color: #f0d080; }
+.pvd-keep { color: #fdba74; font-size: 11px; }
+.pvd-note[hidden], .pvd-keep[hidden], .pvd-cur[hidden] { display: none; }
+.pvd-cur { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-radius: 8px; background: #1b1b1b; border: 1px solid var(--pvd-line); }
+.pvd-curtitle { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pvd-curtext, .pvd-alltext { color: #9ca3af; font-size: 11px; font-variant-numeric: tabular-nums; }
+.pvd-all { display: flex; flex-direction: column; gap: 4px; }
+.pvd-bar { height: 6px; border-radius: 999px; background: #262626; overflow: hidden; }
+.pvd-fill { height: 100%; width: 100%; transform: scaleX(0); transform-origin: left; background: #f97316; }   /* transform only: no layout */
+.pvd-fill-all { background: #22c55e; }
+.pvd-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.pvd-btn { padding: 5px 10px; border-radius: 7px; border: 1px solid #3a3a3a; background: #1f1f1f; cursor: pointer; font-weight: 600; }
+.pvd-btn:hover { border-color: #f97316; }
+.pvd-btn.is-acc { background: #f97316; border-color: #f97316; color: #fff; }
+.pvd-btn.is-danger:hover { border-color: #ef4444; color: #fca5a5; }
+.pvd-tabs { display: flex; flex-wrap: wrap; gap: 2px 4px; border-bottom: 1px solid var(--pvd-line); }
+.pvd-tab { padding: 5px 8px; border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer; color: #9ca3af; }
+.pvd-tab span { margin-left: 5px; padding: 0 6px; border-radius: 999px; background: rgba(255, 255, 255, .07); font-size: 10.5px; }
+.pvd-tab.is-on { color: #fff; border-bottom-color: #f97316; }
+.pvd-list { flex: 1; min-height: 60px; max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 2px; scrollbar-color: #3a3a3a transparent; }
+.pvd-row { flex: none; display: flex; align-items: center; gap: 7px; min-height: 26px; padding: 3px 6px; border-radius: 6px; }
+.pvd-row:hover { background: #1c1c1c; }
+.pvd-st { width: 14px; text-align: center; font-weight: 700; color: #6b7280; }
+.pvd-row.is-active .pvd-st { color: #fb923c; }
+.pvd-row.is-done .pvd-st { color: #4ade80; }
+.pvd-row.is-failed .pvd-st { color: #f87171; }
+.pvd-row.is-dead { opacity: .7; }
+.pvd-row.is-dead .pvd-name small { color: #9ca3af; }
+.pvd-idx { color: #6b7280; font-variant-numeric: tabular-nums; min-width: 38px; }
+.pvd-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pvd-name span, .pvd-name small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pvd-name small { color: #f87171; font-size: 10.5px; }
+.pvd-row.is-done .pvd-name small { color: #fbbf24; }
+.pvd-size { color: #6b7280; font-size: 11px; white-space: nowrap; }
+.pvd-x { width: 20px; height: 20px; border: 0; border-radius: 5px; background: none; cursor: pointer; color: #9ca3af; }
+.pvd-x:hover { background: #2a2a2a; color: #fff; }
+.pvd-more { padding: 6px; color: #6b7280; text-align: center; }
+/* "Download videos" dialog in the viewer */
+.pvd-dinfo { color: #d1d5db; line-height: 1.5; }
+.pvd-warn { padding: .6em .75em; border-radius: .5em; background: #2e2810; border: 1px solid #6a5a1a; color: #f0d080; line-height: 1.5; }
+.pvd-warn.is-bad { background: #2e1414; border-color: #7f1d1d; color: #fecaca; }
+.pvd-scope { display: flex; flex-direction: column; gap: .4em; }
+.pvd-scope input { accent-color: var(--pvx-acc); }
+.pvd-dsum { color: var(--pvx-faint); font-size: .9em; word-break: break-all; }
+.pvd-dsum code { color: #fdba74; }
+.pvd-start { background: var(--pvx-acc) !important; border-color: var(--pvx-acc) !important; color: #fff !important; font-weight: 700; padding: 0 1.1em; }
+.pvd-start:disabled { opacity: .5; cursor: default; }
+.pvx-srow[hidden] { display: none; }
 
 /* ───────── What's New (same design as the other scripts' changelog popups) ───────── */
 #pvxcl-backdrop {

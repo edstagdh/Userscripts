@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [PMVHaven] Playlist Viewer — popup
-// Version       1.7
+// Version       1.9
 // Part of pmvhaven_playlist_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
@@ -48,6 +48,7 @@ function pvxOpen(pid, hint, opts = {}) {
             h('div', { class: 'pvx-hline' }, els.meta, els.drops)),
         h('div', { class: 'pvx-hbtns' },
             els.openPl,
+            els.dlBtn = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Download the videos of this playlist', html: PVX_SVG.download, onclick: () => pvdToggleDialog() }),
             els.reload = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Reload from the server', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16m0 5v-5h5"/></svg>', onclick: () => pvxStartLoad(true) }),
             els.gear = h('button', { type: 'button', class: 'pvx-ibtn', title: 'Settings', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>', onclick: () => pvxToggleSettings() }),
             h('button', { type: 'button', class: 'pvx-ibtn pvx-close', title: 'Close (Esc)', html: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>', onclick: () => pvxClose() }),
@@ -89,13 +90,14 @@ function pvxOpen(pid, hint, opts = {}) {
     els.pager = h('div', { class: 'pvx-pager' });
     els.pager.addEventListener('click', pvxOnPagerClick);
     els.settings = h('div', { class: 'pvx-settings pvx-panel', hidden: true });
-    els.list = h('div', { class: 'pvx-listpanel pvx-panel', hidden: true });   // full Tags / Stars / … list
+    els.list = h('div', { class: 'pvx-listpanel pvx-panel', hidden: true });
+    els.dlg = h('div', { class: 'pvx-settings pvx-panel pvd-dialog', hidden: true });   // "Download videos"    // full Tags / Stars / … list
     els.pop = h('div', { class: 'pvx-pop', hidden: true });                    // hover preview of a dropdown
     els.pop.addEventListener('mouseenter', () => clearTimeout(PV._popHide));
     els.pop.addEventListener('mouseleave', () => pvxHidePopSoon());
     els.pop.addEventListener('click', pvxOnBodyClick);
 
-    const modal = h('div', { class: 'pvx-modal' }, head, toolbar, els.loadbar, els.body, els.pager, els.settings, els.list);
+    const modal = h('div', { class: 'pvx-modal' }, head, toolbar, els.loadbar, els.body, els.pager, els.settings, els.list, els.dlg);
     root.append(modal, els.pop);
     modal.addEventListener('click', pvxOnBodyClick);   // tag / star / uploader filters + table sort, anywhere in the popup
     // Keys typed inside the popup run their own handlers first, then stop here so the site's shortcuts don't fire.
@@ -700,6 +702,7 @@ function pvxOnKey(e) {
         e.stopPropagation();
         if (!PV.els.pop.hidden) pvxHidePop();
         else if (!PV.els.list.hidden) pvxCloseList();
+        else if (!PV.els.dlg.hidden) pvdToggleDialog(false);
         else if (!PV.els.settings.hidden) pvxToggleSettings(false);
         else if (typing && e.target === PV.els.search && PV.els.search.value) pvxSetQuery('');
         else pvxClose();
@@ -720,7 +723,7 @@ function pvxOnKey(e) {
 function pvxToggleSettings(show) {
     const panel = PV.els.settings;
     show = show ?? panel.hidden;
-    if (show) { pvxCloseList(); pvxHidePop(); }
+    if (show) { pvxCloseList(); pvxHidePop(); if (!PV.els.dlg.hidden) pvdToggleDialog(false); }
     panel.hidden = !show;
     PV.els.gear.classList.toggle('is-on', show);
     if (show) pvxBuildSettings();

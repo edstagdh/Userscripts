@@ -1,3 +1,20 @@
+## v1.9
+- Downloads now handle very large playlists: queuing 10,000+ videos is instant, and each status change saves ~20 KB instead of rewriting the whole queue (it was ~3 MB per change, several times per video).
+- Dead links are recognised before any download is attempted — the video was removed from the site, the site has no original file for it, or the file is gone from the site's storage — and get their own "Dead links" list. They take a moment instead of the full pause between files, and "Retry" leaves them out (↻ on a single one re-checks it).
+- Safety stops: 5 real failures in a row (connection lost, site down, signed out) pause the queue instead of marking everything as failed; 15 "no original file" answers in a row with nothing downloaded pause it too, in case the site changed. Resume continues.
+- Clear messages in the download window for empty playlists, playlists that are all dead links, and playlists where everything was already downloaded; while a playlist is still loading it says how many videos haven't been checked yet.
+- The finish notification and the panel show downloaded / dead links / failed / skipped separately.
+- If your setup refuses sub-folders, files are saved straight into the Downloads folder after the first attempt (and the panel says so) instead of trying the folder again for every file.
+
+## v1.8
+- Download a whole playlist: new download button in the viewer's header. Downloads the original uploaded files (looked up from the site's API for each video right before its turn — not the streaming version), strictly one file at a time.
+- Choose the whole playlist or just the current search results; skip videos you already downloaded from that playlist; save into a folder named after the playlist; number files by playlist position (001 - …). Original file names are kept (made safe for Windows).
+- Downloads panel (bottom right, on every page of the site): current file with progress, overall progress, waiting / done / failed lists, Pause, Resume, Skip this file, Retry, Clear finished, Cancel all. It can be minimized to a small badge.
+- Leaving or closing the tab while it downloads asks for confirmation first. If the tab is closed anyway, the queue is kept and pauses; press Resume (in any tab) to continue.
+- Only one download runs at any time, even with several pmvhaven tabs open; the other tabs show the progress.
+- Clear messages when Tampermonkey's download settings block a file (the queue pauses until fixed), and a notification when everything is done.
+- Requires Tampermonkey's downloads. For big files (often 1–2 GB) set Dashboard → Settings → Downloads → Download Mode to "Browser API"; the download window warns you if it isn't.
+
 ## v1.7
 - Like / dislike / follow moved next to the playlist's title (left side) and now look like the Details / Tags / Stars buttons, so nothing overlaps at higher browser zoom (e.g. 120%).
 - The header adapts to narrow windows and browser zoom: the filter buttons wrap onto the next line instead of being cut off, and "Open playlist" becomes an icon button.
