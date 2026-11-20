@@ -1,7 +1,7 @@
 /* ThePornDB - Enhanced Search Results — stylesheet
  * Loaded by tpdb_enhanced_search_results.user.js via @resource TPDB_STYLES.
  * The grid card minimum width comes from --tpdb-card-min, set on :root by the userscript.
- * Version 3.1
+ * Version 3.2
  */
 
 :root { --tpdb-card-min: 280px; }
@@ -62,6 +62,26 @@ div.grid.grid-cols-scene-card img[style*="object-fit"] {
 }
 .tpdb-copy-btn:hover { background: #FF4757; }
 .tpdb-copy-btn.busy { opacity: 0.4; pointer-events: none; }
+
+/* ===== Site Table mode: kebab menu (Actions column) + Performers button ===== */
+.tpdb-kebab {
+    width: 100%; height: 26px; margin-top: 2px; border: 1px solid #888; border-radius: 6px;
+    background: #222; color: #fff; font-size: 18px; font-weight: bold; line-height: 1; cursor: pointer;
+}
+.tpdb-kebab:hover { background: #FF4757; }
+.tpdb-kebab.busy { opacity: 0.4; pointer-events: none; }
+#tpdb-kebab-menu {
+    position: fixed; z-index: 10002; display: none; min-width: 250px; padding: 4px 0;
+    background: #1e2327; border: 1px solid #3a4550; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-family: "Segoe UI", Arial, sans-serif;
+}
+#tpdb-kebab-menu button {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 14px;
+    background: none; border: none; color: #e5e7eb; font-size: 14px; text-align: left; cursor: pointer;
+}
+#tpdb-kebab-menu button:hover { background: #7e22ce; color: #fff; }
+.tpdb-kebab-icon { width: 22px; text-align: center; font-size: 16px; }
+td[data-col-key="performers"] .tpdb-perf-btn { width: 26px; height: 26px; font-size: 18px; margin-top: 4px; }
 
 /* ===== Hide images (panic) ===== */
 body.tpdb-hide-images img { display: none !important; }

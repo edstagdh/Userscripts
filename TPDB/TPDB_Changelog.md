@@ -1,5 +1,10 @@
 # ThePornDB - Enhanced Search Results — Changelog
 
+## v3.2 - 2026-11-20
+- Site's own Table mode (Card/Table switch): hovering a scene image now shows the large preview, like in the grid.
+- Site's Table mode: added a ⋮ menu in the Actions column with the script's actions (copy UUID / URL / filename, external ID, site parents, open in background tab, collect).
+- Site's Table mode: the "Show Performers" button is now in the Performers column.
+
 ## v3.1 - 2026-11-20
 - Fixed the scene grid after the site redesign: cards now fill the row instead of stopping at 3 per row (5 per row at 1080p / 100% by default).
 - Added a "Set grid card minimum width (px)" menu command — smaller values fit more cards per row.

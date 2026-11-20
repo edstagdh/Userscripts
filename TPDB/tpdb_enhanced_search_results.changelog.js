@@ -1,7 +1,7 @@
 // ThePornDB - Enhanced Search Results — "What's New" popup (fetches TPDB_Changelog.md from GitHub)
 // Part of tpdb_enhanced_search_results.user.js, loaded via @require (runs before the main
 // script, in the same scope). Not a standalone userscript — install the .user.js.
-// Version 3.1
+// Version 3.2
 
 // Changelog is not stored inline — it's fetched on demand from TPDB_Changelog.md in this repo
 // folder, either when the version changes or when requested via the GM menu command.

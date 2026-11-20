@@ -1,17 +1,17 @@
 // ==UserScript==
 // @name         ThePornDB - Enhanced Search Results
 // @namespace    http://tampermonkey.net/
-// @version      3.1
-// @description  Table/grid toggle with lazy-loaded scene images, resizable columns, hide-images panic button, hover preview, custom action buttons, adjustable grid card width, Tampermonkey settings menu & changelog popup - REQUIRES API KEY (set via the Tampermonkey menu).
+// @version      3.2
+// @description  Table/grid toggle with lazy-loaded scene images, resizable columns, hide-images panic button, hover preview, custom action buttons (plus a kebab menu in the site's Table mode), adjustable grid card width, Tampermonkey settings menu & changelog popup - REQUIRES API KEY (set via the Tampermonkey menu).
 // @author       edstagdh
 // @match        https://theporndb.net/*
 // @icon         https://theporndb.net/favicon-16x16.png
 // @noframes
 // @installURL   https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.user.js
 // @updateURL    https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.user.js
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.table.js?v=3.1
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.changelog.js?v=3.1
-// @resource     TPDB_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.styles.css?v=3.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.table.js?v=3.2
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.changelog.js?v=3.2
+// @resource     TPDB_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/TPDB/tpdb_enhanced_search_results.styles.css?v=3.2
 // @grant        GM_addStyle
 // @grant        GM_getResourceText
 // @grant        GM_openInTab
@@ -28,7 +28,8 @@
 
 // Code is split across files (all in TPDB/, cached by Tampermonkey, refreshed on each
 // version bump through the ?v= on their URLs):
-//   tpdb_enhanced_search_results.table.js       toolbar (Hide Images / Table View) + table view
+//   tpdb_enhanced_search_results.table.js       toolbar (Hide Images / Table View) + our table view,
+//                                               and action buttons / kebab menu in the site's own Table mode
 //   tpdb_enhanced_search_results.changelog.js   "What's New" popup (fetches TPDB_Changelog.md)
 //   tpdb_enhanced_search_results.styles.css     all CSS
 // When bumping @version, update the ?v= on those @require / @resource lines too.
@@ -39,7 +40,7 @@ const LOG_PREFIX = '[TPDB+]';
 // --------------------
 // VERSION
 // --------------------
-const SCRIPT_VERSION = '3.1';
+const SCRIPT_VERSION = '3.2';
 
 // --------------------
 // CONSTANTS
@@ -50,6 +51,8 @@ const SITE_ORIGIN = 'https://theporndb.net';
 const GRID_SEL = 'div.grid.grid-cols-scene-card';
 const CARD_SEL = 'div.relative.group';
 const GRID_IMG_SEL = `${GRID_SEL} img[style*="object-fit"]`; // scene images only (not site logos)
+const SITE_TABLE_SEL = 'div.n-data-table';                     // the site's own Table mode (Card/Table switch)
+const SITE_TABLE_IMG_SEL = `${SITE_TABLE_SEL} td[data-col-key="image"] img`;
 const SCENE_CACHE_TTL_MS = 60_000;
 const MAX_SITE_DEPTH = 10;
 
@@ -297,7 +300,7 @@ function buildFilename(scene) {
 // Each action: icon, tooltip, and an async run(slug) that throws on failure.
 const ACTIONS = [
     {
-        icon: '⧉', title: 'Copy UUID',
+        id: 'uuid', icon: '⧉', title: 'Copy UUID',
         run: async (slug) => {
             const s = await fetchScene(slug);
             if (!s.id) throw new Error('Response missing data.id');
@@ -306,7 +309,7 @@ const ACTIONS = [
         },
     },
     {
-        icon: '🌐', title: 'Copy Scene URL',
+        id: 'url', icon: '🌐', title: 'Copy Scene URL',
         run: async (slug) => {
             const s = await fetchScene(slug);
             if (!s.url) throw new Error('Response missing data.url');
@@ -315,7 +318,7 @@ const ACTIONS = [
         },
     },
     {
-        icon: '🆔', title: 'Show External ID',
+        id: 'external_id', icon: '🆔', title: 'Show External ID',
         run: async (slug) => {
             const s = await fetchScene(slug);
             if (!s.external_id) throw new Error('Response missing data.external_id');
@@ -323,7 +326,7 @@ const ACTIONS = [
         },
     },
     {
-        icon: '👥', title: 'Show Performers',
+        id: 'performers', icon: '👥', title: 'Show Performers',
         run: async (slug) => {
             const s = await fetchScene(slug);
             if (!Array.isArray(s.performers) || !s.performers.length) throw new Error('No performers found in response');
@@ -339,7 +342,7 @@ const ACTIONS = [
         },
     },
     {
-        icon: '🌳', title: 'Show Site Parents',
+        id: 'site_parents', icon: '🌳', title: 'Show Site Parents',
         run: async (slug) => {
             const s = await fetchScene(slug);
             const names = await getSiteHierarchy(s);
@@ -347,7 +350,7 @@ const ACTIONS = [
         },
     },
     {
-        icon: '🔗', title: 'Open Scene URL (background tab)',
+        id: 'open', icon: '🔗', title: 'Open Scene URL (background tab)',
         run: async (slug) => {
             const s = await fetchScene(slug);
             if (!s.url) throw new Error('Response missing data.url');
@@ -357,7 +360,7 @@ const ACTIONS = [
         },
     },
     {
-        icon: '★', title: 'Collect / Uncollect Scene',
+        id: 'collect', icon: '★', title: 'Collect / Uncollect Scene',
         run: async (slug) => {
             const s = await fetchScene(slug);
             if (!s._id) throw new Error('Scene JSON missing data._id');
@@ -374,7 +377,7 @@ const ACTIONS = [
         },
     },
     {
-        icon: '🗎', title: 'Copy Filename',
+        id: 'filename', icon: '🗎', title: 'Copy Filename',
         run: async (slug) => {
             const s = await fetchScene(slug);
             const { filename, warning } = buildFilename(s);
@@ -538,7 +541,7 @@ function initHoverPreview() {
     document.body.appendChild(box);
 
     const isTarget = (el) => el instanceof HTMLImageElement &&
-        (el.classList.contains('tpdb-thumb') || el.matches(GRID_IMG_SEL));
+        (el.classList.contains('tpdb-thumb') || el.matches(GRID_IMG_SEL) || el.matches(SITE_TABLE_IMG_SEL));
 
     const move = (x, y) => {
         const pad = 20;
@@ -576,6 +579,7 @@ function enhancePage() {
     unwrapGridImageLinks();
     addActionButtons();
     formatGridDates();
+    enhanceSiteTable();
 }
 
 let enhanceQueued = false;

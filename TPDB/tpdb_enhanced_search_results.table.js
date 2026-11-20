@@ -1,7 +1,107 @@
-// ThePornDB - Enhanced Search Results — toolbar (Hide Images / Table View) + table view
+// ThePornDB - Enhanced Search Results — toolbar (Hide Images / Table View) + our table view,
+// and our action buttons in the site's own Table mode (Card/Table switch)
 // Part of tpdb_enhanced_search_results.user.js, loaded via @require (runs before the main
 // script, in the same scope). Not a standalone userscript — install the .user.js.
-// Version 3.1
+// Version 3.2
+
+// ====================
+// SITE TABLE MODE — kebab (⋮) menu in the Actions column, Performers button in the Performers column
+// ====================
+let kebabMenuEl = null;
+let kebabMenuOwner = null; // the ⋮ button the open menu belongs to
+
+// Scene URL of a site-table row, read at click time (Vue may reuse <tr> elements across pages).
+function siteTableRowHref(el) {
+    return el.closest('tr')?.querySelector('td[data-col-key="title"] a')?.href || '';
+}
+
+function closeKebabMenu() {
+    if (!kebabMenuEl) return;
+    kebabMenuEl.style.display = 'none';
+    kebabMenuOwner = null;
+}
+
+function buildKebabMenu() {
+    const menu = ce('div');
+    menu.id = 'tpdb-kebab-menu';
+    ACTIONS.filter((a) => a.id !== 'performers').forEach((action) => {
+        const item = ce('button');
+        item.type = 'button';
+        item.innerHTML = `<span class="tpdb-kebab-icon">${esc(action.icon)}</span><span>${esc(action.title)}</span>`;
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const owner = kebabMenuOwner;
+            closeKebabMenu();
+            const href = owner && siteTableRowHref(owner);
+            if (href) runAction(action, owner, href);
+        });
+        menu.appendChild(item);
+    });
+    document.body.appendChild(menu);
+
+    // Close on outside click, Escape, scroll (page or the table's own scroller) and resize.
+    document.addEventListener('mousedown', (e) => {
+        if (kebabMenuOwner && !menu.contains(e.target) && e.target !== kebabMenuOwner) closeKebabMenu();
+    }, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeKebabMenu(); });
+    window.addEventListener('scroll', closeKebabMenu, true);
+    window.addEventListener('resize', closeKebabMenu);
+    return menu;
+}
+
+function toggleKebabMenu(btn) {
+    if (!kebabMenuEl) kebabMenuEl = buildKebabMenu();
+    if (kebabMenuOwner === btn) return closeKebabMenu();
+
+    kebabMenuOwner = btn;
+    const menu = kebabMenuEl;
+    menu.style.display = 'block';
+    // Right-align under the button; flip above / clamp when it would leave the viewport.
+    const r = btn.getBoundingClientRect();
+    const pad = 8;
+    let left = r.right - menu.offsetWidth;
+    let top = r.bottom + 4;
+    if (top + menu.offsetHeight > window.innerHeight - pad) top = r.top - menu.offsetHeight - 4;
+    left = Math.min(Math.max(pad, left), window.innerWidth - menu.offsetWidth - pad);
+    menu.style.left = left + 'px';
+    menu.style.top = Math.max(pad, top) + 'px';
+}
+
+// Idempotent: checks each cell, so cells Vue re-renders get their buttons back.
+function enhanceSiteTable() {
+    const table = document.querySelector(SITE_TABLE_SEL);
+    if (!table) return;
+    const performersAction = ACTIONS.find((a) => a.id === 'performers');
+
+    table.querySelectorAll('td[data-col-key="actions"]').forEach((td) => {
+        if (td.querySelector('.tpdb-kebab')) return;
+        const btn = ce('button', 'tpdb-kebab');
+        btn.type = 'button';
+        btn.title = 'More actions';
+        btn.textContent = '⋮';
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleKebabMenu(btn);
+        });
+        (td.querySelector('div.flex.flex-col') || td).appendChild(btn);
+    });
+
+    table.querySelectorAll('td[data-col-key="performers"]').forEach((td) => {
+        if (!performersAction || td.querySelector('.tpdb-perf-btn')) return;
+        const btn = ce('div', 'tpdb-copy-btn tpdb-perf-btn');
+        btn.title = performersAction.title;
+        btn.textContent = performersAction.icon;
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const href = siteTableRowHref(btn);
+            if (href) runAction(performersAction, btn, href);
+        });
+        td.appendChild(btn);
+    });
+}
 
 const TABLE_COLUMNS = [
     ['Thumbnail', 100], ['Title', 260], ['Date (YYYY.MM.DD)', 80],
