@@ -1,0 +1,137 @@
+/* ThePornDB - Enhanced Search Results — stylesheet
+ * Loaded by tpdb_enhanced_search_results.user.js via @resource TPDB_STYLES.
+ * The grid card minimum width comes from --tpdb-card-min, set on :root by the userscript.
+ * Version 3.1
+ */
+
+:root { --tpdb-card-min: 280px; }
+
+/* ===== Scene grid: responsive columns =====
+ * The site gives every card a fixed width (.w-scene-card) inside .grid-cols-scene-card,
+ * which caps a 1080p / 100% screen at 3 cards per row. Let the columns fill the available
+ * width instead (as many as fit at --tpdb-card-min) and let each card stretch to its column. */
+div.grid.grid-cols-scene-card {
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--tpdb-card-min), 100%), 1fr)) !important;
+    justify-items: stretch !important;
+}
+div.grid.grid-cols-scene-card > div.relative.group,
+div.grid.grid-cols-scene-card > .w-scene-card {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+}
+
+/* ===== Titles / layout ===== */
+h2.p-3.text-xl a {
+    font-weight: bold !important; color: #fff !important; font-size: 1em !important;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.6);
+    font-family: "Segoe UI", "Arial Black", sans-serif !important;
+}
+h2.p-3.text-xl a:hover { color: #FF4757 !important; text-decoration: underline !important; }
+h2.p-3.text-xl.truncate, h2.p-3.text-xl.truncate a,
+div.flex.truncate, div.flex.truncate span {
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+    max-width: none !important; display: block !important;
+}
+div.grid.grid-cols-scene-card div.flex.truncate { display: inline-flex !important; align-items: center !important; gap: 4px !important; }
+div.grid.grid-cols-scene-card div.flex.truncate span { display: inline !important; }
+div.grid.grid-cols-scene-card div.p-3.border-t a span { font-weight: bold !important; font-size: 16px !important; }
+
+/* ===== Grid images: contain instead of cover ===== */
+div.grid.grid-cols-scene-card img[style*="object-fit"] {
+    object-fit: contain !important; background-color: #000;
+    height: 200px !important; width: 100% !important; display: block; margin: 0 auto;
+}
+
+/* ===== Toolbar ===== */
+.tpdb-toolbar { margin: 10px 0; }
+.tpdb-toolbar button {
+    margin-right: 8px; padding: 6px 12px; background: #d9534f; color: #fff;
+    border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
+}
+.tpdb-toolbar button.is-on { background: #0275d8; }
+.tpdb-toolbar button.tpdb-table-btn { background: #5cb85c; }
+.tpdb-toolbar button.tpdb-table-btn.is-on { background: #f0ad4e; }
+
+/* ===== Action buttons ===== */
+.tpdb-btn-container { display: flex; flex-wrap: wrap; margin-left: 6px; gap: 5px; }
+.tpdb-copy-btn {
+    width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid #888; border-radius: 3px; background: #222; color: #fff;
+    font-size: 30px; cursor: pointer; user-select: none;
+}
+.tpdb-copy-btn:hover { background: #FF4757; }
+.tpdb-copy-btn.busy { opacity: 0.4; pointer-events: none; }
+
+/* ===== Hide images (panic) ===== */
+body.tpdb-hide-images img { display: none !important; }
+body.tpdb-hide-images div.relative { min-height: 3rem !important; }
+
+/* ===== Table view ===== */
+#tpdb-table-view table { width: 100%; border-collapse: collapse; font-size: 18px; table-layout: fixed; }
+#tpdb-table-view th, #tpdb-table-view td {
+    padding: 6px 8px; border-bottom: 1px solid #ccc; word-wrap: break-word;
+    white-space: normal; vertical-align: top; position: relative;
+}
+#tpdb-table-view th { background: #333; color: #fff; text-align: left; user-select: none; font-weight: bold !important; }
+.col-resizer { position: absolute; top: 0; right: 0; width: 5px; height: 100%; cursor: col-resize; user-select: none; }
+.tpdb-thumb { width: 200px; transition: opacity 0.25s ease-in-out; cursor: zoom-in; }
+.tpdb-site-link { color: #1E90FF; text-decoration: none; font-weight: bold; }
+.tpdb-performer {
+    padding: 2px 6px; border-radius: 3px; display: inline-flex; align-items: center;
+    font-size: 16px; font-weight: bold; margin: 0 2px 2px 0; white-space: nowrap;
+}
+.tpdb-performer span { margin-left: 2px; }
+
+/* ===== Hover preview ===== */
+#tpdb-preview-box {
+    position: fixed; pointer-events: none; z-index: 9999; display: none;
+    border: 2px solid #333; background: #fff; padding: 5px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+#tpdb-preview-box img { max-width: 900px; max-height: 700px; display: block; }
+
+/* ===== Toasts ===== */
+#tpdb-toast-container {
+    position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex;
+    flex-direction: column; gap: 10px; align-items: flex-end; pointer-events: none;
+}
+.tpdb-toast {
+    background: #1a1a1a; color: #ffa500; padding: 16px 20px; border-radius: 10px;
+    font-size: 16px; font-weight: 700; line-height: 1.4; min-width: 280px; max-width: 1000px;
+    border: 2px solid #ffa500; box-shadow: 0 6px 18px rgba(255, 165, 0, 0.35);
+    white-space: pre-line; word-break: break-word; overflow-wrap: break-word;
+    opacity: 0; transform: translateY(10px); transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.tpdb-toast.show { opacity: 1; transform: translateY(0); }
+.tpdb-toast-error { color: #ff6b6b; border-color: #ff6b6b; box-shadow: 0 6px 18px rgba(255, 107, 107, 0.35); }
+
+/* ===== Changelog modal ===== */
+.tpdb_cl_modal {
+    position: fixed; inset: 0; z-index: 10001; background: rgba(0, 0, 0, 0.7);
+    display: flex; align-items: center; justify-content: center;
+}
+.tpdb_cl_hidden { display: none !important; }
+.tpdb_cl_box {
+    background: #1e2327; color: #e5e7eb; width: min(640px, 92vw); max-height: 80vh;
+    display: flex; flex-direction: column; border-radius: 10px; border: 1px solid #3a4550;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); font-family: "Segoe UI", Arial, sans-serif;
+}
+.tpdb_cl_header { display: flex; justify-content: space-between; align-items: flex-start; padding: 16px 20px; border-bottom: 1px solid #3a4550; }
+.tpdb_cl_header h2 { margin: 0; font-size: 20px; color: #fff; }
+.tpdb_cl_subtitle { font-size: 12px; color: #9ca3af; }
+.tpdb_cl_close { background: none; border: none; color: #9ca3af; font-size: 18px; cursor: pointer; }
+.tpdb_cl_close:hover { color: #fff; }
+.tpdb_cl_body { padding: 16px 20px; overflow-y: auto; }
+.tpdb_cl_version + .tpdb_cl_version { margin-top: 18px; }
+.tpdb_cl_version_title { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.tpdb_cl_badge { background: #7e22ce; color: #fff; padding: 2px 10px; border-radius: 12px; font-weight: 700; font-size: 13px; }
+.tpdb_cl_date { color: #9ca3af; font-size: 12px; }
+.tpdb_cl_version ul { margin: 0; padding-left: 20px; }
+.tpdb_cl_version li { margin: 4px 0; font-size: 14px; line-height: 1.4; }
+.tpdb_cl_update { background: #3b2f0b; border: 1px solid #f0ad4e; color: #fcd34d; padding: 8px 12px; border-radius: 6px; margin-bottom: 14px; font-size: 13px; }
+.tpdb_cl_loading { color: #9ca3af; font-size: 14px; }
+.tpdb_cl_error { color: #ff6b6b; font-size: 14px; }
+.tpdb_cl_footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-top: 1px solid #3a4550; }
+.tpdb_cl_footer a { color: #60a5fa; font-size: 13px; text-decoration: none; }
+.tpdb_cl_btn { background: #7e22ce; color: #fff; border: none; border-radius: 6px; padding: 6px 16px; cursor: pointer; font-size: 14px; }
+.tpdb_cl_btn:hover { background: #9333ea; }
