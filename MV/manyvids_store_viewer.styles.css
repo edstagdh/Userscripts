@@ -1,5 +1,5 @@
 /* [ManyVids] Store Viewer — styles
-   Version 1.0
+   Version 1.1
    #msv-fab = launcher button, #msv-root = viewer, #msv-dlg = details popup, #msvcl-* = What's New. */
 html.msv-noscroll, html.msv-noscroll body { overflow: hidden !important; }
 #msv-fab { position: fixed; right: 18px; bottom: 18px; z-index: 2147483000; background: #e9157c; color: #fff; border: 0; border-radius: 22px; padding: 10px 16px; font: 600 14px/1 system-ui, sans-serif; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,.4); }

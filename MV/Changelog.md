@@ -1,3 +1,6 @@
+## v1.1
+- Script files moved to the MV folder on GitHub: install, update, module and changelog links fixed.
+
 ## v1.0
 - First release: an "▦ All videos" button on creator store pages (/Profile/<id>/<name>/Store/Videos) opens a full-screen viewer with every video of the store.
 - Loads the full lists from the ManyVids API (regular videos, mobile/vertical videos and bundle membership) — no infinite scroll, nothing disappears.

@@ -1,11 +1,11 @@
 // [ManyVids] Store Viewer — "What's New" popup (fetches Changelog.md from GitHub)
 // Part of manyvids_store_viewer.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install manyvids_store_viewer.user.js.
-// Version 1.0
+// Version 1.1
 
 // Changelog is not stored inline — it's fetched on demand from Changelog.md in this repo
 // folder, either when the version changes or when requested via the GM menu command.
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/ManyVids_Store_Viewer/Changelog.md';
+const CHANGELOG_URL = 'https://raw.githubusercontent.com/edstagdh/Userscripts/refs/heads/master/MV/Changelog.md';
 let changelogCache = null; // parsed [{version, changes:[...]}] once fetched this session
 
 // --------------------
@@ -95,7 +95,7 @@ function buildChangelogPopup(versionsToShow, errorMsg, updateAvailableVersion) {
             </div>
             <div class="msvcl-body">${bodyHtml}</div>
             <div class="msvcl-footer">
-                <a class="msvcl-github-link" href="https://github.com/edstagdh/Userscripts/tree/master/ManyVids_Store_Viewer" target="_blank" rel="noopener">&#128279; View on GitHub</a>
+                <a class="msvcl-github-link" href="https://github.com/edstagdh/Userscripts/tree/master/MV" target="_blank" rel="noopener">&#128279; View on GitHub</a>
                 <button type="button" class="msvcl-ok-btn">OK, got it</button>
             </div>
         </div>`;
