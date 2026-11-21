@@ -1,16 +1,16 @@
 // ==UserScript Module==
 // @name         [ManyVids] Store Viewer — API & loader
-// Version       1.1
+// Version       1.2
 // Part of manyvids_store_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
 /* Store lists from api.manyvids.com:
-     GET /profile/<id>/store/videos?…&limit=70&page=N  → {statusCode, statusMessage, data:[…], pagination:{…}}
+     GET /store/videos/<id>?…&limit=70&page=N  → {statusCode, statusMessage, data:[…], pagination:{total, currentPage, totalPages, nextPage?}}
        main list: sort=newest · mobile/vertical: &vertical=1 (not in the main list) · bundle members: bundle=true (subset of main)
      GET /store/video/<id> → full record (details popup)
    Requests go through the page's fetch with credentials (the API allows www.manyvids.com via CORS),
    GM_xmlhttpRequest as fallback. If the API can't be reached, the first page of each list embedded
-   in the page (Next.js flight data, SWR fallback) is used instead. */
+   in the page (Next.js flight data, SWR fallback — its cache keys read /profile/<id>/store/videos, which is NOT the API path) is used instead. */
 
 function msvParseUrl() {
   const m = location.pathname.match(/^\/Profile\/(\d+)\/([^/]+)\/Store\/Videos/i);
@@ -83,8 +83,8 @@ function msvSeed(profileId) {
 /* ---------- data: API ---------- */
 function msvApiBase() {
   try {
-    const u = performance.getEntriesByType('resource').map(e => e.name).find(n => /\/profile\/\d+\/store\/videos\?/.test(n));
-    if (u) return u.slice(0, u.indexOf('/profile/'));
+    const u = performance.getEntriesByType('resource').map(e => e.name).find(n => /\/store\/videos\/\d+\?/.test(n));
+    if (u) return u.slice(0, u.indexOf('/store/videos/'));
   } catch (e) { /* ignore */ }
   return MSV_DEFAULT_API;
 }
@@ -130,7 +130,7 @@ async function msvFetchList(base, profileId, query, token) {
   const all = [];
   for (let page = 1; page <= MSV_MAX_PAGES; page++) {
     if (token !== MSV.loadToken) throw new Error('cancelled');
-    const json = await msvGet(`${base}/profile/${profileId}/store/videos?${query}&limit=${MSV_LIMIT}&page=${page}`);
+    const json = await msvGet(`${base}/store/videos/${profileId}?${query}&limit=${MSV_LIMIT}&page=${page}`);
     const { items, pag } = msvPageOf(json);
     all.push(...items);
     msvStatus(`Loading… ${MSV.items.length + all.length} videos`);

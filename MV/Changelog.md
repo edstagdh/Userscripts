@@ -1,3 +1,6 @@
+## v1.2
+- Fixed: the full video lists failed to load (HTTP 404) and only the first page of each list was shown. The viewer now uses the correct store address and loads every page of regular and mobile videos.
+
 ## v1.1
 - Script files moved to the MV folder on GitHub: install, update, module and changelog links fixed.
 

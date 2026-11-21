@@ -1,17 +1,17 @@
 // ==UserScript==
 // @name         [ManyVids] Store Viewer
 // @namespace    edstagdh.manyvids.store.viewer
-// @version      1.1
+// @version      1.2
 // @description  Adds an "All videos" button to creator store pages: every video (regular + mobile) in one popup — 5-per-row grid with full titles and uncropped thumbnails, or a sortable table, with filters and a per-video details popup.
 // @author       edstagdh
 // @match        https://www.manyvids.com/*
 // @match        https://manyvids.com/*
 // @icon         https://logos.manyvids.com/icon_public/favicon-32x32.png?v=4
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.api.js?v=1.1
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.views.js?v=1.1
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.modal.js?v=1.1
-// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.changelog.js?v=1.1
-// @resource     MSV_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.styles.css?v=1.1
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.api.js?v=1.2
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.views.js?v=1.2
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.modal.js?v=1.2
+// @require      https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.changelog.js?v=1.2
+// @resource     MSV_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/MV/manyvids_store_viewer.styles.css?v=1.2
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
@@ -35,7 +35,7 @@
      .changelog.js  "What's New" popup (Changelog.md on GitHub)
      .styles.css    all CSS (@resource MSV_STYLES) */
 
-const SCRIPT_VERSION = '1.1';
+const SCRIPT_VERSION = '1.2';
 const MSV_LIMIT = 70;
 const MSV_MAX_PAGES = 200;
 const MSV_DEFAULT_API = 'https://api.manyvids.com';

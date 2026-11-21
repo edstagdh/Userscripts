@@ -1,6 +1,6 @@
 // ==UserScript Module==
 // @name         [ManyVids] Store Viewer — popup
-// Version       1.1
+// Version       1.2
 // Part of manyvids_store_viewer.user.js (loaded via @require, shares its scope).
 // Top-level code only declares things; main-script helpers are used inside functions only.
 
