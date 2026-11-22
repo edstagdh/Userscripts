@@ -1,7 +1,7 @@
 /* [PBB] Cleaner Search — stylesheet
  * Loaded by pbb_cleaner_search.user.js via @resource PBB_STYLES.
  * The thumbnail size comes from --pbb-thumb-max, set on :root by the userscript.
- * Version 1.5
+ * Version 1.6
  */
 
 :root { --pbb-thumb-max: 350px; }
@@ -84,7 +84,7 @@ html.pbb-ar-lock, html.pbb-ar-lock body { overflow: hidden !important; }
 #pbb-ar-modal .pbb-card-cover { flex: 1 0 100%; }
 #pbb-ar-modal .pbb-card-cover img.pbb-thumb {
     width: 100% !important; max-width: 100% !important; height: 200px !important; max-height: 200px !important;
-    object-fit: cover; margin: 0; display: block !important;
+    object-fit: contain; background: rgba(128,128,128,.12); margin: 0; display: block !important;
 }
 #pbb-ar-modal .pbb-card-mini img.pbb-thumb {
     width: 52px !important; height: 52px !important; max-width: 52px !important; max-height: 52px !important;
@@ -100,6 +100,17 @@ html.pbb-ar-lock, html.pbb-ar-lock body { overflow: hidden !important; }
 #pbb-ar-modal .pbb-card-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 11px; }
 #pbb-ar-modal .pbb-card-tag { padding: 0 6px; line-height: 18px; border-radius: 3px; background: rgba(128,128,128,.2); }
 #pbb-ar-modal .pbb-card-meta { opacity: .65; margin-left: auto; }
+#pbb-ar-modal .pbb-card-desc { cursor: help; background: rgba(58,142,230,.2); }
+
+/* hover box: full image / description (below the Viewer.js lightbox) */
+#pbb-ar-modal .pbb-ar-hover {
+    position: fixed; z-index: 2010; pointer-events: none; padding: 4px;
+    background: #111; border: 1px solid #444; border-radius: 5px; box-shadow: 0 8px 30px rgba(0,0,0,.6);
+}
+#pbb-ar-modal .pbb-ar-hover img { display: block; max-width: min(900px, 55vw); max-height: 85vh; }
+#pbb-ar-modal .pbb-ar-hover.pbb-ar-hover-text {
+    max-width: min(460px, 80vw); padding: 8px 10px; color: #e8e8e8; font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+}
 #pbb-ar-modal .pbb-card-details { font-size: 11px; }
 #pbb-ar-modal .pbb-card-details summary { cursor: pointer; opacity: .8; }
 #pbb-ar-modal .pbb-card-text { margin-top: 4px; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; }

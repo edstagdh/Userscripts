@@ -4,7 +4,7 @@
 // in either form (00:02:42 / 2:42 / 2 min 42 s).
 // Part of pbb_cleaner_search.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install pbb_cleaner_search.user.js.
-// Version 1.5
+// Version 1.6
 //
 // Top-level code only declares things; anything from the main script is used inside functions.
 
@@ -129,6 +129,40 @@ function arTrimBreaks(el) {
     while (isGap(el.lastChild)) el.lastChild.remove();
 }
 
+// --------------------
+// Description — a "Description:" (or Plot / Synopsis / Story) section, or else the longest line
+// that reads like prose: 10+ words, few commas (tag lists have many), mostly lowercase words
+// (titles are Title Cased), no URL / "Label:" / "|" info line / file name, and not a repeat
+// of the post title.
+// --------------------
+const AR_DESC_LABEL = /^\s*(?:description|desc|plot|synopsis|story|summary)\s*[:：-]\s*(.*)$/i;
+const AR_INFO_LABEL = /^\s*[\w ]{2,20}\s*[:：]/; // "Title:", "Tags:", "Video:" …
+
+function arExtractDescription(text, subject) {
+    const lines = text.split('\n').map(l => l.replace(/\s+/g, ' ').trim());
+    for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(AR_DESC_LABEL);
+        if (!m) continue;
+        const parts = m[1] ? [m[1]] : [];
+        for (let j = i + 1; j < lines.length && lines[j] && !AR_INFO_LABEL.test(lines[j]) && !/https?:\/\//i.test(lines[j]); j++) parts.push(lines[j]);
+        if (parts.join(' ').trim()) return parts.join(' ').trim();
+    }
+    const subjWords = new Set(arNorm(subject).split(/\W+/).filter(Boolean));
+    let best = '';
+    lines.forEach(function (l) {
+        if (/https?:\/\/|www\./i.test(l) || l.includes('|') || AR_INFO_LABEL.test(l)) return;
+        if (/\.(mp4|mkv|avi|wmv|mov|rar|zip)\b/i.test(l)) return;
+        const words = l.split(' ').filter(w => /[a-z]/i.test(w));
+        if (words.length < 10) return;
+        if ((l.match(/,/g) || []).length > Math.max(2, words.length / 8)) return;            // tag list
+        if (words.filter(w => /^[A-Z]/.test(w)).length > words.length * 0.5) return;           // Title Case
+        if (!/[.,!?;]/.test(l) && words.length < 15) return;                                  // file-name-like
+        if (words.filter(w => subjWords.has(w.toLowerCase().replace(/\W+/g, ''))).length > words.length * 0.5) return; // repeats the title
+        if (l.length > best.length) best = l;
+    });
+    return best;
+}
+
 // One result per search hit: { topic, subject, date, postUrl, text, durations, body (post row copy) }
 function arExtractResults(doc) {
     const out = [];
@@ -148,6 +182,7 @@ function arExtractResults(doc) {
         out.push({
             topic: arNorm(link.textContent),
             subject,
+            description: arExtractDescription(text, subject),
             date: dateEl ? dateEl.textContent.trim() : '',
             postUrl: postLink ? new URL(postLink.getAttribute('href'), location.href).href : '',
             text,
@@ -216,6 +251,13 @@ function arBuildCard(r, pageNo) {
     addTag('Size', size ? size[1] + ' ' + size[2].toUpperCase() : '');
     const res = r.text.match(/\b(\d{3,4})\s*[x×]\s*(\d{3,4})\b/);
     addTag('Resolution', res ? res[1] + '×' + res[2] : '');
+    if (r.description) {
+        const d = document.createElement('span');
+        d.className = 'pbb-card-tag pbb-card-desc';
+        d.textContent = '📝 Description';
+        d.dataset.desc = r.description; // shown in the hover box
+        tags.appendChild(d);
+    }
     const meta = document.createElement('span');
     meta.className = 'pbb-card-meta';
     meta.textContent = (r.date ? r.date + ' · ' : '') + 'p' + pageNo;
@@ -280,6 +322,7 @@ function arBuildPopup() {
                 <div class="pbb-ar-list"></div>
                 <div class="pbb-ar-empty" hidden>No results match the filter.</div>
             </div>
+            <div class="pbb-ar-hover" hidden></div>
             <div class="pbb-ar-footer">
                 <span class="pbb-ar-status"></span>
                 <span class="pbb-ar-actions">
@@ -302,8 +345,72 @@ function arBuildPopup() {
     filter.addEventListener('input', function () { clearTimeout(t); t = setTimeout(arApplyFilters, 200); });
     mode.addEventListener('change', function () { GM_setValue('AR_FILTER_MODE', mode.value); arApplyFilters(); });
 
+    arInitHover(wrap);
     document.body.appendChild(wrap);
     return wrap;
+}
+
+// --------------------
+// Hover box: full image for card images, text for the description badge
+// --------------------
+function arInitHover(wrap) {
+    const box = wrap.querySelector('.pbb-ar-hover');
+    const grid = wrap.querySelector('.pbb-ar-grid');
+    let target = null, timer = null, lastX = 0, lastY = 0;
+
+    const place = function () {
+        if (box.hidden) return;
+        const pad = 16, w = box.offsetWidth, h = box.offsetHeight;
+        let x = lastX + pad, y = lastY + pad;
+        if (x + w > innerWidth - 8) x = Math.max(8, lastX - pad - w);
+        if (y + h > innerHeight - 8) y = Math.max(8, innerHeight - 8 - h);
+        box.style.left = x + 'px';
+        box.style.top = y + 'px';
+    };
+    const hide = function () {
+        clearTimeout(timer);
+        target = null;
+        box.hidden = true;
+        box.textContent = '';
+    };
+    const show = function (el) {
+        box.textContent = '';
+        box.classList.toggle('pbb-ar-hover-text', !!el.dataset.desc);
+        if (el.dataset.desc) {
+            box.textContent = el.dataset.desc;
+        } else {
+            const im = document.createElement('img');
+            im.addEventListener('load', place);
+            im.src = el.currentSrc || el.src; // already loaded: shows at once
+            box.appendChild(im);
+            // then the full-size image, if the host allows it
+            if (!newTabLinkFor(el)) {
+                const full = fullImageCandidates(el)[0];
+                if (full && full !== im.src) {
+                    const pre = new Image();
+                    pre.onload = function () { if (target === el) im.src = full; };
+                    pre.src = full;
+                }
+            }
+        }
+        box.hidden = false;
+        place();
+    };
+
+    grid.addEventListener('mouseover', function (e) {
+        const el = e.target.closest('.pbb-card-imgs img.pbb-thumb, .pbb-card-desc');
+        if (!el || el === target) return;
+        hide();
+        target = el;
+        timer = setTimeout(function () { if (target === el) show(el); }, 150);
+    });
+    grid.addEventListener('mouseout', function (e) {
+        if (target && !target.contains(e.relatedTarget)) hide();
+    });
+    grid.addEventListener('mousemove', function (e) { lastX = e.clientX; lastY = e.clientY; place(); });
+    grid.addEventListener('mousedown', hide); // clicking opens the preview
+    wrap.querySelector('.pbb-ar-body').addEventListener('scroll', hide, { passive: true });
+    wrap.arHideHover = hide;
 }
 
 function arSetView(view) {
@@ -343,6 +450,7 @@ function arClose() {
     if (!arState) return;
     arState.open = false;
     arState.running = false; // pause; "Load next" continues from where it stopped
+    arState.el.arHideHover();
     arState.el.classList.remove('active');
     document.documentElement.classList.remove('pbb-ar-lock');
     arUpdateUI();

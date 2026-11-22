@@ -4,6 +4,11 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry, newest first.
 
+## v1.6
+- Grid view: cover images are no longer cropped — the whole image is shown inside the card.
+- Hover over any image in a card to see it large (the full-size image when the host allows it).
+- Posts with a description get a "📝 Description" badge; hover it to read the text. It uses a "Description:" section when there is one, otherwise the post's longest sentence-like line (not titles, tag lists, file names or tech info).
+
 ## v1.5
 - All results now fills the whole window.
 - New grid view (default): one card per post with the cover image, a few smaller images, the post title (opens the post in a new tab), and its duration, size, resolution and date. "Post text & links" folds out the full post text with its download links. Switch between Grid and List at the top; the choice is remembered.

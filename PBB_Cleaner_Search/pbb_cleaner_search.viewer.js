@@ -1,7 +1,7 @@
 // [PBB] Cleaner Search — click-to-preview lightbox (Viewer.js)
 // Part of pbb_cleaner_search.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install pbb_cleaner_search.user.js.
-// Version 1.5
+// Version 1.6
 //
 // Top-level code only declares things; anything from the main script is used inside functions.
 
