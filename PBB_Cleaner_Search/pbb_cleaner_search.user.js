@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name        [PBB] Cleaner Search
-// @description Shrinks post images on PBB search results to small thumbnails (max 350×350) with a click-to-preview lightbox, and auto-collapses results whose topic name matches your keywords.
+// @description Shrinks post images on PBB search results to small thumbnails (max 350×350) with a click-to-preview lightbox, auto-collapses results whose topic name matches your keywords, and can load every results page into one list.
 // @namespace   https://github.com/edstagdh/Userscripts
-// @version     1.3
+// @version     1.4
 // @author      edstagdh
 // @match       *://pornbb.org/*
 // @match       *://*.pornbb.org/*
@@ -10,10 +10,11 @@
 // @updateURL   https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PBB_Cleaner_Search/pbb_cleaner_search.user.js
 // @installURL  https://github.com/edstagdh/Userscripts/raw/refs/heads/master/PBB_Cleaner_Search/pbb_cleaner_search.user.js
 // @require     https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.7/viewer.min.js
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.viewer.js?v=1.3
-// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.changelog.js?v=1.3
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.viewer.js?v=1.4
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.allresults.js?v=1.4
+// @require     https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.changelog.js?v=1.4
 // @resource    VIEWER_CSS https://cdnjs.cloudflare.com/ajax/libs/viewerjs/1.11.7/viewer.min.css
-// @resource    PBB_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.styles.css?v=1.3
+// @resource    PBB_STYLES https://raw.githubusercontent.com/edstagdh/Userscripts/master/PBB_Cleaner_Search/pbb_cleaner_search.styles.css?v=1.4
 // @grant       GM_addStyle
 // @grant       GM_getResourceText
 // @grant       GM_setValue
@@ -29,6 +30,7 @@
 // Code is split across files (all in PBB_Cleaner_Search/, cached by Tampermonkey, refreshed
 // on each version bump through the ?v= on their URLs):
 //   pbb_cleaner_search.viewer.js      full-size URL rules + Viewer.js lightbox (click to preview)
+//   pbb_cleaner_search.allresults.js  "All results" popup (loads every results page into one list)
 //   pbb_cleaner_search.changelog.js   "What's New" popup (fetches Changelog.md from GitHub)
 //   pbb_cleaner_search.styles.css     all CSS
 // When bumping @version, update the ?v= on those @require / @resource lines too.
@@ -39,7 +41,7 @@ const LOG_PREFIX = '[PBB-CS]';
 // --------------------
 // VERSION
 // --------------------
-const SCRIPT_VERSION = '1.3';
+const SCRIPT_VERSION = '1.4';
 
 // --------------------
 // SETTINGS (changed from the Tampermonkey menu)
@@ -83,6 +85,10 @@ function markImage(img) {
     img.removeAttribute('width');
     img.removeAttribute('height');
     img.classList.add('pbb-thumb');
+    if (newTabLinkFor(img)) { // host blocks hotlinking: a click opens its page in a new tab
+        img.classList.add('pbb-thumb-ext');
+        img.title = 'Opens on the image host in a new tab';
+    }
     // Leave smilies and other tiny images alone
     const checkTiny = function () {
         if (img.naturalWidth && img.naturalWidth < 40 && img.naturalHeight < 40) img.classList.remove('pbb-thumb');
@@ -168,7 +174,9 @@ function registerMenu() {
         if (v === null) return;
         GM_setValue('COLLAPSE_KEYWORDS', v.split(',').map(s => s.trim()).filter(Boolean));
         applyCollapse();
+        refreshAllResultsFilter();
     });
+    GM_registerMenuCommand('📚 View all results', openAllResults);
     GM_registerMenuCommand('🖼 Thumbnail max size…', function () {
         const v = prompt('Maximum thumbnail width/height in pixels (50–2000):', getThumbMax());
         if (v === null) return;
@@ -189,6 +197,7 @@ function registerMenu() {
     markAllImages(document);
     initViewer();
     applyCollapse();
+    initAllResults();
     checkVersionAndShowChangelog();
     console.log(`${LOG_PREFIX} v${SCRIPT_VERSION} ready`);
 })();

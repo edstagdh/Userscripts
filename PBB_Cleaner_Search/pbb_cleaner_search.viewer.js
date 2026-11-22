@@ -1,7 +1,7 @@
 // [PBB] Cleaner Search — click-to-preview lightbox (Viewer.js)
 // Part of pbb_cleaner_search.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install pbb_cleaner_search.user.js.
-// Version 1.3
+// Version 1.4
 //
 // Top-level code only declares things; anything from the main script is used inside functions.
 
@@ -18,6 +18,8 @@ const pbbResolvedUrl = new Map();
 //   re: matched against the thumbnail's src;  to(m, href): returns the full-size URL, or an
 //   array of URLs to try in order (m = regex match, href = the link the thumbnail is wrapped
 //   in, or ''). First matching rule wins. If every URL fails, the thumbnail is shown.
+//   openLink: true instead of `to` = the host blocks hotlinking of full-size images, so a click
+//   opens the thumbnail's link (the host's own page) in a new tab instead of the preview.
 const FULL_SIZE_RULES = [
     {   // pixhost: t3.pixhost.cc/thumbs/X/Y.jpg -> img3.pixhost.cc/images/X/Y.jpg
         host: 'pixhost',
@@ -29,15 +31,11 @@ const FULL_SIZE_RULES = [
         re: /^(https?:\/\/(?:image\.)?imx\.to\/u)\/t\/(.+)$/,
         to: m => `${m[1]}/i/${m[2]}`,
     },
-    {   // imagetwist: imgNN.imagetwist.com/th/DIR/ID.jpg -> imgNN.imagetwist.com/i/DIR/ID.jpg/<original file name>
-        // The original file name comes from the link around the thumbnail: imagetwist.com/ID/<name>.
-        // Without such a link, fall back to the name "ID.jpg".
+    {   // imagetwist: only thumbnails (imgNN.imagetwist.com/th/…) may be hotlinked; the full-size
+        // image shows a "hotlinking disabled" placeholder. Open the image's imagetwist page instead.
         host: 'imagetwist',
-        re: /^(https?:\/\/img\d+\.imagetwist\.com)\/th\/(\d+)\/((\w+)\.\w+)$/,
-        to: (m, href) => {
-            const link = href.match(/^https?:\/\/(?:www\.)?imagetwist\.com\/\w+\/([^/?#]+)$/i);
-            return `${m[1]}/i/${m[2]}/${m[3]}/${link ? link[1] : m[3]}`;
-        },
+        re: /^https?:\/\/img\d+\.imagetwist\.com\/th\//,
+        openLink: true,
     },
     {   // picstate: picstate.com/thumbs/small/ID_HASH/NAME.jpg -> picstate.com/files/ID_HASH/NAME.jpg
         // (any thumbnail size folder, not only "small")
@@ -64,7 +62,7 @@ function fullImageCandidates(img) {
 
     for (const rule of FULL_SIZE_RULES) {
         const m = src.match(rule.re);
-        if (m) { list = [].concat(rule.to(m, href)); break; }
+        if (m) { if (rule.to) list = [].concat(rule.to(m, href)); break; }
     }
     // Link points straight at an image file on an image server
     if (!list.length && href && /\.(jpe?g|png|gif|webp)(\?.*)?$/i.test(href) && /^https?:\/\/(img|image|i)\d*[.-]/i.test(href)) {
@@ -76,6 +74,15 @@ function fullImageCandidates(img) {
     return known ? [known] : list;
 }
 
+// The link to open in a new tab instead of previewing, or '' (see openLink above)
+function newTabLinkFor(img) {
+    const a = img.closest('a');
+    if (!a || !a.href) return '';
+    const src = img.currentSrc || img.src || '';
+    const rule = FULL_SIZE_RULES.find(r => r.re.test(src));
+    return rule && rule.openLink ? a.href : '';
+}
+
 function postTitleFor(post) {
     const box = post.closest('.postbody') || post;
     const subj = box.querySelector('.search-post-subj a');
@@ -85,7 +92,7 @@ function postTitleFor(post) {
 }
 
 function buildGallery(post) {
-    const thumbs = Array.from(post.querySelectorAll('img.pbb-thumb'));
+    const thumbs = Array.from(post.querySelectorAll('img.pbb-thumb')).filter(t => !newTabLinkFor(t));
     const store = document.createElement('div');
     store.className = 'pbb-viewer-store';
     const title = postTitleFor(post);
@@ -168,6 +175,8 @@ function initViewer() {
         if (!img) return;
         e.preventDefault();
         e.stopPropagation();
-        openViewerFor(img);
+        const ext = newTabLinkFor(img);
+        if (ext) window.open(ext, '_blank', 'noopener');
+        else openViewerFor(img);
     }, true);
 }

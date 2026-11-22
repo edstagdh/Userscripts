@@ -4,6 +4,12 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry, newest first.
 
+## v1.4
+- New: "View all results in one list" button above the search results (also in the Tampermonkey menu). It opens a popup that loads every page of the search into one scrollable list, one page at a time with a short pause between pages so the site doesn't rate-limit you. Results appear as each page arrives.
+- The popup stops every 10 pages; click "Load next pages" to continue. Stop pauses at any time, and closing the popup pauses too — reopening keeps what was already loaded. A page that fails is retried once, then a Retry button is shown.
+- Results whose topic name matches your collapse keywords are left out of the popup (the count is shown at the bottom). Images in the popup are thumbnails with the same click-to-preview, and load only when you scroll to them.
+- imagetwist: clicking a thumbnail now opens the image's imagetwist page in a new tab, because imagetwist blocks showing its full-size images on other sites (the preview only showed a "hotlinking disabled" placeholder). These images are skipped when browsing a post's images in the preview.
+
 ## v1.3
 - pimpandhost thumbnails (hosted on filesor.com) now open full-size in the preview (…/NAME_s.jpg, _m.jpg or _l.jpg → …/NAME.jpeg).
 - When a full-size address doesn't load, the preview now tries the other likely addresses for that host (e.g. .jpg / .png instead of .jpeg) before falling back to the thumbnail, and remembers the one that worked while the page is open.
