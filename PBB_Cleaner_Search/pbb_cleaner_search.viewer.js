@@ -1,7 +1,7 @@
 // [PBB] Cleaner Search — click-to-preview lightbox (Viewer.js)
 // Part of pbb_cleaner_search.user.js, loaded via @require (runs before the main script,
 // in the same scope). Not a standalone userscript — install pbb_cleaner_search.user.js.
-// Version 1.4
+// Version 1.5
 //
 // Top-level code only declares things; anything from the main script is used inside functions.
 
@@ -84,8 +84,8 @@ function newTabLinkFor(img) {
 }
 
 function postTitleFor(post) {
-    const box = post.closest('.postbody') || post;
-    const subj = box.querySelector('.search-post-subj a');
+    const box = post.closest('.postbody, .pbb-card') || post;
+    const subj = box.querySelector('.search-post-subj a, .pbb-card-title');
     if (subj) return subj.textContent.trim();
     const bold = post.querySelector('.bold');
     return bold ? bold.textContent.trim() : document.title;

@@ -4,6 +4,13 @@ Format: each version is a `## v<version>` heading followed by a bullet list of
 changes. The userscript parses this file directly, so keep that structure —
 one `##` heading per version, one `-` bullet per change entry, newest first.
 
+## v1.5
+- All results now fills the whole window.
+- New grid view (default): one card per post with the cover image, a few smaller images, the post title (opens the post in a new tab), and its duration, size, resolution and date. "Post text & links" folds out the full post text with its download links. Switch between Grid and List at the top; the choice is remembered.
+- The list view now shows only the posts — the topic line and the uploader column with its stats are gone.
+- New filter box: type one or more comma-separated keywords and choose "match all" or "match any". It searches the post title and text, and also applies to pages loaded later.
+- Durations match in any form: 00:02:42, 0:02:42, 2:42 and 2 min 42 s all find each other. A duration without seconds, like "2 min", matches anything from 2:00 to 2:59.
+
 ## v1.4
 - New: "View all results in one list" button above the search results (also in the Tampermonkey menu). It opens a popup that loads every page of the search into one scrollable list, one page at a time with a short pause between pages so the site doesn't rate-limit you. Results appear as each page arrives.
 - The popup stops every 10 pages; click "Load next pages" to continue. Stop pauses at any time, and closing the popup pauses too — reopening keeps what was already loaded. A page that fails is retried once, then a Retry button is shown.

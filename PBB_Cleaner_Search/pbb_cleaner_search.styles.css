@@ -1,7 +1,7 @@
 /* [PBB] Cleaner Search — stylesheet
  * Loaded by pbb_cleaner_search.user.js via @resource PBB_STYLES.
  * The thumbnail size comes from --pbb-thumb-max, set on :root by the userscript.
- * Version 1.4
+ * Version 1.5
  */
 
 :root { --pbb-thumb-max: 350px; }
@@ -40,29 +40,69 @@ img.pbb-thumb.pbb-thumb-ext { cursor: alias; }
 .pbb-btn:hover { background: rgba(128,128,128,.2); }
 .pbb-summary { margin: 4px 0 6px; font-size: 12px; opacity: .85; }
 
-/* ===== "All results" popup (below the Viewer.js lightbox, z-index 2015) ===== */
+/* ===== "All results" popup — fills the window, below the Viewer.js lightbox (z-index 2015) ===== */
 .pbb-ar-bar { margin: 4px 0 6px; }
 .pbb-ar-bar .pbb-btn { margin-left: 0; font-size: 12px; line-height: 22px; }
 html.pbb-ar-lock, html.pbb-ar-lock body { overflow: hidden !important; }
-#pbb-ar-backdrop { display: none; position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.6); }
+#pbb-ar-backdrop { display: none; position: fixed; inset: 0; z-index: 2000; }
 #pbb-ar-backdrop.active { display: block; }
-#pbb-ar-modal {
-    position: absolute; inset: 3vh 3vw; display: flex; flex-direction: column;
-    border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.6); overflow: hidden;
-}
+#pbb-ar-modal { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
 #pbb-ar-modal .pbb-ar-header, #pbb-ar-modal .pbb-ar-footer {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap;
     padding: 8px 12px; border-color: rgba(128,128,128,.4); border-style: solid; border-width: 0;
 }
 #pbb-ar-modal .pbb-ar-header { border-bottom-width: 1px; }
-#pbb-ar-modal .pbb-ar-footer { border-top-width: 1px; flex-wrap: wrap; }
+#pbb-ar-modal .pbb-ar-footer { border-top-width: 1px; }
 #pbb-ar-modal .pbb-ar-title { font-size: 14px; font-weight: bold; }
+#pbb-ar-modal .pbb-ar-controls { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: flex-end; flex-wrap: wrap; }
+#pbb-ar-modal .pbb-ar-controls .pbb-btn, #pbb-ar-modal .pbb-ar-actions .pbb-btn { margin-left: 0; font-size: 12px; line-height: 22px; }
+#pbb-ar-modal .pbb-ar-views { display: inline-flex; gap: 4px; }
+#pbb-ar-modal .pbb-btn.pbb-active { background: rgba(58,142,230,.25); border-color: #3a8ee6; }
+#pbb-ar-modal .pbb-ar-filter { width: min(420px, 100%); padding: 2px 8px; font-size: 12px; line-height: 20px; color: inherit; background: transparent; border: 1px solid rgba(128,128,128,.7); border-radius: 3px; }
+#pbb-ar-modal .pbb-ar-mode { font-size: 12px; padding: 2px 4px; color: inherit; background: transparent; border: 1px solid rgba(128,128,128,.7); border-radius: 3px; }
+#pbb-ar-modal .pbb-ar-mode option { color: #000; }
 #pbb-ar-modal .pbb-ar-status { font-size: 12px; opacity: .85; }
-#pbb-ar-modal .pbb-ar-actions .pbb-btn { font-size: 12px; line-height: 22px; }
-#pbb-ar-modal .pbb-ar-body { flex: 1; overflow-y: auto; padding: 6px 12px; }
+#pbb-ar-modal .pbb-ar-actions { display: inline-flex; gap: 6px; }
+#pbb-ar-modal .pbb-ar-body { flex: 1; overflow-y: auto; padding: 8px 12px; }
+#pbb-ar-modal .pbb-ar-empty { padding: 20px; text-align: center; opacity: .7; }
+#pbb-ar-modal .pbb-ar-off, #pbb-ar-modal [hidden] { display: none !important; }
+
+/* list view: only the post — no topic line, no uploader column */
 #pbb-ar-modal .pbb-ar-page { margin-bottom: 10px; }
 #pbb-ar-modal .pbb-ar-page-head { font-size: 12px; font-weight: bold; padding: 6px 2px; opacity: .8; }
-#pbb-ar-modal .pbb-ar-blocked { display: none; }
+#pbb-ar-modal .pbb-ar-list .topic-author { display: none !important; }
+#pbb-ar-modal .pbb-ar-item { padding: 6px 0; border-bottom: 1px solid rgba(128,128,128,.4); }
+#pbb-ar-modal .pbb-ar-list .postbody { width: 100% !important; float: none !important; }
+
+/* grid view: one card per post */
+#pbb-ar-modal .pbb-ar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; align-items: start; }
+#pbb-ar-modal .pbb-card {
+    display: flex; flex-direction: column; gap: 6px; padding: 8px; min-width: 0;
+    border: 1px solid rgba(128,128,128,.4); border-radius: 5px;
+}
+#pbb-ar-modal .pbb-card-imgs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 !important; }
+#pbb-ar-modal .pbb-card-cover { flex: 1 0 100%; }
+#pbb-ar-modal .pbb-card-cover img.pbb-thumb {
+    width: 100% !important; max-width: 100% !important; height: 200px !important; max-height: 200px !important;
+    object-fit: cover; margin: 0; display: block !important;
+}
+#pbb-ar-modal .pbb-card-mini img.pbb-thumb {
+    width: 52px !important; height: 52px !important; max-width: 52px !important; max-height: 52px !important;
+    object-fit: cover; margin: 0;
+}
+#pbb-ar-modal .pbb-card-extra { display: none; }
+#pbb-ar-modal .pbb-card-more { font-size: 12px; opacity: .8; padding: 0 4px; }
+#pbb-ar-modal .pbb-card-noimg { display: none; }
+#pbb-ar-modal .pbb-card-title {
+    font-weight: bold; font-size: 12px; line-height: 1.35; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+#pbb-ar-modal .pbb-card-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 11px; }
+#pbb-ar-modal .pbb-card-tag { padding: 0 6px; line-height: 18px; border-radius: 3px; background: rgba(128,128,128,.2); }
+#pbb-ar-modal .pbb-card-meta { opacity: .65; margin-left: auto; }
+#pbb-ar-modal .pbb-card-details { font-size: 11px; }
+#pbb-ar-modal .pbb-card-details summary { cursor: pointer; opacity: .8; }
+#pbb-ar-modal .pbb-card-text { margin-top: 4px; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; }
 
 /* ===== "What's New" popup ===== */
 #pbbcl-backdrop {
